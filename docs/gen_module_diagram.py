@@ -11,7 +11,7 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 
 S = 2
-W, H = 1220, 1110
+W, H = 1220, 1260
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "minicode-py-modules.png")
 
 FONT_CJK = r"C:\Windows\Fonts\msyh.ttc"
@@ -169,20 +169,29 @@ box(30, 826, 402, 104, "runtime/",
      "loop.py      固定延迟重复任务 · plan.py  内存 Todo 清单"],
     (238, 234, 244), (168, 154, 200), tested=79)
 
+# ---------------- L7 agents ----------------
+d.text((px(30), px(940)), "L7  子 Agent", font=F["h2"], fill=MUTED)
+box(30, 962, 402, 78, "agents/",
+    ["manager.py   隔离上下文 · 受限工具 · ≤3 并发 · 生命周期",
+     "worker_prompt.py   只读系统提示（明说不能改代码）",
+     "tools/subagents.py  spawn / list / wait / close（仅根可见）"],
+    (244, 236, 228), (204, 158, 120), tested=24)
+
 # ---------------- right column ----------------
 box(680, 106, 240, 74, "config.py", ["模型 / 凭据 / 上限解析", "settings.json 合并"],
     (243, 238, 230), LINE, tested=6)
 box(680, 196, 240, 74, "workspace.py", ["路径围栏", "越界即抛或征询"],
     (243, 238, 230), LINE, tested=0)
-box(680, 286, 240, 74, "tools/", ["files.py  list/read/write", "ask_user.py  挂起等回答"],
-    (236, 242, 236), (150, 186, 162), tested=6)
+box(680, 286, 240, 74, "tools/", ["files · grep_files（rg + 回退）", "web_fetch / web_search"],
+    (236, 242, 236), (150, 186, 162), tested=24)
 box(680, 376, 240, 96, "待实现模块",
     ["tui/           差分帧渲染", "skills.py / mcp.py",
-     "子 Agent 生命周期", "CLI 入口与配置装载"],
+     "CLI 入口与配置装载"],
     (240, 238, 232), LINE)
-box(680, 486, 240, 74, "docs/",
-    ["spec-context.md   四级压缩规格", "spec-session.md   会话规格",
-     "divergences.md    17 条有意差异"], (240, 238, 232), LINE)
+box(680, 486, 240, 96, "docs/ 与 tools/",
+    ["spec-context.md / spec-session.md", "divergences.md   17 条有意差异",
+     "check_imports.py  导入静态检查", "mutation_check.py 14/14 杀死"],
+    (240, 238, 232), LINE)
 
 # ---------------- dependency arrows ----------------
 arrow(125, 172, 125, 212, dashed=True)                     # L0 -> L1
@@ -194,25 +203,27 @@ arrow(300, 428, 300, 584, color=(196, 150, 112), dashed=True)  # L2 -> L4
 arrow(200, 688, 200, 726, color=(150, 176, 204), dashed=True)  # L4 -> L5
 arrow(120, 788, 120, 826, color=(168, 154, 200), dashed=True)  # L5 -> L6
 arrow(320, 428, 320, 826, color=(168, 154, 200), dashed=True)  # L2 -> L6（runtime 调用回合）
+arrow(200, 930, 200, 962, color=(204, 158, 120), dashed=True)  # L6 -> L7
+arrow(320, 428, 380, 962, color=(204, 158, 120), dashed=True)  # L2 -> L7（worker 也走同一个循环）
 arrow(224, 507, 234, 507)                                  # L3 内部
 arrow(432, 507, 442, 507)
 arrow(680, 300, 640, 300, dashed=True)                     # 右列依赖
 arrow(680, 210, 640, 210, dashed=True)
 
 # ---------------- footer ----------------
-d.line([px(30), px(996), px(1150), px(996)], fill=(224, 218, 208), width=max(1, px(0.9)))
-d.text((px(30), px(1008)), "边界契约（三条不可动摇的规则）", font=F["h2"], fill=INK)
+d.line([px(30), px(1096), px(1150), px(1096)], fill=(224, 218, 208), width=max(1, px(0.9)))
+d.text((px(30), px(1108)), "边界契约（三条不可动摇的规则）", font=F["h2"], fill=INK)
 notes = [
     "1. agent_loop 不知道 UI、会话与权限提示的存在 —— 宿主通过 TurnHooks 注入全部输出行为。",
     "2. 工具通过 ToolResult 的四个控制位反向影响控制流，而不是靠循环里的 if tool_name == ...。",
     "3. 所有写操作收敛到 file_review.apply_reviewed_file_change()：读旧 → 比对 → diff → 批准 → 落盘。",
 ]
 for i, note in enumerate(notes):
-    d.text((px(30), px(1032 + i * 19)), note, font=F["b"], fill=MUTED)
-d.text((px(30), px(1096)),
-       "已实现 36 个模块 · 322 项测试全部通过 · 变异检查 10/10 · docs/divergences.md 记录 17 条有意差异",
+    d.text((px(30), px(1132 + i * 19)), note, font=F["b"], fill=MUTED)
+d.text((px(30), px(1196)),
+       "已实现 45 个模块 · 350 项测试通过 · 导入检查 0 问题 · 变异检查 14/14 · divergences.md 17 条",
        font=F["bs"], fill=(150, 142, 132))
 
-img = img.crop((0, 0, W * S, 1100 * S)).resize((W, 1100), Image.LANCZOS)
+img = img.crop((0, 0, W * S, 1224 * S)).resize((W, 1224), Image.LANCZOS)
 img.save(OUT, "PNG")
 print("wrote", OUT, img.size)
