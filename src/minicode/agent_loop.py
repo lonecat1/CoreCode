@@ -204,6 +204,8 @@ def run_agent_turn(
     hooks: TurnHooks | None = None,
     context_pipeline: Any | None = None,
     content_replacement_state: ContentReplacementState | None = None,
+    plan_context: Any | None = None,
+    runtime_context: Any | None = None,
     stop_on_fatal_tool_error: bool = False,
 ) -> AgentTurnResult:
     """跑完一个回合。永远是「返回结果」而不是「抛异常」。
@@ -251,6 +253,14 @@ def run_agent_turn(
                 current, step=step, model_name=model_name
             )
             throw_if_aborted(signal)
+
+            # --- 2. 运行时上下文注入（只改投影） -----------------------------
+            # 两个注入点都只影响模型可见视图，不写回真实转录——否则每回合都会
+            # 往历史里塞一份计划快照，上下文会被自己的状态撑爆。
+            if plan_context is not None:
+                model_messages = plan_context(model_messages)
+            if runtime_context is not None:
+                model_messages = runtime_context(model_messages)
 
             # --- 2. 请求模型 -------------------------------------------------
             next_step = model.next(model_messages, tools=tools.model_tools(), signal=signal)
