@@ -34,7 +34,10 @@ from minicode.runtime.goal import (
     GoalError,
     GoalManager,
 )
-from minicode.runtime.goal_controller import MAX_EMPTY_CONTINUATION_TURNS
+from minicode.runtime.goal_controller import (
+    MAX_AUTOMATIC_TURNS,
+    MAX_EMPTY_CONTINUATION_TURNS,
+)
 from minicode.runtime.loop import (
     DEFAULT_LOOP_INTERVAL_MS,
     LoopClock,
@@ -288,8 +291,30 @@ class GoalTests(unittest.TestCase):
     def test_unknown_action_is_rejected(self) -> None:
         """模型不能创建或改目标：只有三个动作。"""
         self.goal.create("做点事")
-        with self.assertRaises(GoalError):
+        with self.assertRaises(GoalError) as ctx:
             self.goal.update({"action": "change_objective", "description": "换个目标"})
+        # 必须是被**动作白名单**拒绝，而不是碰巧因为别的条件失败——否则把白名单
+        # 放开后这条测试依然会通过（变异检查发现的空洞）。
+        self.assertIn("未知的 action", str(ctx.exception))
+
+    def test_every_action_outside_the_whitelist_is_rejected(self) -> None:
+        """逐个验证非法动作：任何新增动作都必须被白名单挡住。"""
+        self.goal.create("做点事")
+        for action in (
+            "change_objective",
+            "edit_objective",
+            "set_goal",
+            "pause",
+            "resume",
+            "clear",
+            "create",
+            "",
+            None,
+        ):
+            with self.subTest(action=action):
+                with self.assertRaises(GoalError) as ctx:
+                    self.goal.update({"action": action})
+                self.assertIn("未知的 action", str(ctx.exception))
 
     def test_pause_then_resume(self) -> None:
         self.goal.create("做点事")
@@ -865,6 +890,41 @@ class GoalContinuationTests(unittest.TestCase):
 
         self.assertEqual(goal_manager.get_snapshot().status, "completed")
         self.assertEqual(len(calls), 2, "完成后不应再起新回合")
+
+    def test_automatic_turn_budget_bounds_the_loop(self) -> None:
+        """兜底闸门：模型每轮都在调工具、又永不宣布完成时，必须停下来。
+
+        空转检测挡不住这种情形——它只看「有没有工具调用」。没有这个预算，
+        Goal 会无限跑下去（而且一直在花钱）。
+        """
+        plan = PlanManager("s1")
+        goal_manager = GoalManager(plan)
+        calls: list[int] = []
+        from minicode.runtime.goal_controller import GoalController
+
+        def run_turn(request: TurnRequest) -> AgentTurnResult:
+            calls.append(1)
+            # 每轮都有工具调用 → 空转检测永远不触发。
+            return _result("final", tool_calls=1)
+
+        controller = GoalController(
+            goal_manager,
+            turns=TurnRunner(),
+            run_turn=run_turn,
+            record_answer=lambda payload: None,
+            notice=lambda text: None,
+            settle_workers=lambda: None,
+        )
+        goal_manager.create("做点事")
+        controller._start({"role": "user", "content": "/goal 做点事"})
+        controller.when_idle(timeout=10.0)
+
+        snapshot = goal_manager.get_snapshot()
+        self.assertEqual(snapshot.status, "paused", "必须被回合预算暂停")
+        self.assertIn(str(MAX_AUTOMATIC_TURNS), snapshot.stop_reason or "")
+        self.assertLessEqual(
+            len(calls), MAX_AUTOMATIC_TURNS + 1, "不应超过预算继续跑"
+        )
 
 
 if __name__ == "__main__":
