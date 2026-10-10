@@ -29,6 +29,7 @@ from typing import Any, Callable
 
 from ..abort import throw_if_aborted
 from ..config import RuntimeConfig, resolve_max_output_tokens
+from ..types import AgentStep, ProviderUsage, StepDiagnostics, ToolCall
 
 DEFAULT_MAX_RETRIES = 4
 BASE_RETRY_DELAY_SECONDS = 0.5
@@ -189,8 +190,6 @@ def normalize_usage(usage: dict[str, Any] | None) -> Any:
     缓存相关的 token 也算 input：它们同样占用上下文，
     漏掉会让上下文利用率被严重低估。
     """
-    from .types import ProviderUsage
-
     if not usage:
         return None
     input_tokens = (
@@ -283,8 +282,6 @@ class AnthropicModelAdapter:
         tools: list[Any] | None = None,
         signal: Any | None = None,
     ) -> Any:
-        from .types import AgentStep, StepDiagnostics, ToolCall
-
         throw_if_aborted(signal)
         config = self._config_provider()
         system, wire_messages = to_wire_messages(messages)

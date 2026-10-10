@@ -336,11 +336,15 @@ class AgentLoopTests(unittest.TestCase):
 
     def test_subagent_registry_is_read_only(self) -> None:
         """子 Agent 不能看到任何写工具——隔离发生在注册表层。"""
+        from minicode.agents.types import SUBAGENT_TOOL_NAMES
+
         full = create_default_registry()
         restricted = subagent_registry(full)
 
         names = {entry.name for entry in restricted.list()}
-        self.assertEqual(names, {"list_files", "read_file"})
+        # 白名单是权威来源；这里断言「裁剪结果恰好是白名单 ∩ 根表」，
+        # 而不是硬编码名单——否则以后加只读工具就会让这条测试假失败。
+        self.assertEqual(names, set(SUBAGENT_TOOL_NAMES) & {e.name for e in full.list()})
         self.assertIsNone(restricted.find("write_file"))
         self.assertIsNone(restricted.find("ask_user"))
         # 原注册表不受影响（subset 返回新对象）。

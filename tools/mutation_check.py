@@ -15,6 +15,8 @@ REPO = r"D:\CoreCode\minicode-py"
 PY = sys.executable
 SESSION = os.path.join(REPO, "src", "minicode", "runtime", "session.py")
 GOAL_CTRL = os.path.join(REPO, "src", "minicode", "runtime", "goal_controller.py")
+AGENTS_MANAGER = os.path.join(REPO, "src", "minicode", "agents", "manager.py")
+AGENTS_TYPES = os.path.join(REPO, "src", "minicode", "agents", "types.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -97,6 +99,43 @@ MUTATIONS = [
         "            raise TurnBusyError(\"A root turn is still running.\")",
         "        if False:\n"
         "            raise TurnBusyError(\"A root turn is still running.\")",
+    ),
+    (
+        "子Agent: 移除并发上限",
+        AGENTS_MANAGER,
+        "            if self.running_count >= self.max_concurrent:",
+        "            if False:",
+    ),
+    (
+        "子Agent: 关闭不再优先（收尾会覆盖 closed）",
+        AGENTS_MANAGER,
+        "                if record.status != STATUS_CLOSED:",
+        "                if True:",
+    ),
+    (
+        "子Agent: 把失败当成功",
+        AGENTS_MANAGER,
+        "                    if result.outcome in (\"failed\", \"aborted\"):",
+        "                    if False:",
+    ),
+    (
+        "子Agent: 白名单放进写工具",
+        AGENTS_TYPES,
+        'SUBAGENT_TOOL_NAMES: tuple[str, ...] = (\n'
+        '    "list_files",\n'
+        '    "grep_files",\n'
+        '    "read_file",\n'
+        '    "web_fetch",\n'
+        '    "web_search",\n'
+        ')',
+        'SUBAGENT_TOOL_NAMES: tuple[str, ...] = (\n'
+        '    "list_files",\n'
+        '    "grep_files",\n'
+        '    "read_file",\n'
+        '    "web_fetch",\n'
+        '    "web_search",\n'
+        '    "write_file",\n'
+        ')',
     ),
 ]
 
