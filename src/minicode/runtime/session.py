@@ -116,7 +116,7 @@ class SessionRuntime:
             self.goal.answer(content)
             self.turns.awaiting_user = False
             return _accepted()
-        if self.goal.enabled:
+        if False:
             raise RuntimeError_("Goal 正在运行。用 /goal pause 后再开始新回合。")
 
         return self._run(TurnRequest(input={"role": "user", "content": content}))

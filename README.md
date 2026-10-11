@@ -174,6 +174,60 @@ python tools/self_check.py       # 环境自检（依赖 + 导入 + 测试）
 
 ---
 
+## 配置
+
+写入 `~/.mini-code/settings.json`：
+
+```json
+{
+  "model": "qwen3.8-max-0902",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic",
+    "ANTHROPIC_API_KEY": "sk-...",
+    "MINICODE_THINKING": "disabled"
+  },
+  "maxOutputTokens": 16000
+}
+```
+
+**优先级：`settings.json` 的 `env` > 进程环境变量。** 配置文件优先是刻意的
+（见 [divergences.md](docs/divergences.md) D25）：机器上往往早已存在
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`（为别的工具配的），若让它们压过
+本工具的配置文件，你写在这里的端点与密钥会被静默作废。凭据成对决策（D26）——
+文件提供了任一凭据时就不再从环境回退，避免「端点来自 A、密钥来自 B」。
+
+`MINICODE_*` 前缀是本工具专有的，**始终**以进程环境为准，便于临时覆盖：
+
+```bash
+MINICODE_MODEL=claude-sonnet-4 minicode
+```
+
+### 用阿里云百炼（Model Studio）
+
+百炼提供 Anthropic 兼容端点，可直接使用：
+
+| 区域 | `ANTHROPIC_BASE_URL` |
+|---|---|
+| 中国（北京） | `https://dashscope.aliyuncs.com/apps/anthropic` |
+| 新加坡 | `https://dashscope-intl.aliyuncs.com/apps/anthropic` |
+| 中国（香港） | `https://cn-hongkong.dashscope.aliyuncs.com/apps/anthropic` |
+
+端点也支持工作空间专属域名（`https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic`），
+按[官方文档](https://www.alibabacloud.com/help/en/model-studio/anthropic-api-messages)填写即可。
+
+两点注意：
+
+1. **不要**把 `base_url` 写到 `/v1` 结尾——客户端会自行追加 `/v1/messages`，
+   写成 `.../apps/anthropic/v1` 会产生 `/v1/v1/messages` 并返回 404。
+2. **必须设 `"MINICODE_THINKING": "disabled"`**（或 settings 里的 `"thinking": "disabled"`）。
+   百炼的 `qwen3.8-max` 系列默认开启思考，而思考 token 与正文共享 `max_tokens`；
+   预算被思考吃光时模型返回**空内容**。症状是「模型不回答」，根因却是 token 预算。
+
+如果 `base_url` 指向别的服务商而模型名是 `anthropic` 系的，或反之，都会失败——
+端点与模型必须来自同一家。
+
+---
+
 ## 全屏界面（差分帧渲染）
 
 ```bash

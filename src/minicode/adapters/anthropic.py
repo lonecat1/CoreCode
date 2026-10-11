@@ -295,6 +295,16 @@ class AnthropicModelAdapter:
         if tools:
             body["tools"] = list(tools)
 
+        # 扩展思考开关：仅在配置了才发。
+        #
+        # 不发时保持各端点的默认行为——Anthropic 官方默认不思考；
+        # 而百炼的 qwen3.8-max 默认**开启**思考，思考 token 与正文共享
+        # `max_tokens`，预算小时会把正文挤成空字符串。所以面向百炼时
+        # 应当在 settings.json 里显式写 "thinking": "disabled"。
+        thinking = config.thinking_payload()
+        if thinking is not None:
+            body["thinking"] = thinking
+
         payload = self._post_with_retry(config, body, signal)
 
         # -- 解析响应 ---------------------------------------------------------

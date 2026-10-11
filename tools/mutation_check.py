@@ -24,6 +24,7 @@ MCP_JSONRPC = os.path.join(REPO, "src", "minicode", "mcp", "jsonrpc.py")
 TUI_FRAMES = os.path.join(REPO, "src", "minicode", "tui", "frames.py")
 TUI_WIDTH = os.path.join(REPO, "src", "minicode", "tui", "width.py")
 TUI_PANELS = os.path.join(REPO, "src", "minicode", "tui", "panels.py")
+CONFIG = os.path.join(REPO, "src", "minicode", "config.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -260,6 +261,34 @@ MUTATIONS = [
         TUI_PANELS,
         "    filled = max(0, min(10, filled))",
         "    filled = filled",
+    ),
+    (
+        "配置: 环境变量重新压过 settings.json",
+        CONFIG,
+        "    return str(from_settings or source.get(key) or \"\").strip()",
+        "    return str(source.get(key) or from_settings or \"\").strip()",
+    ),
+    (
+        "配置: 凭据不再成对决策（允许跨来源混搭）",
+        CONFIG,
+        "    settings_has_credentials = bool(\n"
+        "        settings_env.get(\"ANTHROPIC_AUTH_TOKEN\") or settings_env.get(\"ANTHROPIC_API_KEY\")\n"
+        "    )",
+        "    settings_has_credentials = False",
+    ),
+    (
+        "配置: thinking 开关失效（百炼下返回空内容）",
+        CONFIG,
+        "        if self.thinking in (\"enabled\", \"disabled\"):\n"
+        "            return {\"type\": self.thinking}",
+        "        if False:\n"
+        "            return {\"type\": self.thinking}",
+    ),
+    (
+        "配置: 非法的 thinking 值也被发出去",
+        CONFIG,
+        "        if self.thinking in (\"enabled\", \"disabled\"):",
+        "        if self.thinking is not None:",
     ),
 ]
 

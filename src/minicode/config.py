@@ -2,14 +2,15 @@
 
 配置来源与优先级（后者覆盖前者）：
 
-    settings.json 的 env  <  进程环境变量  <  显式传入
+    **进程环境变量  <  settings.json 的 env**  <  显式传入
+
+配置文件**优先于**进程环境变量，这一点刻意如此。理由：机器上往往长期以来
+就存在 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` 等变量（用户为别的工具
+配的）。若让它们压过本工具的 settings.json，那么写在这个文件里的配置会被
+静默作废——「专门的配置文件」也就失去了意义，而且失效时毫无提示。
 
 模型解析顺序：`MINICODE_MODEL` > `settings.model` > `ANTHROPIC_MODEL`。
-这部分刻意与 TypeScript 版保持同名 key，这样两个实现可以共用同一份
-`~/.mini-code/settings.json`，迁移时不必重新配置。
-
-注意 `MINICODE_HOME` 只影响本模块导出的路径常量；这是有意收窄的作用域，
-避免环境变量意外改变会话目录的位置。
+`MINICODE_*` 是本工具专有前缀，因此它始终优先（见下方 `_resolve`）。
 """
 
 from __future__ import annotations
@@ -111,6 +112,9 @@ MAX_OUTPUT_TOKENS_RULES: tuple[tuple[str, int, int], ...] = (
     ("gpt-4.1", 16_000, 32_768),
     ("gpt-4o", 8_192, 16_384),
     ("deepseek", 8_192, 8_192),
+    # 阿里云百炼的 Qwen 系列：思考与正文共享 max_tokens，
+    # 因此给足预算，避免长回答被截断。
+    ("qwen", 16_000, 32_768),
 )
 
 
@@ -141,6 +145,15 @@ class RuntimeConfig:
     api_key: str | None = None
     max_output_tokens: int | None = None
     mcp_servers: dict[str, Any] = field(default_factory=dict)
+    #: 扩展思考开关：`"enabled"` / `"disabled"` / None（不发该字段）。
+    #:
+    #: 为什么需要它：Anthropic 官方模型**默认不思考**，因此不发这个字段没问题；
+    #: 但阿里云百炼的 `qwen3.8-max` 系列**默认开启**思考，思考 token 与
+    #: 正文共享 `max_tokens` 预算。预算小的时候思考会把它吃光，
+    #: 表现为「模型返回空内容」——一个非常难诊断的症状。
+    #:
+    #: 默认 None（不发），以保持与 Anthropic 官方端点的行为完全一致。
+    thinking: str | None = None
     #: 配置来源摘要，用于 `/status` 展示。
     source_summary: str = ""
 
@@ -157,6 +170,12 @@ class RuntimeConfig:
 
     def messages_endpoint(self) -> str:
         return f"{self.base_url.rstrip('/')}/v1/messages"
+
+    def thinking_payload(self) -> dict[str, str] | None:
+        """转成请求体的 `thinking` 字段；未配置或不合法时返回 None。"""
+        if self.thinking in ("enabled", "disabled"):
+            return {"type": self.thinking}
+        return None
 
 
 class ConfigError(Exception):
@@ -223,34 +242,67 @@ def save_settings(updates: dict[str, Any], path: Path | None = None) -> Path:
     return target
 
 
+def resolve_env_value(
+    key: str,
+    settings: dict[str, Any],
+    environ: dict[str, str] | None = None,
+) -> str:
+    """取一个配置值：settings.json 的 env 优先，其后是进程环境变量。
+
+    `MINICODE_*` 前缀的变量是**本工具专有**的，不会被别的工具设置，
+    因此始终以进程环境为准（便于临时覆盖，例如 `MINICODE_MODEL=x minicode`）。
+    """
+    source = environ if environ is not None else os.environ
+    from_settings = (settings.get("env") or {}).get(key)
+
+    if key.startswith("MINICODE_"):
+        return str(source.get(key) or from_settings or "").strip()
+    return str(from_settings or source.get(key) or "").strip()
+
+
 def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
     """装载一次运行所需的全部配置。缺关键项就抛 ConfigError。"""
     settings = read_settings_file(settings_path)
 
-    # 进程环境变量优先于 settings 里的 env。
-    env = {**(settings.get("env") or {}), **os.environ}
+    def value(key: str) -> str:
+        return resolve_env_value(key, settings)
 
     model = (
-        env.get("MINICODE_MODEL")
-        or settings.get("model")
-        or env.get("ANTHROPIC_MODEL")
-        or ""
-    ).strip()
+        value("MINICODE_MODEL")
+        or str(settings.get("model") or "").strip()
+        or value("ANTHROPIC_MODEL")
+    )
     if not model:
         raise ConfigError(
             "未配置模型。请设置 MINICODE_MODEL 环境变量，"
             f"或在 {settings_path or SETTINGS_PATH} 中写入 \"model\"。"
         )
 
-    base_url = (env.get("ANTHROPIC_BASE_URL") or DEFAULT_BASE_URL).strip()
-    auth_token = (env.get("ANTHROPIC_AUTH_TOKEN") or "").strip() or None
-    api_key = (env.get("ANTHROPIC_API_KEY") or "").strip() or None
+    base_url = value("ANTHROPIC_BASE_URL") or DEFAULT_BASE_URL
+
+    # 凭据必须**成对**决定，不能逐个回退。
+    #
+    # 否则会出现「端点取自 settings，密钥取自环境」的混搭：用户明明在配置
+    # 文件里写好了完整的 key/URL，环境里遗留的 ANTHROPIC_AUTH_TOKEN（可能是
+    # 另一个服务商的）却把它顶掉了。这种混搭既连不通，又可能把不该外发的
+    # 密钥送到别的端点。
+    settings_env = settings.get("env") or {}
+    settings_has_credentials = bool(
+        settings_env.get("ANTHROPIC_AUTH_TOKEN") or settings_env.get("ANTHROPIC_API_KEY")
+    )
+    if settings_has_credentials:
+        auth_token = str(settings_env.get("ANTHROPIC_AUTH_TOKEN") or "").strip() or None
+        api_key = str(settings_env.get("ANTHROPIC_API_KEY") or "").strip() or None
+    else:
+        auth_token = value("ANTHROPIC_AUTH_TOKEN") or None
+        api_key = value("ANTHROPIC_API_KEY") or None
+
     if not auth_token and not api_key:
         raise ConfigError(
             "未配置凭据。请设置 ANTHROPIC_AUTH_TOKEN（或 ANTHROPIC_API_KEY）。"
         )
 
-    raw_max = env.get("MINICODE_MAX_OUTPUT_TOKENS") or settings.get("maxOutputTokens")
+    raw_max = value("MINICODE_MAX_OUTPUT_TOKENS") or settings.get("maxOutputTokens")
     max_output_tokens: int | None = None
     if raw_max is not None:
         try:
@@ -260,6 +312,12 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
         except (TypeError, ValueError):
             max_output_tokens = None
 
+    # 思考开关：环境变量优先于 settings。
+    raw_thinking = (
+        value("MINICODE_THINKING") or str(settings.get("thinking") or "")
+    ).strip().lower()
+    thinking: str | None = raw_thinking if raw_thinking in ("enabled", "disabled") else None
+
     return RuntimeConfig(
         model=model,
         base_url=base_url,
@@ -267,6 +325,7 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
         api_key=api_key,
         max_output_tokens=max_output_tokens,
         mcp_servers=load_mcp_servers(cwd=os.getcwd(), settings=settings),
+        thinking=thinking,
         source_summary=f"settings: {settings_path or SETTINGS_PATH} > process.env",
     )
 
