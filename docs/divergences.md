@@ -231,6 +231,40 @@
 
 ---
 
+## D20 · MCP 不再声明接受 SSE
+
+| | |
+|---|---|
+| **原行为** | HTTP 客户端把 `Accept: application/json, text/event-stream` 发给服务器，但拿到响应后**直接整体 `JSON.parse`**——它并不解析 SSE 流。也就是说，一旦服务器按我们声明的能力返回 `text/event-stream`，解析必然失败。 |
+| **本实现** | 只声明 `Accept: application/json`。 |
+| **理由** | 声明一个自己走不通的能力，比不支持它更糟：服务器会**据此选择**一条我们处理不了的路径。要么真正实现 SSE，要么别声明。 |
+| **影响面** | 只支持整体 JSON 响应的服务器行为不变；只支持 SSE 的服务器现在会明确报错，而不是给出难以理解的解析失败。 |
+| **可回退** | 若将来实现 SSE 解析，再把 `text/event-stream` 加回 `Accept`。 |
+
+---
+
+## D21 · MCP 配置与模型凭据解耦
+
+| | |
+|---|---|
+| **原行为** | MCP 服务器配置只从 `readRuntimeConfig()` 里取。而该函数在没有 API key 时会抛错——于是**没有 API key 就用不了 MCP**。 |
+| **本实现** | `load_mcp_servers(cwd)` 独立读取三处配置，与模型凭据无关；CLI 在 mock 模式下也照常连接 MCP。 |
+| **理由** | MCP 服务器与模型凭据是两件无关的事。把「能连 MCP」绑在「有 API key」上会让离线与本地模型场景平白失去扩展能力，而且这个耦合完全不可见——不读源码根本想不到。 |
+| **影响面** | 有凭据时行为不变（配置来源合并后更全）；无凭据时 MCP 现在可用。`test_servers_load_without_any_model_credentials` 钉住。 |
+
+---
+
+## D22 · MCP 配置来源扩充为三处
+
+| | |
+|---|---|
+| **原行为** | 仅 `settings.json` 的 `mcpServers`。 |
+| **本实现** | `<MINICODE_HOME>/mcp.json`（用户级）→ `<cwd>/.mcp.json`（项目级）→ `settings.json`，后者优先级最高。 |
+| **理由** | `mcp.json` 是 MCP 生态的惯例文件名，只认 `settings.json` 会让别的工具生成的配置无法直接使用。 |
+| **影响面** | 同名时 `settings.json` 覆盖，因此已有配置不受影响。`test_project_level_mcp_json_is_merged` 与 `test_settings_json_overrides_mcp_json` 钉住。 |
+
+---
+
 ## 汇总表
 
 | # | 主题 | 类型 | 影响面 |
@@ -254,6 +288,9 @@
 | D17 | 追加时缺结尾换行 | 加固 | 不再制造不可解析行 |
 | D18 | Skills 硬编码 home | 修正 | 家目录重定向处处成立 |
 | D19 | Skills 名未校验 | 加固 | 挡住路径穿越 |
+| D20 | MCP 声明 SSE 却不解析 | **修正** | 不再诱导服务器选错路径 |
+| D21 | MCP 配置耦合模型凭据 | **修正** | 无 API key 也能用 MCP |
+| D22 | MCP 配置来源只有一处 | 扩充 | 兼容 `mcp.json` 惯例 |
 
 **一条贯穿全部修正的原则**：凡是会**静默**造成数据丢失或计量失真的地方就修；
 凡是属于行为契约（阈值、护栏、排序、占位模板）或**明显有意的取舍**

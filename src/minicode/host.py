@@ -96,6 +96,8 @@ class SessionHost:
         self.already_saved_count = 0
         self._lock = threading.RLock()
         self.is_busy = False
+        #: MCP 后台连接的完成事件（由 CLI 注入）。None = 本次没有 MCP。
+        self._mcp_done: threading.Event | None = None
 
         # 会话级状态：跨回合复用，因此「已 snip 过」「大结果已落盘」这些记忆不丢。
         self.content_replacement_state: ContentReplacementState = (
@@ -271,6 +273,22 @@ class SessionHost:
     def _settle_workers(self) -> None:
         if self.subagents is not None:
             self.subagents.close_all()
+
+    # -- MCP ----------------------------------------------------------------
+
+    def attach_mcp_completion(self, done: threading.Event) -> None:
+        """让宿主知道后台 MCP 连接何时完成（CLI 在装配时调用）。"""
+        self._mcp_done = done
+
+    def _mcp_wait(self, timeout: float = 10.0) -> bool:
+        """等待后台 MCP 连接完成。返回是否已完成。
+
+        存在的理由：MCP 在后台连接（避免阻塞启动），但脚本与测试需要知道
+        「现在可以认为 MCP 就绪了」。没有这个等待点，调用方只能 sleep 猜时间。
+        """
+        if self._mcp_done is None:
+            return True
+        return self._mcp_done.wait(timeout)
 
     # -- system prompt ------------------------------------------------------
 

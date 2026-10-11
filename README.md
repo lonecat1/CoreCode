@@ -109,8 +109,8 @@ for step in range(max_steps):
 | 子 Agent `agents/` | ✅ 完成（隔离上下文 + 受限工具 + ≤3 并发） |
 | 项目记忆 `memory` + 系统提示 `prompt` | ✅ 完成 |
 | CLI 入口 `cli` | ✅ 完成（行模式 REPL + 单次提问 + 本地命令） |
-| Skills | ⬜ 待实现 |
-| MCP | ⬜ 待实现 |
+| Skills `skills` | ✅ 完成（四层发现 + `load_skill` + 安装管理） |
+| MCP `mcp/` | ✅ 完成（stdio 双分帧协商 + HTTP + 工具桥接） |
 | 差分帧渲染 TUI | ⬜ 待实现 |
 
 > **测试隔离**：`tests/__init__.py` 在任何 `minicode` 导入之前把家目录钉在仓库内
@@ -135,6 +135,42 @@ python tools/self_check.py       # 环境自检（依赖 + 导入 + 测试）
 
 `self_check.py` 刻意是独立脚本而不是 CLI 子命令——早先的 `minicode --agent`
 会跑测试，而测试里又有一个用 `--agent` 的用例，于是无限递归并**挂住**。
+
+`mutation_check.py` 还会**自愈**：变异前先把原文另存为 `.mutation-backup`，
+下次运行开头检查并恢复。原因是脚本被中途杀死时 `finally` 不会执行，变异会
+留在源码里——这真实发生过一次，导致后续测试以难以理解的方式失败。
+空操作变异（替换后内容不变）会被报成 `ERROR` 而不是误报「测试无效」。
+
+---
+
+## MCP 接入
+
+在 `~/.mini-code/mcp.json`、项目根的 `.mcp.json`，或 `settings.json` 的
+`mcpServers` 中配置（后者优先级最高）：
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"]
+    },
+    "remote": {
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer $MY_TOKEN" }
+    }
+  }
+}
+```
+
+远端工具会以 `mcp__<server>__<tool>` 的名字出现。用 `/mcp` 查看连接状态。
+
+**两种分帧会自动协商**：MCP 规范写的是 `Content-Length`（LSP 风格），但不少
+实现只支持 NDJSON（一行一个 JSON）。客户端先试前者；若 1.2 秒探测超时，会
+用**同一种分帧**以正常超时重试（服务器可能只是冷启动慢），仍然失败才换另
+一种。协商结果缓存到 `mcp-protocol-cache.json`，下次直接用对的分帧。
+
+`load_skill` 与 MCP 工具**不需要 API key**——MCP 配置与模型凭据完全解耦。
 
 ---
 

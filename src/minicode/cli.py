@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 from typing import Any
 
 from .adapters.anthropic import AnthropicModelAdapter
@@ -148,6 +149,39 @@ def build_host(
     tools.add_tools(create_subagent_tools(subagents))
     subagents_holder["manager"] = subagents
 
+    # MCP 在**后台**连接：服务器冷启动可能要几秒，不该阻塞启动。
+    # 先把状态标为 connecting，让 /mcp 立刻有东西可显示。
+    #
+    # 这个字典在 host 构造之前就存在，因此后台线程完成时可以安全地回填——
+    # 它可能先于 host 就绪，所以回调里要判空。
+    host_holder: dict[str, Any] = {}
+
+    # MCP 配置与「有没有模型凭据」无关，因此独立读取。
+    #
+    # 之前它只经由 `load_runtime_config()` 获得，而 mock 模式不调用那个函数
+    # （没有 API key 时会抛错）——结果是「没有 API key 就用不了 MCP」，
+    # 这个耦合是错的：MCP 服务器不需要模型凭据。
+    from .config import load_mcp_servers
+
+    servers = (
+        runtime.mcp_servers if runtime else load_mcp_servers(cwd=cwd)
+    ) or {}
+
+    mcp_holder: dict[str, Any] = {"bridge": None, "done": threading.Event()}
+    if servers:
+        from .mcp import build_connecting_summaries
+
+        tools.set_mcp_servers(
+            [item.to_dict() for item in build_connecting_summaries(servers)]
+        )
+
+        def _refresh_prompt() -> None:
+            host = host_holder.get("host")
+            if host is not None:
+                host.refresh_system_prompt()
+
+        _start_mcp_hydration(cwd, servers, tools, mcp_holder, on_ready=_refresh_prompt)
+
     session_id = args.session or _new_session_id()
 
     host = SessionHost(
@@ -161,6 +195,9 @@ def build_host(
         callbacks=callbacks,
         subagents=subagents,
     )
+    host_holder["host"] = host
+    if servers:
+        host.attach_mcp_completion(mcp_holder["done"])
     host.refresh_system_prompt()
 
     if config_error:
@@ -175,6 +212,49 @@ def _new_session_id() -> str:
     import uuid
 
     return str(uuid.uuid4())[:8]
+
+
+def _start_mcp_hydration(
+    cwd: str,
+    servers: dict[str, Any],
+    tools: Any,
+    holder: dict[str, Any],
+    on_ready: Any = None,
+) -> None:
+    """在后台连接 MCP 服务器，连上后把工具注入注册表。
+
+    放后台的理由：服务器冷启动（`npx` 拉包、Python 导入重库）可能要数秒，
+    阻塞启动会让「输入第一条消息」变得很慢。UI 期间显示 `connecting`。
+
+    `on_ready` 用于在连接完成后重建系统提示——否则提示里会一直写着
+    `connecting`，也拿不到 MCP 工具的命名说明。
+
+    **`done` 必须在 `on_ready` 之后才置位**：它是「MCP 就绪」的公开信号，
+    调用方（脚本、测试）等到它之后就会去读系统提示。先置位再刷新会留下
+    一个竞态窗口，让等到信号的人读到尚未更新的提示。这个 bug 真实出现过。
+    """
+
+    def hydrate() -> None:
+        try:
+            from .mcp import create_mcp_backed_tools
+
+            bridge = create_mcp_backed_tools(cwd, servers)
+            tools.add_tools(bridge.tools)
+            tools.set_mcp_servers([item.to_dict() for item in bridge.summaries])
+            tools.add_disposer(bridge.dispose)
+            holder["bridge"] = bridge
+        except Exception:  # noqa: BLE001 - MCP 失败绝不该影响主流程
+            pass
+        finally:
+            if on_ready is not None:
+                try:
+                    on_ready()
+                except Exception:  # noqa: BLE001
+                    pass
+            # 最后一步：所有可观察状态都已就绪，此时才对外宣告完成。
+            holder["done"].set()
+
+    threading.Thread(target=hydrate, name="minicode-mcp", daemon=True).start()
 
 
 # ---------------------------------------------------------------------------

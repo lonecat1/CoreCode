@@ -200,6 +200,148 @@ class RealTurnTests(IntegrationTestCase):
         self.assertTrue(hasattr(seen[0], "utilization"))
 
 
+class McpConfigTests(IntegrationTestCase):
+    """MCP 配置装载与「无凭据也能用」这条解耦。
+
+    这里用真实的 `fake_mcp_server.py` 子进程，因为装配错误（配置读不到、
+    工具没注入、提示没刷新）只有真跑一遍才会暴露。
+    """
+
+    SERVER = str(Path(_HERE) / "fixtures" / "fake_mcp_server.py")
+
+    def _write_mcp_config(self, *, where: str = "home") -> None:
+        import json
+
+        config = {
+            "mcpServers": {
+                "fake": {
+                    "command": sys.executable,
+                    "args": [self.SERVER, "--protocol", "content-length"],
+                }
+            }
+        }
+        if where == "home":
+            target = Path(os.environ["MINICODE_HOME"]) / "mcp.json"
+        else:
+            target = Path(self.cwd_holder) / ".mcp.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.cwd_holder = str(self.home.parent)
+
+    def test_servers_load_without_any_model_credentials(self) -> None:
+        """没有 API key 也必须能读到 MCP 配置。
+
+        原先 MCP 配置只经由 `load_runtime_config()` 获得，而 mock 模式不调用它
+        ——结果是「没有 API key 就用不了 MCP」。这个耦合是错的：
+        MCP 服务器与模型凭据毫无关系。这条测试钉住解耦。
+        """
+        from minicode.config import load_mcp_servers
+
+        self._write_mcp_config()
+        servers = load_mcp_servers(cwd=str(self.home.parent))
+        self.assertIn("fake", servers)
+
+    def test_mock_mode_injects_mcp_tools(self) -> None:
+        self._write_mcp_config()
+        args = build_parser().parse_args(["--mock", "--cwd", WORKDIR])
+        host = build_host(args)
+
+        host._mcp_wait(timeout=15)  # noqa: SLF001 - 等后台连接完成
+        names = {tool.name for tool in host.tools.list()}
+        self.assertIn("mcp__fake__echo", names)
+        self.assertIn("mcp__fake__structured", names)
+
+    def test_connected_state_reaches_the_system_prompt(self) -> None:
+        self._write_mcp_config()
+        args = build_parser().parse_args(["--mock", "--cwd", WORKDIR])
+        host = build_host(args)
+        host._mcp_wait(timeout=15)  # noqa: SLF001
+
+        prompt = host.messages[0]["content"]
+        self.assertIn("Configured MCP servers", prompt)
+        self.assertIn("fake", prompt)
+        self.assertIn("tools=3", prompt)
+        self.assertIn("mcp__server__tool", prompt, "命名约定必须告诉模型")
+
+    def test_mcp_tool_is_callable_through_the_registry(self) -> None:
+        from minicode.tooling import ToolContext
+
+        self._write_mcp_config()
+        args = build_parser().parse_args(["--mock", "--cwd", WORKDIR])
+        host = build_host(args)
+        host._mcp_wait(timeout=15)  # noqa: SLF001
+
+        result = host.tools.execute(
+            "mcp__fake__echo", {"text": "集成"}, ToolContext(cwd=host.cwd)
+        )
+        self.assertTrue(result.ok)
+        self.assertIn("echo: 集成", result.output)
+
+    def test_mcp_command_reports_connected(self) -> None:
+        from minicode.cli_commands import try_handle_local_command
+
+        self._write_mcp_config()
+        args = build_parser().parse_args(["--mock", "--cwd", WORKDIR])
+        host = build_host(args)
+        host._mcp_wait(timeout=15)  # noqa: SLF001
+
+        output = try_handle_local_command(host, "/mcp") or ""
+        self.assertIn("connected", output)
+        self.assertIn("tools=3", output)
+
+    def test_project_level_mcp_json_is_merged(self) -> None:
+        """`<cwd>/.mcp.json` 是 MCP 生态的惯例位置，必须支持。"""
+        import json
+
+        from minicode.config import load_mcp_servers
+
+        project = Path(WORKDIR)
+        target = project / ".mcp.json"
+        created = not target.exists()
+        try:
+            target.write_text(
+                json.dumps({"mcpServers": {"fromproject": {"command": "x"}}}),
+                encoding="utf-8",
+            )
+            servers = load_mcp_servers(cwd=WORKDIR)
+            self.assertIn("fromproject", servers)
+        finally:
+            if created:
+                target.unlink()
+
+    def test_settings_json_overrides_mcp_json(self) -> None:
+        from minicode.config import load_mcp_servers
+
+        self._write_mcp_config()
+        servers = load_mcp_servers(
+            cwd=str(self.home.parent),
+            settings={"mcpServers": {"fake": {"command": "override"}}},
+        )
+        self.assertEqual(servers["fake"]["command"], "override")
+
+    def test_broken_server_does_not_break_startup(self) -> None:
+        import json
+
+        config = {"mcpServers": {"broken": {"command": "definitely-not-real-xyz"}}}
+        target = Path(os.environ["MINICODE_HOME"]) / "mcp.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(config), encoding="utf-8")
+
+        args = build_parser().parse_args(["--mock", "--cwd", WORKDIR])
+        host = build_host(args)  # 不应抛
+        host._mcp_wait(timeout=15)  # noqa: SLF001
+
+        from minicode.cli_commands import try_handle_local_command
+
+        output = try_handle_local_command(host, "/mcp") or ""
+        self.assertIn("error", output)
+        # 主流程仍然可用
+        self.assertTrue(host.tools.find("read_file") is not None)
+
+
 class SessionLifecycleTests(IntegrationTestCase):
     """会话的装载 / 分叉 / 清空在装配后的行为。"""
 

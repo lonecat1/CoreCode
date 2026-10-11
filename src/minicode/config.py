@@ -266,9 +266,57 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
         auth_token=auth_token,
         api_key=api_key,
         max_output_tokens=max_output_tokens,
-        mcp_servers=settings.get("mcpServers") or {},
+        mcp_servers=load_mcp_servers(cwd=os.getcwd(), settings=settings),
         source_summary=f"settings: {settings_path or SETTINGS_PATH} > process.env",
     )
+
+
+def read_mcp_config_file(path: Path) -> dict[str, Any]:
+    """读一个 `mcp.json` 形态的文件：`{"mcpServers": {...}}`。
+
+    缺失、损坏、或结构不对 → 返回 `{}`（不抛）。MCP 配置坏掉不该让程序起不来。
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    servers = parsed.get("mcpServers")
+    return servers if isinstance(servers, dict) else {}
+
+
+def load_mcp_servers(
+    cwd: str | None = None, settings: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """汇总全部 MCP 服务器配置。
+
+    优先级（低 → 高）：
+
+        `<MINICODE_HOME>/mcp.json`    用户级
+        `<cwd>/.mcp.json`             项目级
+        `settings.json` 的 mcpServers 最高
+
+    之所以同时支持三种来源：`mcp.json` 是 MCP 生态的惯例文件名，
+    而 `settings.json` 是本工具的主配置。两者都要能用，且同名时后者胜。
+    """
+    merged: dict[str, Any] = {}
+
+    for source in (minicode_home() / "mcp.json",):
+        merged.update(read_mcp_config_file(source))
+
+    if cwd:
+        merged.update(read_mcp_config_file(Path(cwd) / ".mcp.json"))
+
+    from_settings = (settings or {}).get("mcpServers")
+    if isinstance(from_settings, dict):
+        merged.update(from_settings)
+
+    return merged
 
 
 def try_load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig | None:

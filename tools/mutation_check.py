@@ -19,6 +19,8 @@ AGENTS_MANAGER = os.path.join(REPO, "src", "minicode", "agents", "manager.py")
 AGENTS_TYPES = os.path.join(REPO, "src", "minicode", "agents", "types.py")
 SKILLS = os.path.join(REPO, "src", "minicode", "skills.py")
 TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
+MCP_STDIO = os.path.join(REPO, "src", "minicode", "mcp", "stdio_client.py")
+MCP_JSONRPC = os.path.join(REPO, "src", "minicode", "mcp", "jsonrpc.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -165,27 +167,114 @@ MUTATIONS = [
         "        create_load_skill_tool(cwd or os.getcwd()),",
         "        # create_load_skill_tool(cwd or os.getcwd()),",
     ),
+    (
+        "MCP: 探测超时后不再用同一分帧重试（慢启动被误判）",
+        MCP_STDIO,
+        "        except JsonRpcTimeout:\n"
+        "            # ② 同一种分帧、正常超时重试：冷启动可能真的很慢。\n"
+        "            #    少了这一步会把「慢」误判成「不支持」，然后一直用错的分帧。\n"
+        "            rpc.request(\"initialize\", params, timeout=INITIALIZE_TIMEOUT)",
+        "        except JsonRpcTimeout:\n"
+        "            raise",
+    ),
+    (
+        # 注意：目标必须带**行首四个空格**，否则会先匹配到 `cached ==
+        # PROTOCOL_CONTENT_LENGTH` 那一支（八个空格），把它改成与默认分支
+        # 完全相同的代码——变异就变成了空操作，检查会误报「测试无效」。
+        "MCP: 分帧协商默认顺序反转（先试 newline-json）",
+        MCP_STDIO,
+        "\n    return [PROTOCOL_CONTENT_LENGTH, PROTOCOL_NEWLINE_JSON]\n",
+        "\n    return [PROTOCOL_NEWLINE_JSON, PROTOCOL_CONTENT_LENGTH]\n",
+    ),
+    (
+        "MCP: 缓存被忽略（永远从默认顺序开始）",
+        MCP_STDIO,
+        "    if cached == PROTOCOL_NEWLINE_JSON:\n"
+        "        return [PROTOCOL_NEWLINE_JSON, PROTOCOL_CONTENT_LENGTH]",
+        "    if False:\n"
+        "        return [PROTOCOL_NEWLINE_JSON, PROTOCOL_CONTENT_LENGTH]",
+    ),
+    (
+        "MCP: Content-Length 按字符数而非字节数解析",
+        MCP_JSONRPC,
+        "            body = bytes(self._buffer[body_start : body_start + length])",
+        "            body = bytes(self._buffer[body_start : body_start + length])[:length // 3]",
+    ),
+    (
+        "MCP: 缺少 Content-Length 的头块不被丢弃（永久卡住）",
+        MCP_JSONRPC,
+        "                self._buffer = bytearray(self._buffer[body_start:])\n"
+        "                continue",
+        "                return messages",
+    ),
 ]
 
 
-def run_suite() -> bool:
-    """Returns True when the suite passes."""
-    proc = subprocess.run(
-        [PY, "-m", "unittest", "discover", "-s", "tests", "-t", "."],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    return proc.returncode == 0
+#: 单次跑测试的上限（秒）。
+#:
+#: 必须有限制：有的变异会让程序**永久阻塞**而不是失败（例如分帧状态机不再
+#: 推进缓冲、子进程等待永远不会到的响应）。没有超时的话，变异检查会挂死
+#: 而不是给出结论——这真实发生过一次（10 分钟 0.2 秒 CPU，纯阻塞）。
+#: 超时按「被杀死」处理：它确实证明了测试能发现这个变异。
+SUITE_TIMEOUT_SECONDS = 240
+
+#: 变异前把原文另存一份的后缀。
+#:
+#: 存在的理由：如果这个脚本**被中途杀死**（Ctrl-C、超时、进程被杀），
+#: `finally` 不会执行，变异就留在源码里了。这真实发生过一次——一次 kill
+#: 让 `jsonrpc.py` 带着 `[:length // 3]` 留在工作区，随后测试诡异失败。
+#: 有了这份备份，下一次运行开头就能把它修回来，不需要人工判断哪些字节是
+#: 变异、哪些是我的代码。
+BACKUP_SUFFIX = ".mutation-backup"
+
+
+def backup_path(path: str) -> str:
+    return path + BACKUP_SUFFIX
+
+
+def heal_leftovers() -> list[str]:
+    """如果上次运行被中断，用备份恢复源码。返回被恢复的文件列表。"""
+    healed: list[str] = []
+    for _label, path, _old, _new in MUTATIONS:
+        backup = backup_path(path)
+        if not os.path.exists(backup):
+            continue
+        try:
+            pristine = open(backup, encoding="utf-8").read()
+            open(path, "w", encoding="utf-8", newline="\n").write(pristine)
+            os.remove(backup)
+            healed.append(os.path.basename(path))
+        except OSError:
+            pass
+    return healed
+
+
+def run_suite() -> tuple[bool, bool]:
+    """跑一次测试。返回 `(是否通过, 是否超时)`。"""
+    try:
+        proc = subprocess.run(
+            [PY, "-m", "unittest", "discover", "-s", "tests", "-t", "."],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=SUITE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False, True
+    return proc.returncode == 0, False
 
 
 def main() -> int:
-    baseline = run_suite()
+    healed = heal_leftovers()
+    if healed:
+        print(f"已从上次中断中恢复：{', '.join(healed)}")
+
+    baseline, baseline_timeout = run_suite()
     print(f"baseline: {'PASS' if baseline else 'FAIL'}")
     if not baseline:
-        print("基线不通过，无法做变异检查。")
+        print("基线不通过，无法做变异检查。" + ("（基线超时）" if baseline_timeout else ""))
         return 1
 
     survived: list[str] = []
@@ -195,15 +284,35 @@ def main() -> int:
             print(f"  SKIP  {label}  (未找到待变异的代码片段)")
             survived.append(label + " [片段不匹配]")
             continue
+
+        mutated = original.replace(old, new, 1)
+        if mutated == original:
+            # 变异没有改变任何字节 —— 检查会得出「测试无效」的错误结论。
+            # 真实发生过：目标片段不带行首缩进，先匹配到了另一个分支，
+            # 替换后那一段与原来**完全等价**。
+            print(f"  ERROR {label}  (变异是空操作，检查配置有误)")
+            survived.append(label + " [空操作变异]")
+            continue
+
         try:
-            open(path, "w", encoding="utf-8", newline="\n").write(
-                original.replace(old, new, 1)
-            )
-            killed = not run_suite()
+            # 先留备份，再改源码——顺序不能反，否则「刚改完就被杀」
+            # 会留下没有备份的变异。
+            with open(backup_path(path), "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(original)
+            open(path, "w", encoding="utf-8", newline="\n").write(mutated)
+            passed, timed_out = run_suite()
+            killed = not passed
         finally:
             open(path, "w", encoding="utf-8", newline="\n").write(original)
+            try:
+                os.remove(backup_path(path))
+            except OSError:
+                pass
 
-        print(f"  {'KILLED' if killed else 'SURVIVED'}  {label}")
+        if timed_out:
+            print(f"  KILLED  {label}  (超时——测试发现该变异会阻塞)")
+        else:
+            print(f"  {'KILLED' if killed else 'SURVIVED'}  {label}")
         if not killed:
             survived.append(label)
 

@@ -182,15 +182,23 @@ box(680, 106, 240, 74, "config.py", ["模型 / 凭据 / 上限解析", "settings
     (243, 238, 230), LINE, tested=6)
 box(680, 196, 240, 74, "workspace.py", ["路径围栏", "越界即抛或征询"],
     (243, 238, 230), LINE, tested=0)
-box(680, 286, 240, 74, "tools/", ["files · grep_files（rg + 回退）", "web_fetch / web_search"],
+box(680, 286, 240, 74, "tools/", ["files · grep_files（rg + 回退）", "web_fetch / web_search · load_skill"],
     (236, 242, 236), (150, 186, 162), tested=24)
-box(680, 376, 240, 96, "待实现模块",
-    ["tui/           差分帧渲染", "skills.py / mcp.py",
-     "CLI 入口与配置装载"],
+box(680, 376, 240, 74, "skills.py",
+    ["SKILL.md 四层发现 · 优先级去重", "load_skill 按需加载 · 名字校验"],
+    (236, 242, 236), (150, 186, 162), tested=52)
+box(680, 466, 240, 100, "mcp/",
+    ["jsonrpc.py     两种分帧状态机",
+     "stdio_client   子进程 + 帧协商 + 缓存",
+     "http_client    streamable HTTP",
+     "bridge.py      远端工具 → 本地工具"],
+    (236, 240, 244), (140, 170, 200), tested=53)
+box(680, 582, 240, 58, "待实现",
+    ["tui/   差分帧渲染（唯一剩余）"],
     (240, 238, 232), LINE)
-box(680, 486, 240, 96, "docs/ 与 tools/",
-    ["spec-context.md / spec-session.md", "divergences.md   17 条有意差异",
-     "check_imports.py  导入静态检查", "mutation_check.py 14/14 杀死"],
+box(680, 656, 240, 100, "docs/ 与 tools/",
+    ["spec-context.md / spec-session.md", "divergences.md    19 条有意差异",
+     "check_imports.py   导入静态检查", "mutation_check.py  自愈式变异检查"],
     (240, 238, 232), LINE)
 
 # ---------------- dependency arrows ----------------
@@ -221,7 +229,7 @@ notes = [
 for i, note in enumerate(notes):
     d.text((px(30), px(1132 + i * 19)), note, font=F["b"], fill=MUTED)
 d.text((px(30), px(1196)),
-       "已实现 45 个模块 · 350 项测试通过 · 导入检查 0 问题 · 变异检查 14/14 · divergences.md 17 条",
+       "已实现 57 个模块 · 480 项测试通过 · 导入检查 0 问题 · 变异检查 24/24 · divergences.md 19 条",
        font=F["bs"], fill=(150, 142, 132))
 
 img = img.crop((0, 0, W * S, 1224 * S)).resize((W, 1224), Image.LANCZOS)
