@@ -128,7 +128,16 @@ def main() -> int:
                 continue
 
             target = resolve(module, node, is_package)
-            if target is None or not target.startswith(PACKAGE):
+            if target is None:
+                # `from ..x import y` inside a top-level module escapes the package.
+                # The first version of this checker skipped these silently — which is
+                # exactly how host.py shipped with 18 wrong-depth imports.
+                problems.append(
+                    f"{module}:{node.lineno}: 相对导入超出包边界"
+                    f"（level={node.level}, module={node.module!r}）"
+                )
+                continue
+            if not target.startswith(PACKAGE):
                 continue
             imported.add(target)
 

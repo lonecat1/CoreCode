@@ -100,21 +100,41 @@ for step in range(max_steps):
 | 取消信号 `abort` | ✅ 完成（贯穿模型/工具/审批） |
 | 写前审查 `file_review` | ✅ 完成 |
 | 路径围栏 `workspace` | ✅ 完成 |
-| 文件工具 | ✅ `list_files` / `read_file` / `write_file` / `ask_user` |
 | 权限管理器 `permissions` | ✅ 完成（三入口 + 四级授权 + 持久化） |
+| 内置工具 | ✅ 文件读写 · grep（rg + 回退）· web_fetch / web_search · ask_user |
 | 离线 mock + Anthropic 适配器 | ✅ 完成（含 thinking 块原样回传） |
 | 上下文工程 `context/` | ✅ 完成（四级压缩 + 计量 + 大结果落盘） |
 | 会话持久化 `session/` | ✅ 完成（JSONL 树 + 边界 + fork/resume） |
-| 剩余内置工具（grep / edit / patch / run_command / web） | ⬜ 待实现 |
-| Goal / Plan / Loop 编排 | ⬜ 待实现 |
-| 子 Agent | ⬜ 待实现 |
+| 运行时编排 `runtime/` | ✅ 完成（Plan / Goal / Loop + 四道互斥闸门） |
+| 子 Agent `agents/` | ✅ 完成（隔离上下文 + 受限工具 + ≤3 并发） |
+| 项目记忆 `memory` + 系统提示 `prompt` | ✅ 完成 |
+| CLI 入口 `cli` | ✅ 完成（行模式 REPL + 单次提问 + 本地命令） |
+| Skills | ⬜ 待实现 |
+| MCP | ⬜ 待实现 |
 | 差分帧渲染 TUI | ⬜ 待实现 |
-| Skills 与 MCP | ⬜ 待实现 |
-| CLI 入口与配置装载 | ⬜ 待实现 |
 
 > **测试隔离**：`tests/__init__.py` 在任何 `minicode` 导入之前把家目录钉在仓库内
-> （`tests/_tmp/mini-home`），并做一次 fail-closed 断言。`minicode.config` 在导入期
-> 就求值路径常量，因此这一步必须发生在测试模块之前——否则测试会去读写真实用户目录。
+> （`tests/_tmp/mini-home`），并做一次 fail-closed 断言。运行时的路径解析走
+> `config.projects_dir()` 这类**动态**访问器，因此测试可以逐用例覆盖
+> `MINICODE_HOME`。模块级的 `PROJECTS_DIR` 只是展示用快照，不要用它读写文件。
+
+---
+
+## 开发工具
+
+不需要任何第三方包，全部零依赖：
+
+```bash
+python tools/check_imports.py    # 静态导入检查（模块/名字是否存在、相对层级是否越界）
+python tools/mutation_check.py   # 变异检查：故意破坏保证，验证测试真的会变红
+python tools/self_check.py       # 环境自检（依赖 + 导入 + 测试）
+```
+
+`mutation_check.py` 的价值在于：绿色测试只说明测试通过，不说明测试**有效**。
+它已经抓出过 2 个「形同虚设」的测试。
+
+`self_check.py` 刻意是独立脚本而不是 CLI 子命令——早先的 `minicode --agent`
+会跑测试，而测试里又有一个用 `--agent` 的用例，于是无限递归并**挂住**。
 
 ---
 

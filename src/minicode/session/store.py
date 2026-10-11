@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..config import PROJECTS_DIR
+from ..config import projects_dir
 from ..context.tokens import utf16_length
 from ..types import (
     ROLE_ASSISTANT,
@@ -117,7 +117,7 @@ def project_dir_name(cwd: str) -> str:
 
 
 def project_dir(cwd: str) -> Path:
-    return Path(PROJECTS_DIR) / project_dir_name(cwd)
+    return projects_dir() / project_dir_name(cwd)
 
 
 def session_file_path(cwd: str, session_id: str) -> Path:
@@ -783,7 +783,7 @@ def list_all_projects() -> list[ProjectMeta]:
     有损变换导致的既成事实（见 `project_dir_name` 的说明）。
     """
     try:
-        entries = list(Path(PROJECTS_DIR).iterdir())
+        entries = list(projects_dir().iterdir())
     except OSError:
         return []
 

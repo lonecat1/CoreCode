@@ -24,7 +24,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..config import TOOL_RESULTS_DIR
+from ..config import tool_results_dir
 from .tokens import js_round
 
 PERSISTED_OUTPUT_TAG = "<persisted-output>"
@@ -138,7 +138,7 @@ def tool_results_directory(base_dir: str | None = None) -> str:
     `base_dir` 允许调用方（测试、或想把产物放在别处的宿主）覆盖根目录。
     默认落在 `~/.mini-code/tool-results/<进程随机目录>/`。
     """
-    root = base_dir if base_dir is not None else str(TOOL_RESULTS_DIR)
+    root = base_dir if base_dir is not None else str(tool_results_dir())
     return os.path.join(root, _SESSION_DIR)
 
 

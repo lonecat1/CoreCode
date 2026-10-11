@@ -32,6 +32,54 @@ def _home_dir() -> Path:
     return Path.home() / ".mini-code"
 
 
+# ---------------------------------------------------------------------------
+# 路径解析：动态 vs 导入期
+#
+# 这是一个反复踩到的坑，所以显式分成两套：
+#
+#   `minicode_home()` / `projects_dir()` …  **每次调用重新求值**。
+#       运行时代码一律用这些。原因是模块级常量在 import 时就被固定了，
+#       之后再设 `MINICODE_HOME` 完全无效——测试隔离与运行时改配置都会静默失效。
+#
+#   `MINICODE_HOME` / `PROJECTS_DIR` … 导入期快照，**仅供展示**（如 /status 打印路径）。
+#       不要用它去读写文件。
+# ---------------------------------------------------------------------------
+
+
+def minicode_home() -> Path:
+    """当前生效的家目录。每次调用重新读取环境变量。"""
+    return _home_dir()
+
+
+def projects_dir() -> Path:
+    return minicode_home() / "projects"
+
+
+def tool_results_dir() -> Path:
+    return minicode_home() / "tool-results"
+
+
+def settings_path() -> Path:
+    return minicode_home() / "settings.json"
+
+
+def permissions_path() -> Path:
+    return minicode_home() / "permissions.json"
+
+
+def history_path() -> Path:
+    return minicode_home() / "history.jsonl"
+
+
+def mcp_path() -> Path:
+    return minicode_home() / "mcp.json"
+
+
+def mcp_tokens_path() -> Path:
+    return minicode_home() / "mcp-tokens.json"
+
+
+#: 导入期快照，仅用于展示。
 MINICODE_HOME = _home_dir()
 SETTINGS_PATH = MINICODE_HOME / "settings.json"
 HISTORY_PATH = MINICODE_HOME / "history.jsonl"
