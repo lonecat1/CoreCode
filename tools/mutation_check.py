@@ -17,6 +17,8 @@ SESSION = os.path.join(REPO, "src", "minicode", "runtime", "session.py")
 GOAL_CTRL = os.path.join(REPO, "src", "minicode", "runtime", "goal_controller.py")
 AGENTS_MANAGER = os.path.join(REPO, "src", "minicode", "agents", "manager.py")
 AGENTS_TYPES = os.path.join(REPO, "src", "minicode", "agents", "types.py")
+SKILLS = os.path.join(REPO, "src", "minicode", "skills.py")
+TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -125,6 +127,7 @@ MUTATIONS = [
         '    "list_files",\n'
         '    "grep_files",\n'
         '    "read_file",\n'
+        '    "load_skill",\n'
         '    "web_fetch",\n'
         '    "web_search",\n'
         ')',
@@ -132,10 +135,35 @@ MUTATIONS = [
         '    "list_files",\n'
         '    "grep_files",\n'
         '    "read_file",\n'
+        '    "load_skill",\n'
         '    "web_fetch",\n'
         '    "web_search",\n'
         '    "write_file",\n'
         ')',
+    ),
+    (
+        "Skills: 不再拒绝路径分隔符（放开穿越）",
+        SKILLS,
+        '    if "/" in normalized or "\\\\" in normalized:',
+        "    if False:",
+    ),
+    (
+        "Skills: 不再拒绝 `..` 前缀名",
+        SKILLS,
+        '    if normalized in (".", "..") or normalized.startswith("."):',
+        "    if False:",
+    ),
+    (
+        "Skills: 同名时后到者胜（优先级反转）",
+        SKILLS,
+        "            if entry.name in found:\n                continue",
+        "            if False:\n                continue",
+    ),
+    (
+        "Skills: 注册表不再注册 load_skill",
+        TOOLS_INIT,
+        "        create_load_skill_tool(cwd or os.getcwd()),",
+        "        # create_load_skill_tool(cwd or os.getcwd()),",
     ),
 ]
 

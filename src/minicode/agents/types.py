@@ -23,20 +23,19 @@ MAX_SUB_AGENT_STEPS = 20
 #:
 #: 隔离是**在注册表层**完成的（`ToolRegistry.subset`），不是靠每个工具的自觉：
 #: 子 Agent 根本看不到 `write_file`，因此不存在「忘了检查权限」的可能。
-#:
-#: `load_skill` 暂不在列表里：Skills 模块尚未实现，把不存在的工具列进来会让
-#: worker 拿到「Unknown tool」错误。等 Skills 落地后再加回（见 TODO）。
 SUBAGENT_TOOL_NAMES: tuple[str, ...] = (
     "list_files",
     "grep_files",
     "read_file",
+    "load_skill",
     "web_fetch",
     "web_search",
 )
 
-#: 等 Skills 模块落地后应补进白名单的工具。
-#: 放在这里而不是注释里，这样它有测试可以钉住「实现了就该加回来」。
-PENDING_SUBAGENT_TOOLS: tuple[str, ...] = ("load_skill",)
+#: 等某个模块落地后应补进白名单的工具。
+#: 放在这里而不是注释里，这样有测试钉住「实现了就该加回来」——
+#: `load_skill` 就是随 Skills 模块落地后从这里移到上面去的。
+PENDING_SUBAGENT_TOOLS: tuple[str, ...] = ()
 
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"

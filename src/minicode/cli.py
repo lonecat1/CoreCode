@@ -133,7 +133,7 @@ def build_host(
     )
 
     subagents_holder: dict[str, Any] = {}
-    tools = create_root_registry()
+    tools = create_root_registry(cwd=cwd)
     worker_tools = create_worker_registry(tools)
 
     model = _build_model(runtime, args.mock, subagents_holder)
@@ -143,7 +143,6 @@ def build_host(
         tools=worker_tools,
         cwd=cwd,
     )
-    tools.add_tools([])  # 占位：子 Agent 工具在下面统一加入
     from .tools.subagents import create_subagent_tools
 
     tools.add_tools(create_subagent_tools(subagents))
