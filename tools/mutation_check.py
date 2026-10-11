@@ -21,6 +21,9 @@ SKILLS = os.path.join(REPO, "src", "minicode", "skills.py")
 TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
 MCP_STDIO = os.path.join(REPO, "src", "minicode", "mcp", "stdio_client.py")
 MCP_JSONRPC = os.path.join(REPO, "src", "minicode", "mcp", "jsonrpc.py")
+TUI_FRAMES = os.path.join(REPO, "src", "minicode", "tui", "frames.py")
+TUI_WIDTH = os.path.join(REPO, "src", "minicode", "tui", "width.py")
+TUI_PANELS = os.path.join(REPO, "src", "minicode", "tui", "panels.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -206,6 +209,57 @@ MUTATIONS = [
         "                self._buffer = bytearray(self._buffer[body_start:])\n"
         "                continue",
         "                return messages",
+    ),
+    (
+        "TUI: 相同帧也重绘（差分失效）",
+        TUI_FRAMES,
+        "        if next_exists == prev_exists and next_line == previous_line:\n"
+        "            continue",
+        "        if False:\n            continue",
+    ),
+    (
+        "TUI: 列数变化不再强制全量重绘",
+        TUI_FRAMES,
+        "        state.lines is None or state.columns != columns or state.rows != rows",
+        "        state.lines is None",
+    ),
+    (
+        # 先前的写法是把哨兵 `None` 换回 `""`。那其实是**等价变异**：
+        # 写入时用 `next_line or ""`，因此 `None` 与 `""` 产生的字节完全相同，
+        # 测试通过是正确判定，不是测试无效。换成一个真正改变行为的变异——
+        # 让「行是否存在」这个判断失效，从而在缩帧/增帧时越界或漏擦。
+        "TUI: 不再区分「行不存在」与「空行」",
+        TUI_FRAMES,
+        "        next_exists = index < len(lines)\n"
+        "        prev_exists = index < len(previous)",
+        "        next_exists = True\n"
+        "        prev_exists = True",
+    ),
+    (
+        "TUI: 宽字符不再算作 2 列",
+        TUI_WIDTH,
+        "    for start, end in _WIDE_RANGES:\n"
+        "        if start <= code <= end:\n"
+        "            return 2",
+        "    for start, end in _WIDE_RANGES:\n"
+        "        if False:\n"
+        "            return 2",
+    ),
+    (
+        "TUI: 组合附加符号不再算作 0 宽",
+        TUI_WIDTH,
+        "    for start, end in _COMBINING_RANGES:\n"
+        "        if start <= code <= end:\n"
+        "            return 0",
+        "    for start, end in _COMBINING_RANGES:\n"
+        "        if False:\n"
+        "            return 0",
+    ),
+    (
+        "TUI: 上下文徽章进度条不再夹在 0..10",
+        TUI_PANELS,
+        "    filled = max(0, min(10, filled))",
+        "    filled = filled",
     ),
 ]
 

@@ -193,12 +193,17 @@ box(680, 466, 240, 100, "mcp/",
      "http_client    streamable HTTP",
      "bridge.py      远端工具 → 本地工具"],
     (236, 240, 244), (140, 170, 200), tested=53)
-box(680, 582, 240, 58, "待实现",
-    ["tui/   差分帧渲染（唯一剩余）"],
-    (240, 238, 232), LINE)
-box(680, 656, 240, 100, "docs/ 与 tools/",
-    ["spec-context.md / spec-session.md", "divergences.md    19 条有意差异",
-     "check_imports.py   导入静态检查", "mutation_check.py  自愈式变异检查"],
+box(680, 586, 240, 112, "tui/  差分帧渲染",
+    ["frames.py    只重绘变化的行（纯函数）",
+     "width.py     CJK/Emoji 占 2 列",
+     "panels.py    面板 · 徽章 · 横幅",
+     "app.py       状态 + 按键（纯函数）",
+     "terminal.py  终端读写（薄层）"],
+    (240, 236, 244), (160, 140, 190), tested=115)
+box(680, 716, 240, 66, "docs/ 与 tools/",
+    ["divergences.md   22 条有意差异",
+     "check_imports.py  导入静态检查",
+     "mutation_check.py 自愈式变异检查"],
     (240, 238, 232), LINE)
 
 # ---------------- dependency arrows ----------------
@@ -229,7 +234,7 @@ notes = [
 for i, note in enumerate(notes):
     d.text((px(30), px(1132 + i * 19)), note, font=F["b"], fill=MUTED)
 d.text((px(30), px(1196)),
-       "已实现 57 个模块 · 480 项测试通过 · 导入检查 0 问题 · 变异检查 24/24 · divergences.md 19 条",
+       "已实现 64 个模块 · 595 项测试通过 · 导入检查 0 问题 · 变异检查 29/29 · divergences.md 24 条",
        font=F["bs"], fill=(150, 142, 132))
 
 img = img.crop((0, 0, W * S, 1224 * S)).resize((W, 1224), Image.LANCZOS)

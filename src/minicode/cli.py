@@ -290,6 +290,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="自动批准所有权限请求（危险：仅用于受信任的脚本场景）",
     )
+    parser.add_argument(
+        "--tui",
+        action="store_true",
+        help="使用全屏差分帧界面（需要真实终端；非终端环境下自动回退到行模式）",
+    )
     return parser
 
 
@@ -334,12 +339,85 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.prompt:
             return _run_once(host, args.prompt)
+        if args.tui:
+            code = _run_tui(host)
+            if code is not None:
+                return code
+            print(
+                "当前环境不是真实终端，已回退到行模式。"
+                "（全屏界面需要 TTY；管道或重定向下无法使用）",
+                file=sys.stderr,
+            )
         return _run_repl(host)
     except KeyboardInterrupt:
         print()
         return 130
     finally:
         host.stop()
+
+
+def _run_tui(host: SessionHost) -> int | None:
+    """尝试全屏界面。非 TTY 时返回 None，让调用方回退到行模式。"""
+    from .tui import (
+        AppState,
+        HostBridge,
+        Terminal,
+        build_banner_stats,
+        make_terminal_events,
+        run_tui,
+    )
+
+    terminal = Terminal()
+    if not terminal.interactive:
+        return None
+
+    events_holder: dict[str, Any] = {}
+    state = AppState()
+    state.banner = build_banner_stats(host)
+
+    def run_local(text: str) -> str | None:
+        reply = host.runtime.command(text)
+        if reply is not None:
+            return reply
+        return handle_local_command(host, text)
+
+    def run_turn(text: str) -> None:
+        events = events_holder["events"]
+
+        def on_assistant(content: str, is_final: bool) -> None:
+            events.push("assistant", content)
+
+        def on_progress(content: str) -> None:
+            events.push("progress", content)
+
+        def on_tool_start(name: str, data: Any) -> None:
+            events.push("tool_start", str(name))
+
+        def on_tool_result(name: str, output: str, is_error: bool) -> None:
+            events.push("tool_result", str(name), not is_error)
+
+        host.callbacks.on_assistant = on_assistant
+        host.callbacks.on_progress = on_progress
+        host.callbacks.on_tool_start = on_tool_start
+        host.callbacks.on_tool_result = on_tool_result
+        host.callbacks.on_notice = lambda text: events.push("notice", text)
+
+        result = host.runtime.submit(text)
+        if result.outcome in ("failed", "aborted"):
+            events.push("error", f"回合结束：{result.outcome} {result.error or ''}")
+
+    bridge = HostBridge(
+        run_turn=run_turn,
+        run_local=run_local,
+        is_busy=lambda: host.is_busy,
+        summary=lambda: build_banner_stats(host),
+    )
+
+    # 事件对象要先于回调存在，因此在这里构造并放进 holder。
+    from .tui import UiEvents
+
+    events_holder["events"] = UiEvents()
+    return run_tui(state, bridge, terminal=terminal)
 
 
 def _run_once(host: SessionHost, prompt: str) -> int:
