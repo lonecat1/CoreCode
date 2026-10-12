@@ -316,19 +316,33 @@ def backup_path(path: str) -> str:
 
 
 def heal_leftovers() -> list[str]:
-    """如果上次运行被中断，用备份恢复源码。返回被恢复的文件列表。"""
+    """如果上次运行被中断，用备份恢复源码。返回被恢复的文件列表。
+
+    **扫描整棵树**而不是只遍历 `MUTATIONS` 里列出的路径。原因：「孤儿备份」
+    真实发生过——上一次运行被 kill 时正改到某个变异，而那个变异后来被我**从
+    列表里删掉/改写了**，于是按列表查找永远找不到它，备份残留在工作区里
+    还可能被 `git add -A` 带进提交。按后缀全树扫描就没有这个盲区。
+    """
     healed: list[str] = []
-    for _label, path, _old, _new in MUTATIONS:
-        backup = backup_path(path)
-        if not os.path.exists(backup):
+    for root, _dirs, files in os.walk(REPO):
+        # 跳过版本库与缓存目录，避免误伤。
+        if any(part in root for part in (".git", "__pycache__")):
             continue
-        try:
-            pristine = open(backup, encoding="utf-8").read()
-            open(path, "w", encoding="utf-8", newline="\n").write(pristine)
-            os.remove(backup)
-            healed.append(os.path.basename(path))
-        except OSError:
-            pass
+        for name in files:
+            if not name.endswith(BACKUP_SUFFIX):
+                continue
+            backup = os.path.join(root, name)
+            target = backup[: -len(BACKUP_SUFFIX)]
+            if not os.path.exists(target):
+                # 只有备份没有原文：说明原文被删了，保留备份不做处理。
+                continue
+            try:
+                pristine = open(backup, encoding="utf-8").read()
+                open(target, "w", encoding="utf-8", newline="\n").write(pristine)
+                os.remove(backup)
+                healed.append(os.path.relpath(target, REPO))
+            except OSError:
+                pass
     return healed
 
 

@@ -7,8 +7,12 @@ dist/
 .venv/
 venv/
 
-# ?????????
+# 测试与本地状态
 tests/_tmp/
 tests/_out.txt
 .mini-code/
 .minicode/
+
+# 变异检查的中途备份。
+# 正常情况下脚本用完就删；但运行被中断时会残留，不该进版本库。
+*.mutation-backup
