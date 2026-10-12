@@ -304,14 +304,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _ensure_utf8_output() -> None:
-    """把 stdout/stderr 钉在 UTF-8。
+    """把 stdin / stdout / stderr 都钉在 UTF-8。
 
-    Windows 控制台默认编码是 cp936 之类，而本程序的界面文本是中文。
-    不处理的话用户看到的是乱码——「程序明明能用却像是坏了」。
+    Windows 控制台默认编码是 cp936 之类，而本程序的界面文本与用户输入都是中文。
+    三个流都要处理，缺一个就会出问题：
+
+      - 只改 stdout → 输出乱码（「程序明明能用却像是坏了」）。
+      - 只改 stdout+stderr → **管道输入**仍然按 cp936 解码，中文变成代理字符，
+        随后写回输出时抛 `UnicodeEncodeError: surrogates not allowed`。
+        本实现实际踩过这条。
 
     无法重配时静默跳过；errors="replace" 保证任何编码异常都不会中断程序。
     """
-    for stream in (sys.stdout, sys.stderr):
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue

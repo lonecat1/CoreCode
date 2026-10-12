@@ -359,7 +359,8 @@ class Utf8OutputTests(IntegrationTestCase):
             + "');"
             "from minicode.cli import _ensure_utf8_output;"
             "_ensure_utf8_output();"
-            "print('encoding=' + str(sys.stdout.encoding))"
+            "print('out=' + str(sys.stdout.encoding));"
+            "print('in=' + str(sys.stdin.encoding))"
         )
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -370,7 +371,35 @@ class Utf8OutputTests(IntegrationTestCase):
             cwd=WORKDIR,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("utf-8", result.stdout.lower())
+        self.assertIn("out=utf-8", result.stdout.lower())
+        # stdin 也必须一起改：只改 stdout 时管道输入的中文会变成代理字符，
+        # 随后写回输出时抛 UnicodeEncodeError。本实现实际踩过这条。
+        self.assertIn("in=utf-8", result.stdout.lower())
+
+    def test_piped_chinese_input_round_trips(self) -> None:
+        """管道传入中文并回显，不能出现代理字符。"""
+        import subprocess
+
+        script = (
+            "import sys; sys.path.insert(0, r'"
+            + os.path.join(os.path.dirname(_HERE), "src")
+            + "');"
+            "from minicode.cli import _ensure_utf8_output;"
+            "_ensure_utf8_output();"
+            "print(input())"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            input="中文输入测试\n",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=WORKDIR,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("中文输入测试", result.stdout)
+        self.assertNotIn("surrogate", result.stderr.lower())
 
     def test_utf8_helper_tolerates_streams_without_reconfigure(self) -> None:
         """stdout 被替换成不支持 reconfigure 的对象时不能抛。"""

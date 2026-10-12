@@ -20,13 +20,19 @@ import sys
 
 
 def force_utf8_output() -> None:
-    """把 stdout / stderr 重配为 UTF-8。
+    """把 stdin / stdout / stderr 重配为 UTF-8。
 
-    在无法重配时静默跳过（例如 stdout 被替换成了不支持 `reconfigure`
-    的对象，或已被 pytest 之类接管）。`errors="replace"` 保证即便出现
-    无法编码的字符也只是显示成替代符，而不会中断程序。
+    三个流都要，缺一不可：
+
+      - 只改 stdout → 输出乱码。
+      - 只改 stdout+stderr → **管道输入**按 cp936 解码，中文变成代理字符，
+        随后写回输出时抛 `UnicodeEncodeError: surrogates not allowed`。
+
+    在无法重配时静默跳过（例如流被替换成了不支持 `reconfigure` 的对象，
+    或已被 pytest 之类接管）。`errors="replace"` 保证即便出现无法编码的
+    字符也只是显示成替代符，而不会中断程序。
     """
-    for stream in (sys.stdout, sys.stderr):
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue
