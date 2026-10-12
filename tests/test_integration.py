@@ -414,6 +414,36 @@ class Utf8OutputTests(IntegrationTestCase):
         finally:
             sys.stdout = original
 
+    def test_python_dash_m_minicode_works(self) -> None:
+        """`python -m minicode` 必须可用。
+
+        包若只有 `__init__.py` 而没有 `__main__.py`，Python 会报
+        「'minicode' is a package and cannot be directly executed」。
+        这是标准的可运行包约定，少了它用户就得记住 `minicode.cli` 这个后缀。
+        """
+        import subprocess
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "minicode",
+                "--mock",
+                "--cwd",
+                WORKDIR,
+                "-p",
+                "/status",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=WORKDIR,
+            env={**os.environ, "PYTHONPATH": os.path.join(os.path.dirname(_HERE), "src")},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("离线 mock", result.stdout)
+
     def test_all_tools_share_the_same_helper(self) -> None:
         """三个开发工具都必须接入，否则工具输出仍然乱码。"""
         tools_dir = Path(WORKDIR) / "tools"
