@@ -672,13 +672,13 @@ class ScrollTests(unittest.TestCase):
 
     def test_page_up_scrolls_back(self) -> None:
         state = self._long_state()
-        compose_frame(state, SIZE)  # 回填 last_total_lines
+        compose_frame(state, SIZE).text  # 回填 last_total_lines
         handle_key(state, KEY_PAGE_UP, SIZE)
         self.assertGreater(state.scroll_offset, 0)
 
     def test_page_down_returns_toward_bottom(self) -> None:
         state = self._long_state()
-        compose_frame(state, SIZE)
+        compose_frame(state, SIZE).text
         handle_key(state, KEY_PAGE_UP, SIZE)
         before = state.scroll_offset
         handle_key(state, KEY_PAGE_DOWN, SIZE)
@@ -687,14 +687,14 @@ class ScrollTests(unittest.TestCase):
     def test_scroll_never_exceeds_content(self) -> None:
         state = AppState()
         state.push("assistant", "只有一行")
-        compose_frame(state, SIZE)
+        compose_frame(state, SIZE).text
         for _ in range(10):
             handle_key(state, KEY_PAGE_UP, SIZE)
         self.assertEqual(state.scroll_offset, 0)
 
     def test_scroll_never_negative(self) -> None:
         state = self._long_state()
-        compose_frame(state, SIZE)
+        compose_frame(state, SIZE).text
         for _ in range(10):
             handle_key(state, KEY_PAGE_DOWN, SIZE)
         self.assertEqual(state.scroll_offset, 0)
@@ -702,16 +702,16 @@ class ScrollTests(unittest.TestCase):
     def test_new_content_does_not_yank_the_view(self) -> None:
         """用户在翻历史时，新输出不该把他拽回底部。"""
         state = self._long_state()
-        compose_frame(state, SIZE)
+        compose_frame(state, SIZE).text
         handle_key(state, KEY_PAGE_UP, SIZE)
         offset = state.scroll_offset
         state.push("assistant", "新内容")
-        compose_frame(state, SIZE)
+        compose_frame(state, SIZE).text
         self.assertEqual(state.scroll_offset, offset, "偏移应保持")
 
     def test_end_jumps_to_bottom(self) -> None:
         state = self._long_state()
-        compose_frame(state, SIZE)
+        compose_frame(state, SIZE).text
         handle_key(state, KEY_PAGE_UP, SIZE)
         handle_key(state, KEY_END, SIZE)
         self.assertEqual(state.scroll_offset, 0)
@@ -753,7 +753,7 @@ class ComposeFrameTests(unittest.TestCase):
 
         for columns in (60, 80, 100, 140):
             with self.subTest(columns=columns):
-                frame = compose_frame(state, TerminalSize(columns=columns, rows=30))
+                frame = compose_frame(state, TerminalSize(columns=columns, rows=30)).text
                 for line in frame.split("\n"):
                     self.assertLessEqual(
                         string_display_width(line),
@@ -764,7 +764,7 @@ class ComposeFrameTests(unittest.TestCase):
     def test_input_row_is_anchored_above_status(self) -> None:
         state = AppState(input="正在输入")
         state.set_input("正在输入")
-        frame = compose_frame(state, SIZE)
+        frame = compose_frame(state, SIZE).text
         lines = frame.split("\n")
         self.assertIn("正在输入", strip_ansi(lines[-3]))
         self.assertIn("ready", strip_ansi(lines[-2]))
@@ -773,38 +773,38 @@ class ComposeFrameTests(unittest.TestCase):
         """内容很少时输入行也必须贴在底部，而不是浮在屏幕中间。"""
         short = AppState()
         short.push("assistant", "一行")
-        frame = compose_frame(short, SIZE)
+        frame = compose_frame(short, SIZE).text
         lines = frame.split("\n")
         self.assertIn("›", strip_ansi(lines[-3]))
 
     def test_empty_transcript_shows_a_hint(self) -> None:
-        frame = strip_ansi(compose_frame(AppState(), SIZE))
+        frame = strip_ansi(compose_frame(AppState(), SIZE).text)
         self.assertIn("还没有内容", frame)
 
     def test_scrolled_view_shows_older_content(self) -> None:
         state = AppState()
         for index in range(100):
             state.push("assistant", f"标记{index}")
-        compose_frame(state, SIZE)
+        compose_frame(state, SIZE).text
         state.scroll_offset = 50
-        frame = strip_ansi(compose_frame(state, SIZE))
+        frame = strip_ansi(compose_frame(state, SIZE).text)
         self.assertNotIn("标记99", frame, "上翻时不该显示最新内容")
         self.assertIn("已上翻", frame, "页脚应提示当前处于滚动状态")
 
     def test_slash_menu_appears_while_typing_command(self) -> None:
         state = AppState()
         state.set_input("/st")
-        frame = strip_ansi(compose_frame(state, SIZE))
+        frame = strip_ansi(compose_frame(state, SIZE).text)
         self.assertIn("/status", frame)
 
     def test_slash_menu_hidden_after_space(self) -> None:
         state = AppState()
         state.set_input("/goal 做点事")
-        frame = strip_ansi(compose_frame(state, SIZE))
+        frame = strip_ansi(compose_frame(state, SIZE).text)
         self.assertNotIn("创建/控制 Goal", frame)
 
     def test_mcp_waiting_shows_in_status(self) -> None:
-        frame = strip_ansi(compose_frame(AppState(), SIZE, mcp_waiting=True))
+        frame = strip_ansi(compose_frame(AppState(), SIZE, mcp_waiting=True).text)
         self.assertIn("MCP 连接中", frame)
 
 
@@ -838,6 +838,78 @@ class AppStateTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # 终端层（薄层，但仍要保证不 TTy 时安全）
 # ---------------------------------------------------------------------------
+
+
+class CursorAndMouseTests(unittest.TestCase):
+    """两个「照搬原实现会出问题」的细节。
+
+    原 `tty-app.ts` 开启鼠标跟踪**并**解析鼠标事件；我只搬了「开启」那一半，
+    于是用户一碰鼠标，终端发来的 `ESC[M…` 会被当成 Esc/乱码吃掉，输入行莫名
+    被清空。不处理鼠标就不该开启跟踪。
+
+    另外原实现会把光标定位到输入处；我最初漏了这一步，用户看不见自己在哪打字。
+    """
+
+    def test_enter_sequence_does_not_enable_mouse_tracking(self) -> None:
+        from minicode.tui.frames import (
+            ENABLE_MOUSE_TRACKING,
+            ENTER_ALT_SCREEN_BUNDLE,
+            EXIT_ALT_SCREEN_BUNDLE,
+        )
+
+        self.assertNotIn(
+            ENABLE_MOUSE_TRACKING,
+            ENTER_ALT_SCREEN_BUNDLE,
+            "不处理鼠标就不该开启鼠标跟踪",
+        )
+        # 退出时仍需显式关闭，以防外部遗留了开启状态。
+        self.assertIn("\x1b[?1000l", EXIT_ALT_SCREEN_BUNDLE)
+
+    def test_cursor_lands_on_the_input_row(self) -> None:
+        state = AppState()
+        state.set_input("abc")
+        result = compose_frame(state, SIZE)
+        lines = result.text.split("\n")
+        row, column = result.cursor
+
+        self.assertEqual(row, len(lines) - 2, "光标应在输入行（倒数第三行）")
+        self.assertIn("abc", strip_ansi(lines[row - 1]))
+        # 列 = 提示符 + 输入内容 + 1（1 基）
+        self.assertEqual(column, string_display_width("› abc") + 1)
+
+    def test_cursor_column_tracks_typing(self) -> None:
+        state = AppState()
+        columns: list[int] = []
+        for char in "hello":
+            state.set_input(state.input + char)
+            columns.append(compose_frame(state, SIZE).cursor[1])
+        self.assertEqual(columns, sorted(columns), "每多打一个字光标应右移一列")
+        self.assertEqual(len(set(columns)), len(columns))
+
+    def test_cursor_column_is_clamped_to_width(self) -> None:
+        """极窄终端下光标列不能超出屏宽，否则定位序列会跑到屏幕外。"""
+        state = AppState()
+        state.set_input("很长很长的输入" * 20)
+        for width in (40, 60, 80):
+            with self.subTest(width=width):
+                size = TerminalSize(columns=width, rows=24)
+                _row, column = compose_frame(state, size).cursor
+                self.assertLessEqual(column, width)
+
+    def test_cursor_is_not_counted_as_a_frame_change(self) -> None:
+        """光标位置每次可能变，但它不改变屏幕内容——不能因此全量重绘。"""
+        state = FrameState()
+        diff_frames("a\nb", state, columns=80, rows=24, cursor=(1, 1))
+        result = diff_frames("a\nb", state, columns=80, rows=24, cursor=(2, 5))
+        self.assertEqual(result.output, "", "内容未变就不该重绘")
+        self.assertEqual(result.trailing, "\x1b[2;5H", "但仍要重定位光标")
+        self.assertFalse(result.is_noop, "有光标定位就不算完全无事可做")
+
+    def test_render_emits_cursor_positioning(self) -> None:
+        stream = io.StringIO()
+        terminal = Terminal(stream, force_non_interactive=True)
+        terminal.render("a\nb", SIZE, cursor=(2, 3))
+        self.assertIn("\x1b[2;3H", stream.getvalue())
 
 
 class TerminalTests(unittest.TestCase):

@@ -14,11 +14,13 @@
 from .app import (
     AppState,
     BannerStats,
+    Frame,
     Layout,
     TranscriptEntry,
     compose_frame,
     compose_transcript_lines,
     compute_layout,
+    cursor_position,
     handle_key,
 )
 from .frames import (
@@ -106,6 +108,7 @@ __all__ = [
     "DIM",
     "ENTER_ALT_SCREEN",
     "EXIT_ALT_SCREEN",
+    "Frame",
     "FrameDiff",
     "FrameState",
     "GREEN",
@@ -142,6 +145,7 @@ __all__ = [
     "compose_frame",
     "compose_transcript_lines",
     "compute_layout",
+    "cursor_position",
     "cursor_to",
     "decode_key",
     "detect_size",

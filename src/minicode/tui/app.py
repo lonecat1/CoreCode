@@ -160,6 +160,10 @@ class AppState:
     #: 转录区末尾渲染后有多少行。`handle_key` 滚动时需要它，
     #: 因此由 `compose_frame` 回填，避免调用方为了滚动而重新渲染一遍。
     last_total_lines: int = 0
+    #: 输入行在整帧中的行号，以及光标在该行的列（均为**帧内**偏移）。
+    #: 由 `compose_frame` 回填，供 `cursor_position` 使用。
+    input_row_offset: int = 0
+    input_column: int = 1
 
     # -- 记录 ---------------------------------------------------------------
 
@@ -267,13 +271,32 @@ def compose_transcript_lines(state: AppState, width: int) -> list[str]:
     return lines
 
 
+@dataclass
+class Frame:
+    """一次组装的产物：整屏文本 + 光标应处的位置。
+
+    光标位置与文本一起算，是因为它依赖布局（输入行在第几行、行内第几列）。
+    让调用方自己再推算一遍既重复又容易算错。光标**不参与差分**——
+    它每次都可能变，但不改变屏幕内容。
+    """
+
+    text: str
+    #: 1 基的 `(行, 列)`。
+    cursor: tuple[int, int] = (1, 1)
+
+
+def cursor_position(state: AppState, size: TerminalSize) -> tuple[int, int]:
+    """只取光标位置（内部会组装一次帧）。"""
+    return compose_frame(state, size).cursor
+
+
 def compose_frame(
     state: AppState,
     size: TerminalSize,
     *,
     mcp_waiting: bool = False,
-) -> str:
-    """把状态渲染成整屏文本（含 ANSI）。
+) -> Frame:
+    """把状态渲染成整屏文本 + 光标位置。
 
     宽度做成参数而不是去读终端，因此「面板在 80 列下是否溢出」这类问题
     可以被测试直接断言。
@@ -320,7 +343,8 @@ def compose_frame(
     if string_display_width(shown) > available:
         # 只显示尾部：光标总在末尾附近。
         shown = truncate_plain(shown, available) if available > 3 else shown[-available:]
-    parts.append(f"{BRIGHT_CYAN}{prompt}{RESET}{shown}")
+    input_line = f"{BRIGHT_CYAN}{prompt}{RESET}{shown}"
+    parts.append(input_line)
 
     status = state.status
     if mcp_waiting and not status:
@@ -332,7 +356,12 @@ def compose_frame(
         hint = f"已上翻 {offset} 行 · End 回到底部 · {hint}"
     parts.append(render_footer_bar(hint, width))
 
-    return "\n".join(parts)
+    text = "\n".join(parts)
+    # 输入行是「状态行之前的那一行」，即整帧的倒数第三行。
+    # 用实际行数推算，而不是累计各 part 的行数——后者容易在改动布局时失效。
+    row = max(1, len(text.split("\n")) - 2)
+    column = max(1, min(string_display_width(prompt + shown) + 1, width))
+    return Frame(text=text, cursor=(row, column))
 
 
 # ---------------------------------------------------------------------------

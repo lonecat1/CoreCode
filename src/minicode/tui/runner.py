@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -53,6 +54,8 @@ class UiEvents:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _pending: list[tuple[str, str, bool | None]] = field(default_factory=list)
     _finished: bool = False
+    #: 最近一次提交启动的回合线程。退出时用它等待收尾，避免丢掉正在生成的回答。
+    current_worker: threading.Thread | None = None
 
     def push(self, kind: str, text: str, ok: bool | None = None) -> None:
         with self._lock:
@@ -90,7 +93,6 @@ def run_tui(
     worker: threading.Thread | None = None
     running = False
     iterations = 0
-
     def apply_events() -> None:
         nonlocal running
         items, finished = events.drain()
@@ -115,14 +117,17 @@ def run_tui(
     try:
         while True:
             apply_events()
-            size = detect_size()
-            frame = compose_frame(state, size, mcp_waiting=running and not state.status)
-            term.render(frame, size)
+            # 尺寸直接取自 Terminal（它内部可注入尺寸源，便于测试）。
+            size = term.size()
+            assembled = compose_frame(
+                state, size, mcp_waiting=running and not state.status
+            )
+            term.render(assembled.text, size, cursor=assembled.cursor)
 
             key = term.read_key()
             if key is None:
-                # 非阻塞读取拿到空：让出 CPU，避免忙等烧满一核。
-                threading.Event().wait(0.03)
+                # 没有按键：让出 CPU 一小会儿，避免忙等烧满一核。
+                time.sleep(0.03)
                 iterations += 1
                 if max_iterations is not None and iterations >= max_iterations:
                     return 0
@@ -136,6 +141,12 @@ def run_tui(
 
             outcome = handle_key(state, key, size)
             if outcome.quit:
+                # 退出前必须等后台回合结束。
+                #
+                # 不等的话，用户「提交提问 → 立刻 Ctrl-D」会丢掉正在生成的回答：
+                # 主循环返回、进程退出，daemon 线程被连带杀掉。这是真实缺陷，
+                # 由「脚本化按键驱动循环」的测试抓出来的——纯函数测试看不到它。
+                _wait_for_worker(worker, state, events)
                 return 0
             if outcome.interrupt:
                 state.status = "已取消输入"
@@ -145,6 +156,7 @@ def run_tui(
                 running = running or bridge.is_busy()
                 if running:
                     state.status = "思考中…"
+                worker = _current_worker(events)
 
             if max_iterations is not None and iterations >= max_iterations:
                 return 0
@@ -152,6 +164,27 @@ def run_tui(
         # 无论如何都要恢复终端：留在一个没有光标的交替屏幕里是最糟的失败方式。
         term.disable_raw_mode()
         term.leave()
+
+
+#: 退出时等待后台回合的上限（秒）。超时就放弃——不能让用户按了 Ctrl-D 之后
+#: 卡在一个无响应的界面里。
+_EXIT_WAIT_SECONDS = 30.0
+
+
+def _wait_for_worker(
+    worker: threading.Thread | None, state: AppState, events: UiEvents
+) -> None:
+    """等待后台回合收尾，并把仍未并入状态的事件应用掉。"""
+    target = worker if worker is not None else _current_worker(events)
+    if target is None or not target.is_alive():
+        return
+    state.status = "正在收尾…"
+    target.join(_EXIT_WAIT_SECONDS)
+
+
+def _current_worker(events: UiEvents) -> threading.Thread | None:
+    """取出最近一次提交启动的回合线程。"""
+    return events.current_worker
 
 
 def _dispatch(
@@ -165,12 +198,18 @@ def _dispatch(
     state.push("user", text)
 
     if text.startswith("/"):
+        stripped = text.strip()
         reply = bridge.run_local(text)
         if reply is not None:
             state.push("notice", reply)
             return
-        if text.strip() in ("/exit", "/quit"):
-            return
+        # `run_local` 返回 None 表示「不是可处理的本地命令」。
+        #
+        # 这里必须**明确报错并停止**，不能落到下面的模型回合：行模式下未知
+        # 斜杠命令会提示「未知命令」，若 TUI 把它当普通提问发给模型，两种模式
+        # 行为就不一致了，而且模型会对着一串命令瞎猜。
+        state.push("error", f"未知命令：{stripped}。输入 /help 查看可用命令。")
+        return
 
     if running:
         state.push("error", "上一个回合还在运行。用 Ctrl-C 中断它。")
@@ -184,7 +223,9 @@ def _dispatch(
         finally:
             events.mark_finished()
 
-    threading.Thread(target=work, name="minicode-turn", daemon=True).start()
+    thread = threading.Thread(target=work, name="minicode-turn", daemon=True)
+    events.current_worker = thread
+    thread.start()
 
 
 def build_banner_stats(host: Any) -> BannerStats:

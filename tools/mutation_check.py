@@ -28,6 +28,7 @@ MCP_JSONRPC = os.path.join(REPO, "src", "minicode", "mcp", "jsonrpc.py")
 TUI_FRAMES = os.path.join(REPO, "src", "minicode", "tui", "frames.py")
 TUI_WIDTH = os.path.join(REPO, "src", "minicode", "tui", "width.py")
 TUI_PANELS = os.path.join(REPO, "src", "minicode", "tui", "panels.py")
+TUI_RUNNER = os.path.join(REPO, "src", "minicode", "tui", "runner.py")
 CONFIG = os.path.join(REPO, "src", "minicode", "config.py")
 TOOLS_FILES = os.path.join(REPO, "src", "minicode", "tools", "files.py")
 TOOLS_GREP = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
@@ -315,6 +316,30 @@ MUTATIONS = [
         TOOLS_FILES,
         '    recursive = bool(data.get("recursive", False)) or bool(glob)',
         "    recursive = True",
+    ),
+    (
+        "TUI: 进入备用屏幕时又开启鼠标跟踪（不处理却开启）",
+        TUI_FRAMES,
+        "ENTER_ALT_SCREEN_BUNDLE = (\n"
+        "    DISABLE_MOUSE_TRACKING + ENTER_ALT_SCREEN + ERASE_SCREEN_AND_HOME\n"
+        ")",
+        "ENTER_ALT_SCREEN_BUNDLE = (\n"
+        "    DISABLE_MOUSE_TRACKING + ENTER_ALT_SCREEN + ERASE_SCREEN_AND_HOME\n"
+        "    + ENABLE_MOUSE_TRACKING\n"
+        ")",
+    ),
+    (
+        "TUI: 不再输出光标定位（用户看不见在哪儿打字）",
+        TUI_FRAMES,
+        "    if cursor is not None:\n        trailing = cursor_to(cursor[0], cursor[1])",
+        "    if False:\n        trailing = cursor_to(cursor[0], cursor[1])",
+    ),
+    (
+        "TUI: 未知斜杠命令被当成提问发给模型",
+        TUI_RUNNER,
+        '        state.push("error", f"未知命令：{stripped}。输入 /help 查看可用命令。")\n'
+        "        return",
+        '        state.push("error", "未知命令")',
     ),
 ]
 

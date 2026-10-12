@@ -42,9 +42,15 @@ DISABLE_MOUSE_TRACKING = "\x1b[?1006l\x1b[?1002l\x1b[?1000l"
 HIDE_CURSOR = "\x1b[?25l"
 SHOW_CURSOR = "\x1b[?25h"
 
-#: 交替屏幕的进入/退出组合，避免调用方漏掉某一步。
+#: 交替屏幕的进入/退出组合。
+#:
+#: **刻意不开启鼠标跟踪。** 原实现的进入序列里带了
+#: `ESC[?1000h ESC[?1002h ESC[?1006h`，但那套代码同时解析鼠标事件；
+#: 本实现不处理鼠标，若照样开启，用户一碰鼠标终端就发来 `ESC[M…` 序列，
+#: 会被按键解码当成 Esc 或乱码吃掉——表现为「输入行莫名被清空」。
+#: 不开就不会有这些杂散序列。
 ENTER_ALT_SCREEN_BUNDLE = (
-    DISABLE_MOUSE_TRACKING + ENTER_ALT_SCREEN + ERASE_SCREEN_AND_HOME + ENABLE_MOUSE_TRACKING
+    DISABLE_MOUSE_TRACKING + ENTER_ALT_SCREEN + ERASE_SCREEN_AND_HOME
 )
 EXIT_ALT_SCREEN_BUNDLE = DISABLE_MOUSE_TRACKING + EXIT_ALT_SCREEN
 
@@ -75,10 +81,12 @@ class FrameDiff:
     output: str
     full_render: bool
     changed_lines: list[int] = field(default_factory=list)
+    #: 由调用方在写完 `output` 之后追加的序列（例如把光标移到输入位置）。
+    trailing: str = ""
 
     @property
     def is_noop(self) -> bool:
-        return not self.output
+        return not self.output and not self.trailing
 
 
 def diff_frames(
@@ -87,12 +95,21 @@ def diff_frames(
     *,
     columns: int,
     rows: int,
+    cursor: tuple[int, int] | None = None,
 ) -> FrameDiff:
     """算出渲染这一帧需要写出的内容，并更新 `state`。
 
     `state` 会被就地修改（它代表「屏幕上现在是什么」）。
+
+    `cursor` 是 1 基的 `(行, 列)`，用于把光标移到输入位置。它**不参与差分**
+    ——光标每次都可能变，但它不改变屏幕内容，因此必须独立于「哪些行变了」
+    的判断，否则每帧都会被判定为「有变化」而全量重绘。
     """
     lines = frame.split("\n")
+
+    trailing = ""
+    if cursor is not None:
+        trailing = cursor_to(cursor[0], cursor[1])
 
     force_full = (
         state.lines is None or state.columns != columns or state.rows != rows
@@ -103,7 +120,12 @@ def diff_frames(
         state.lines = lines
         state.columns = columns
         state.rows = rows
-        return FrameDiff(output=output, full_render=True, changed_lines=list(range(len(lines))))
+        return FrameDiff(
+            output=output,
+            full_render=True,
+            changed_lines=list(range(len(lines))),
+            trailing=trailing,
+        )
 
     previous = state.lines or []
     max_lines = max(len(previous), len(lines))
@@ -132,7 +154,12 @@ def diff_frames(
     state.columns = columns
     state.rows = rows
 
-    return FrameDiff(output="".join(parts), full_render=False, changed_lines=changed)
+    return FrameDiff(
+        output="".join(parts),
+        full_render=False,
+        changed_lines=changed,
+        trailing=trailing,
+    )
 
 
 def clear_screen_sequence() -> str:
