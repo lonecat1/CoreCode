@@ -29,6 +29,8 @@ TUI_FRAMES = os.path.join(REPO, "src", "minicode", "tui", "frames.py")
 TUI_WIDTH = os.path.join(REPO, "src", "minicode", "tui", "width.py")
 TUI_PANELS = os.path.join(REPO, "src", "minicode", "tui", "panels.py")
 CONFIG = os.path.join(REPO, "src", "minicode", "config.py")
+TOOLS_FILES = os.path.join(REPO, "src", "minicode", "tools", "files.py")
+TOOLS_GREP = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -293,6 +295,26 @@ MUTATIONS = [
         CONFIG,
         "        if self.thinking in (\"enabled\", \"disabled\"):",
         "        if self.thinking is not None:",
+    ),
+    (
+        "list_files: glob 不再过滤（递归列出全部文件）",
+        TOOLS_FILES,
+        "                if glob and not _match_glob(name, glob):\n"
+        "                    continue",
+        "                if False:\n"
+        "                    continue",
+    ),
+    (
+        "list_files: 递归时不再跳过 __pycache__（统计偏大）",
+        TOOLS_GREP,
+        '        "__pycache__",\n',
+        "",
+    ),
+    (
+        "list_files: 默认也递归（破坏原有单层行为）",
+        TOOLS_FILES,
+        '    recursive = bool(data.get("recursive", False)) or bool(glob)',
+        "    recursive = True",
     ),
 ]
 

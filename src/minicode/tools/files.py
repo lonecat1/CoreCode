@@ -51,13 +51,55 @@ def _optional_int(data: Any, key: str) -> int | None:
 # ---------------------------------------------------------------------------
 
 
+def _match_glob(name: str, pattern: str) -> bool:
+    """大小写不敏感的通配匹配。只针对**文件名**，不针对路径。"""
+    import fnmatch
+
+    return fnmatch.fnmatch(name.lower(), pattern.lower())
+
+
 def _run_list_files(data: Any, context: ToolContext) -> ToolResult:
     target = resolve_tool_path(context, str(data.get("path", ".") or "."), "list")
     if not os.path.isdir(target):
         return ToolResult.failure(f"不是目录或不存在：{data.get('path', '.')}")
 
+    glob = str(data.get("glob", "") or "").strip()
+    recursive = bool(data.get("recursive", False)) or bool(glob)
+
     entries: list[str] = []
     truncated = False
+
+    if recursive:
+        # 递归枚举：以 glob 过滤（未给 glob 时列出全部文件）。
+        #
+        # 加这个能力的原因：任务「统计某目录下有多少 .py 文件」在没有递归
+        # 列举时无解——`list_files` 只列一层，`grep_files` 返回匹配行而非
+        # 文件名。实测中较弱的模型为此连续调用 11 次 list_files 来暴力枚举。
+        # （原 TS 实现同样只有单层列举，因此这是**增强**，原有行为不变。）
+        from .grep_files import SKIP_DIRECTORIES
+
+        for root, dirs, files in os.walk(target):
+            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRECTORIES)
+            for name in sorted(files):
+                if glob and not _match_glob(name, glob):
+                    continue
+                if len(entries) >= MAX_LIST_ENTRIES:
+                    truncated = True
+                    break
+                relative = os.path.relpath(os.path.join(root, name), target)
+                entries.append(relative.replace(os.sep, "/"))
+            if truncated:
+                break
+
+        if not entries:
+            body = f"(没有匹配 {glob} 的文件)" if glob else "(空目录)"
+        else:
+            body = "\n".join(entries)
+            body += f"\n\n共 {len(entries)} 个文件"
+            if truncated:
+                body += f"（已截断，上限 {MAX_LIST_ENTRIES}）"
+        return ToolResult.success(body)
+
     for name in sorted(os.listdir(target)):
         if len(entries) >= MAX_LIST_ENTRIES:
             truncated = True
@@ -82,14 +124,31 @@ def _run_list_files(data: Any, context: ToolContext) -> ToolResult:
 
 list_files_tool = ToolDefinition(
     name="list_files",
-    description="列出工作目录下某个目录的条目。",
+    description=(
+        "列出某个目录的条目。默认只列一层；给出 glob 时会**递归**列出匹配的"
+        "文件名（例如 glob=\"*.py\"），适合统计或定位某类文件。"
+    ),
     input_schema={
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "相对工作目录的路径，默认 ."}
+            "path": {"type": "string", "description": "相对工作目录的路径，默认 ."},
+            "glob": {
+                "type": "string",
+                "description": (
+                    "文件名通配（如 *.py）。给出后会递归遍历子目录并只返回匹配的文件名。"
+                ),
+            },
+            "recursive": {
+                "type": "boolean",
+                "description": "为真时递归列出所有文件（不给 glob 则列出全部）。",
+            },
         },
     },
-    validator=lambda data: {"path": str((data or {}).get("path", ".") or ".")},
+    validator=lambda data: {
+        "path": str((data or {}).get("path", ".") or "."),
+        "glob": str((data or {}).get("glob", "") or ""),
+        "recursive": bool((data or {}).get("recursive", False)),
+    },
     run=_run_list_files,
 )
 

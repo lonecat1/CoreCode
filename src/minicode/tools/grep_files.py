@@ -27,6 +27,10 @@ MAX_MATCHES = 200
 MAX_LINE_CHARS = 500
 
 #: 纯 Python 回退时跳过的目录名。
+#:
+#: `__pycache__` 在这里是**必需**的：文本搜索靠二进制后缀过滤能挡掉 .pyc，
+#: 但递归列文件（list_files 的 glob 模式）会把它列出来，导致「有多少个
+#: .py 文件」这类统计偏大。
 SKIP_DIRECTORIES = frozenset(
     {
         ".git",
@@ -43,6 +47,8 @@ SKIP_DIRECTORIES = frozenset(
         "build",
         ".next",
         "target",
+        ".tox",
+        ".eggs",
     }
 )
 
