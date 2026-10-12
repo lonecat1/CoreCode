@@ -303,7 +303,26 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
+def _ensure_utf8_output() -> None:
+    """把 stdout/stderr 钉在 UTF-8。
+
+    Windows 控制台默认编码是 cp936 之类，而本程序的界面文本是中文。
+    不处理的话用户看到的是乱码——「程序明明能用却像是坏了」。
+
+    无法重配时静默跳过；errors="replace" 保证任何编码异常都不会中断程序。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
 

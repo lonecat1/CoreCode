@@ -16,6 +16,8 @@ import os
 import subprocess
 import sys
 
+from _shared import force_utf8_output
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, "src")
 
@@ -64,4 +66,5 @@ def _module_exists(name: str) -> bool:
 
 
 if __name__ == "__main__":
+    force_utf8_output()
     raise SystemExit(main())

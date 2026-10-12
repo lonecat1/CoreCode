@@ -11,7 +11,11 @@ import re
 import subprocess
 import sys
 
-REPO = r"D:\CoreCode\minicode-py"
+from _shared import force_utf8_output
+
+#: 从脚本自身位置推导，而不是写死路径——否则仓库换目录（或换机器）就失效，
+#: 而且失败方式很隐蔽（会去改一个不存在的路径）。
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
 SESSION = os.path.join(REPO, "src", "minicode", "runtime", "session.py")
 GOAL_CTRL = os.path.join(REPO, "src", "minicode", "runtime", "goal_controller.py")
@@ -424,4 +428,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    force_utf8_output()
     raise SystemExit(main())

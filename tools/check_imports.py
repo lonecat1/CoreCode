@@ -26,6 +26,8 @@ import ast
 import os
 import sys
 
+from _shared import force_utf8_output
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, "src")
 PACKAGE = "minicode"
@@ -191,4 +193,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    force_utf8_output()
     raise SystemExit(main())

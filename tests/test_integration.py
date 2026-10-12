@@ -342,6 +342,64 @@ class McpConfigTests(IntegrationTestCase):
         self.assertTrue(host.tools.find("read_file") is not None)
 
 
+class Utf8OutputTests(IntegrationTestCase):
+    """Windows 控制台默认编码是 cp936，而程序输出是中文。
+
+    不做处理时用户看到乱码——「程序明明能用却像是坏了」，比一个明确的报错
+    更糟。这条测试钉住启动时的编码重配。
+    """
+
+    def test_main_reconfigures_stdout_to_utf8(self) -> None:
+        import subprocess
+
+        # 必须用真实子进程：编码只有在新进程里才看得出效果。
+        script = (
+            "import sys; sys.path.insert(0, r'"
+            + os.path.join(os.path.dirname(_HERE), "src")
+            + "');"
+            "from minicode.cli import _ensure_utf8_output;"
+            "_ensure_utf8_output();"
+            "print('encoding=' + str(sys.stdout.encoding))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=WORKDIR,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("utf-8", result.stdout.lower())
+
+    def test_utf8_helper_tolerates_streams_without_reconfigure(self) -> None:
+        """stdout 被替换成不支持 reconfigure 的对象时不能抛。"""
+        import io
+
+        from minicode.cli import _ensure_utf8_output
+
+        original = sys.stdout
+        try:
+            sys.stdout = io.StringIO()  # StringIO 没有 reconfigure
+            _ensure_utf8_output()  # 不应抛
+        finally:
+            sys.stdout = original
+
+    def test_all_tools_share_the_same_helper(self) -> None:
+        """三个开发工具都必须接入，否则工具输出仍然乱码。"""
+        tools_dir = Path(WORKDIR) / "tools"
+        for name in ("check_imports.py", "mutation_check.py", "self_check.py"):
+            with self.subTest(tool=name):
+                text = (tools_dir / name).read_text(encoding="utf-8")
+                self.assertIn("force_utf8_output", text, f"{name} 未接入 UTF-8 修复")
+
+    def test_mutation_check_repo_path_is_derived_not_hardcoded(self) -> None:
+        """REPO 必须从脚本位置推导；写死路径换目录就静默失效。"""
+        text = (Path(WORKDIR) / "tools" / "mutation_check.py").read_text(encoding="utf-8")
+        self.assertNotIn('REPO = r"', text, "REPO 不应是硬编码字符串字面量")
+        self.assertIn("os.path.abspath(__file__)", text)
+
+
 class SessionLifecycleTests(IntegrationTestCase):
     """会话的装载 / 分叉 / 清空在装配后的行为。"""
 
