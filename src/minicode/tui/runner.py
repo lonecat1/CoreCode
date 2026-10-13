@@ -1,18 +1,23 @@
-"""TUI 运行循环 —— 把界面接到会话宿主上。
+"""TUI 运行循环 —— 内联实时区域。
 
 ## 线程模型
 
 回合在**后台线程**里跑，主线程只负责「读键 → 改状态 → 重绘」。这样模型思考
-的几秒里界面仍然能响应翻页与中断——不然 TUI 相比行模式就只多了颜色。
+的几秒里界面仍然响应翻页与中断——不然 TUI 相比行模式就只多了颜色。
 
-跨线程地更新同一个 `AppState` 会踩数据竞争，因此所有来自回合线程的输出都
-经过一把锁 + 一个待处理队列，只在主线程的重绘点并入状态。**回合线程永远
-不直接写终端**。
+跨线程更新同一个 `AppState` 会踩数据竞争，因此所有来自回合线程的输出都经过
+一把锁 + 一个待处理队列，只在主线程的重绘点并入状态。**回合线程永远不直接
+写终端。**
 
-## 为什么 `run_tui` 这么短
+## 降级
 
-因为界面逻辑都在 `app.py`（纯函数）和 `frames.py`（纯函数）里。这里只剩
-「接线」：读键、派发、收尾。无法在自动化环境里验证的代码越少越好。
+`Terminal.interactive` 为假时返回 `-1`，调用方回退到行模式。因此
+`minicode --tui` 在管道/CI 里仍然可用。
+
+## 退出时等待收尾
+
+按 Ctrl-D 退出时先等后台回合结束（有上限），否则「提交提问 → 立刻 Ctrl-D」
+会丢掉正在生成的回答：主循环返回、进程退出、daemon 线程被连带杀掉。
 """
 
 from __future__ import annotations
@@ -22,15 +27,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .app import AppState, BannerStats, compose_frame, handle_key
-from .terminal import (
-    KEY_CTRL_C,
-    KEY_CTRL_D,
-    Terminal,
-    TerminalSize,
-    detect_size,
-    is_tty,
-)
+from .app import AppState, BannerStats, compose_region, handle_key
+from .terminal import KEY_CTRL_C, KEY_CTRL_D, Terminal, TerminalSize, detect_size
+
+#: 无按键时的重绘间隔（秒）。30ms 约等于 33 帧/秒，转圈动画足够顺，
+#: 又不至于让 CPU 空转。
+_FRAME_INTERVAL = 0.03
+
+#: 退出时等待后台回合的上限（秒）。超时就放弃——不能让用户按了 Ctrl-D
+#: 之后卡在一个无响应的界面里。
+_EXIT_WAIT_SECONDS = 30.0
 
 
 @dataclass
@@ -52,20 +58,22 @@ class UiEvents:
     """来自回合线程的输出。用锁保护，主线程在重绘点取走。"""
 
     _lock: threading.Lock = field(default_factory=threading.Lock)
-    _pending: list[tuple[str, str, bool | None]] = field(default_factory=list)
+    _pending: list[tuple[str, str, bool | None, str]] = field(default_factory=list)
     _finished: bool = False
-    #: 最近一次提交启动的回合线程。退出时用它等待收尾，避免丢掉正在生成的回答。
+    #: 最近一次提交启动的回合线程。退出时用它等待收尾。
     current_worker: threading.Thread | None = None
 
-    def push(self, kind: str, text: str, ok: bool | None = None) -> None:
+    def push(
+        self, kind: str, text: str, ok: bool | None = None, detail: str = ""
+    ) -> None:
         with self._lock:
-            self._pending.append((kind, text, ok))
+            self._pending.append((kind, text, ok, detail))
 
     def mark_finished(self) -> None:
         with self._lock:
             self._finished = True
 
-    def drain(self) -> tuple[list[tuple[str, str, bool | None]], bool]:
+    def drain(self) -> tuple[list[tuple[str, str, bool | None, str]], bool]:
         with self._lock:
             items = self._pending
             self._pending = []
@@ -81,30 +89,27 @@ def run_tui(
     terminal: Terminal | None = None,
     max_iterations: int | None = None,
 ) -> int:
-    """交互式循环。返回进程退出码。
-
-    `max_iterations` 只给测试用——真实交互不设上限。
-    """
+    """交互式循环。返回进程退出码；`-1` 表示「请调用方回退到行模式」。"""
     term = terminal or Terminal()
     if not term.interactive:
-        return -1  # 调用方应回退到行模式
+        return -1
 
     events = UiEvents()
-    worker: threading.Thread | None = None
     running = False
     iterations = 0
+
     def apply_events() -> None:
         nonlocal running
         items, finished = events.drain()
-        for kind, text, ok in items:
+        for kind, text, ok, detail in items:
             if kind == "tool_start":
                 state.push("tool", text, ok=None)
             elif kind == "tool_result":
-                # 尝试收尾对应的「运行中」条目；找不到就单开一条。
-                if not state.update_running_tool(text, ok):
-                    state.push("tool", text, ok=ok)
+                # 收尾对应的「运行中」条目；找不到就单开一条。
+                if not state.update_running_tool(text, ok, detail):
+                    state.push("tool", text, ok=ok, detail=detail)
             else:
-                state.push(kind, text)
+                state.push(kind, text, detail=detail)
         if finished:
             running = False
             state.running = False
@@ -117,17 +122,19 @@ def run_tui(
     try:
         while True:
             apply_events()
-            # 尺寸直接取自 Terminal（它内部可注入尺寸源，便于测试）。
             size = term.size()
-            assembled = compose_frame(
-                state, size, mcp_waiting=running and not state.status
+            region = compose_region(state, size.columns, size.rows)
+            term.render_region(
+                region.lines,
+                cursor_row=region.cursor_row,
+                cursor_column=region.cursor_column,
             )
-            term.render(assembled.text, size, cursor=assembled.cursor)
 
             key = term.read_key()
             if key is None:
-                # 没有按键：让出 CPU 一小会儿，避免忙等烧满一核。
-                time.sleep(0.03)
+                # 没有按键：让出 CPU 一小会儿，同时推进转圈动画。
+                state.animation_frame += 1
+                time.sleep(_FRAME_INTERVAL)
                 iterations += 1
                 if max_iterations is not None and iterations >= max_iterations:
                     return 0
@@ -141,50 +148,34 @@ def run_tui(
 
             outcome = handle_key(state, key, size)
             if outcome.quit:
-                # 退出前必须等后台回合结束。
-                #
-                # 不等的话，用户「提交提问 → 立刻 Ctrl-D」会丢掉正在生成的回答：
-                # 主循环返回、进程退出，daemon 线程被连带杀掉。这是真实缺陷，
-                # 由「脚本化按键驱动循环」的测试抓出来的——纯函数测试看不到它。
-                _wait_for_worker(worker, state, events)
+                _wait_for_worker(events, state)
                 return 0
             if outcome.interrupt:
                 state.status = "已取消输入"
                 continue
             if outcome.submit is not None:
+                # 首条消息之后收起启动横幅，把空间让给对话。
+                state.show_banner = False
                 _dispatch(state, bridge, events, outcome.submit, running)
                 running = running or bridge.is_busy()
                 if running:
                     state.status = "思考中…"
-                worker = _current_worker(events)
 
             if max_iterations is not None and iterations >= max_iterations:
                 return 0
     finally:
-        # 无论如何都要恢复终端：留在一个没有光标的交替屏幕里是最糟的失败方式。
+        # 无论如何都要恢复终端：留在没有光标的终端里是最糟的失败方式。
         term.disable_raw_mode()
         term.leave()
 
 
-#: 退出时等待后台回合的上限（秒）。超时就放弃——不能让用户按了 Ctrl-D 之后
-#: 卡在一个无响应的界面里。
-_EXIT_WAIT_SECONDS = 30.0
-
-
-def _wait_for_worker(
-    worker: threading.Thread | None, state: AppState, events: UiEvents
-) -> None:
-    """等待后台回合收尾，并把仍未并入状态的事件应用掉。"""
-    target = worker if worker is not None else _current_worker(events)
-    if target is None or not target.is_alive():
+def _wait_for_worker(events: UiEvents, state: AppState) -> None:
+    """等待后台回合收尾，避免丢掉正在生成的回答。"""
+    worker = events.current_worker
+    if worker is None or not worker.is_alive():
         return
     state.status = "正在收尾…"
-    target.join(_EXIT_WAIT_SECONDS)
-
-
-def _current_worker(events: UiEvents) -> threading.Thread | None:
-    """取出最近一次提交启动的回合线程。"""
-    return events.current_worker
+    worker.join(_EXIT_WAIT_SECONDS)
 
 
 def _dispatch(
@@ -236,18 +227,19 @@ def build_banner_stats(host: Any) -> BannerStats:
     stats = BannerStats()
 
     runtime = getattr(host, "runtime_config", None)
-    stats.model = getattr(runtime, "model", "") or "未配置（离线 mock）"
+    stats.model = getattr(runtime, "model", "") or "离线 mock"
     stats.session_id = getattr(host, "session_id", "")
     stats.cwd = getattr(host, "cwd", "")
 
     messages = getattr(host, "messages", []) or []
     stats.message_count = len(messages)
-    stats.transcript_count = sum(
-        1 for m in messages if m.get("role") == "assistant_tool_call"
-    )
 
     tools = getattr(host, "tools", None)
     if tools is not None:
+        try:
+            stats.tool_count = len(tools.list())
+        except Exception:  # noqa: BLE001
+            stats.tool_count = 0
         try:
             stats.skill_count = len(tools.skills())
         except Exception:  # noqa: BLE001
@@ -258,12 +250,19 @@ def build_banner_stats(host: Any) -> BannerStats:
             stats.mcp_connected = sum(
                 1 for s in servers if s.get("status") == "connected"
             )
-            stats.mcp_connecting = sum(
-                1 for s in servers if s.get("status") == "connecting"
-            )
             stats.mcp_error = sum(1 for s in servers if s.get("status") == "error")
         except Exception:  # noqa: BLE001
             pass
+
+    # 上下文占用：从最近的 provider usage 推算，失败就不显示。
+    try:
+        from ..context.tokens import compute_context_stats
+
+        if runtime is not None and messages:
+            computed = compute_context_stats(messages, runtime.model)
+            stats.context_percent = round(computed.utilization * 100)
+    except Exception:  # noqa: BLE001
+        pass
 
     return stats
 

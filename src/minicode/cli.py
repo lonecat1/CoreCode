@@ -367,9 +367,13 @@ def main(argv: list[str] | None = None) -> int:
             code = _run_tui(host)
             if code is not None:
                 return code
+            # 回退原因要说清楚，并给出可操作的建议。
+            # 静默回退会让用户以为「--tui 没生效」，却不知道原因。
             print(
-                "当前环境不是真实终端，已回退到行模式。"
-                "（全屏界面需要 TTY；管道或重定向下无法使用）",
+                "无法进入全屏界面：当前不是交互式终端。\n"
+                "  --tui 需要 stdin 与 stdout 都是终端（管道、重定向、CI 里不是）。\n"
+                "  已回退到行模式。若你在真实终端里看到这条消息，"
+                "请检查是否把输出重定向到了文件或管道。",
                 file=sys.stderr,
             )
         return _run_repl(host)
@@ -387,7 +391,6 @@ def _run_tui(host: SessionHost) -> int | None:
         HostBridge,
         Terminal,
         build_banner_stats,
-        make_terminal_events,
         run_tui,
     )
 
@@ -395,7 +398,9 @@ def _run_tui(host: SessionHost) -> int | None:
     if not terminal.interactive:
         return None
 
-    events_holder: dict[str, Any] = {}
+    from .tui import UiEvents
+
+    events = UiEvents()
     state = AppState()
     state.banner = build_banner_stats(host)
 
@@ -406,25 +411,19 @@ def _run_tui(host: SessionHost) -> int | None:
         return handle_local_command(host, text)
 
     def run_turn(text: str) -> None:
-        events = events_holder["events"]
-
-        def on_assistant(content: str, is_final: bool) -> None:
-            events.push("assistant", content)
-
-        def on_progress(content: str) -> None:
-            events.push("progress", content)
-
-        def on_tool_start(name: str, data: Any) -> None:
-            events.push("tool_start", str(name))
-
-        def on_tool_result(name: str, output: str, is_error: bool) -> None:
-            events.push("tool_result", str(name), not is_error)
-
-        host.callbacks.on_assistant = on_assistant
-        host.callbacks.on_progress = on_progress
-        host.callbacks.on_tool_start = on_tool_start
-        host.callbacks.on_tool_result = on_tool_result
-        host.callbacks.on_notice = lambda text: events.push("notice", text)
+        # 把宿主的观察点接到事件队列上。回合跑在后台线程，因此只能往队列里
+        # 推事件，由主线程在重绘点并入——直接改状态会踩数据竞争。
+        host.callbacks.on_assistant = lambda content, _final: events.push(
+            "assistant", content
+        )
+        host.callbacks.on_progress = lambda content: events.push("progress", content)
+        host.callbacks.on_tool_start = lambda name, _data: events.push(
+            "tool_start", str(name)
+        )
+        host.callbacks.on_tool_result = lambda name, output, is_error: events.push(
+            "tool_result", str(name), not is_error, str(output)[:200]
+        )
+        host.callbacks.on_notice = lambda content: events.push("notice", content)
 
         result = host.runtime.submit(text)
         if result.outcome in ("failed", "aborted"):
@@ -436,11 +435,6 @@ def _run_tui(host: SessionHost) -> int | None:
         is_busy=lambda: host.is_busy,
         summary=lambda: build_banner_stats(host),
     )
-
-    # 事件对象要先于回调存在，因此在这里构造并放进 holder。
-    from .tui import UiEvents
-
-    events_holder["events"] = UiEvents()
     return run_tui(state, bridge, terminal=terminal)
 
 

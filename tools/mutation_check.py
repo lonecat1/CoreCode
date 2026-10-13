@@ -25,9 +25,11 @@ SKILLS = os.path.join(REPO, "src", "minicode", "skills.py")
 TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
 MCP_STDIO = os.path.join(REPO, "src", "minicode", "mcp", "stdio_client.py")
 MCP_JSONRPC = os.path.join(REPO, "src", "minicode", "mcp", "jsonrpc.py")
-TUI_FRAMES = os.path.join(REPO, "src", "minicode", "tui", "frames.py")
 TUI_WIDTH = os.path.join(REPO, "src", "minicode", "tui", "width.py")
-TUI_PANELS = os.path.join(REPO, "src", "minicode", "tui", "panels.py")
+TUI_SCREEN = os.path.join(REPO, "src", "minicode", "tui", "screen.py")
+TUI_APP = os.path.join(REPO, "src", "minicode", "tui", "app.py")
+TUI_THEME = os.path.join(REPO, "src", "minicode", "tui", "theme.py")
+TUI_TERMINAL = os.path.join(REPO, "src", "minicode", "tui", "terminal.py")
 TUI_RUNNER = os.path.join(REPO, "src", "minicode", "tui", "runner.py")
 CONFIG = os.path.join(REPO, "src", "minicode", "config.py")
 TOOLS_FILES = os.path.join(REPO, "src", "minicode", "tools", "files.py")
@@ -219,29 +221,48 @@ MUTATIONS = [
         "                return messages",
     ),
     (
-        "TUI: 相同帧也重绘（差分失效）",
-        TUI_FRAMES,
-        "        if next_exists == prev_exists and next_line == previous_line:\n"
-        "            continue",
-        "        if False:\n            continue",
+        "TUI: 未变化的行也重绘（差分失效，会闪）",
+        TUI_SCREEN,
+        "                if old == line:\n"
+        "                    # 没变：只移动，不重写。这是「不闪」的关键。\n"
+        "                    continue",
+        "                if False:\n                    continue",
     ),
     (
-        "TUI: 列数变化不再强制全量重绘",
-        TUI_FRAMES,
-        "        state.lines is None or state.columns != columns or state.rows != rows",
-        "        state.lines is None",
+        "TUI: 内容没变也照发定位序列（无变化不再零输出）",
+        TUI_SCREEN,
+        "        if self.lines == new_lines and self.cursor_row == target:\n"
+        "            return \"\"",
+        "        if False:\n            return \"\"",
     ),
     (
-        # 先前的写法是把哨兵 `None` 换回 `""`。那其实是**等价变异**：
-        # 写入时用 `next_line or ""`，因此 `None` 与 `""` 产生的字节完全相同，
-        # 测试通过是正确判定，不是测试无效。换成一个真正改变行为的变异——
-        # 让「行是否存在」这个判断失效，从而在缩帧/增帧时越界或漏擦。
-        "TUI: 不再区分「行不存在」与「空行」",
-        TUI_FRAMES,
-        "        next_exists = index < len(lines)\n"
-        "        prev_exists = index < len(previous)",
-        "        next_exists = True\n"
-        "        prev_exists = True",
+        "TUI: 区域变短时不擦除残影",
+        TUI_SCREEN,
+        "            if len(new_lines) < len(previous):\n"
+        "                output.append(CARRIAGE_RETURN + ERASE_TO_END)",
+        "            if False:\n"
+        "                output.append(CARRIAGE_RETURN + ERASE_TO_END)",
+    ),
+    (
+        "TUI: 重绘前不回到区域首行（会画到错位置）",
+        TUI_SCREEN,
+        "            output.append(cursor_up(len(self.lines) - 1))",
+        "            output.append(\"\")",
+    ),
+    (
+        "TUI: 超宽行不再截断（终端自动折行，行数记账失效）",
+        TUI_APP,
+        "    return [\n"
+        "        line if string_display_width(line) <= limit else truncate_plain(line, limit)\n"
+        "        for line in lines\n"
+        "    ]",
+        "    return list(lines)",
+    ),
+    (
+        "TUI: 区域高度不再受终端行数约束（会顶出屏幕）",
+        TUI_APP,
+        "    return max(MIN_REGION_LINES, min(MAX_REGION_LINES, max(1, rows - 1)))",
+        "    return MAX_REGION_LINES",
     ),
     (
         "TUI: 宽字符不再算作 2 列",
@@ -264,10 +285,37 @@ MUTATIONS = [
         "            return 0",
     ),
     (
-        "TUI: 上下文徽章进度条不再夹在 0..10",
-        TUI_PANELS,
-        "    filled = max(0, min(10, filled))",
-        "    filled = filled",
+        "TUI: paint 参数顺序写反也不再报错（静默画错）",
+        TUI_THEME,
+        "    if codes and text.startswith(\"\\x1b[\") and not any(c.startswith(\"\\x1b[\") for c in codes):",
+        "    if False:",
+    ),
+    (
+        "TUI: NO_COLOR 被无视",
+        TUI_THEME,
+        '    return not os.environ.get("NO_COLOR")',
+        "    return True",
+    ),
+    (
+        "TUI: 不支持 ANSI 时仍打印转义序列（界面会糊掉）",
+        TUI_TERMINAL,
+        "        if not self.ansi:\n"
+        "            # 降级：整块重印，不做原地重绘。会累积，但至少可读、不错乱。\n"
+        "            self.write(\"\\n\".join(lines) + \"\\n\")\n"
+        "            return",
+        "        if False:\n"
+        "            self.write(\"\\n\".join(lines) + \"\\n\")\n"
+        "            return",
+    ),
+    (
+        "TUI: 退出时不恢复光标（终端会失去光标）",
+        TUI_TERMINAL,
+        "        if self._cursor_hidden:\n"
+        "            self.write(SHOW_CURSOR)\n"
+        "            self._cursor_hidden = False",
+        "        if False:\n"
+        "            self.write(SHOW_CURSOR)\n"
+        "            self._cursor_hidden = False",
     ),
     (
         "配置: 环境变量重新压过 settings.json",
@@ -316,23 +364,6 @@ MUTATIONS = [
         TOOLS_FILES,
         '    recursive = bool(data.get("recursive", False)) or bool(glob)',
         "    recursive = True",
-    ),
-    (
-        "TUI: 进入备用屏幕时又开启鼠标跟踪（不处理却开启）",
-        TUI_FRAMES,
-        "ENTER_ALT_SCREEN_BUNDLE = (\n"
-        "    DISABLE_MOUSE_TRACKING + ENTER_ALT_SCREEN + ERASE_SCREEN_AND_HOME\n"
-        ")",
-        "ENTER_ALT_SCREEN_BUNDLE = (\n"
-        "    DISABLE_MOUSE_TRACKING + ENTER_ALT_SCREEN + ERASE_SCREEN_AND_HOME\n"
-        "    + ENABLE_MOUSE_TRACKING\n"
-        ")",
-    ),
-    (
-        "TUI: 不再输出光标定位（用户看不见在哪儿打字）",
-        TUI_FRAMES,
-        "    if cursor is not None:\n        trailing = cursor_to(cursor[0], cursor[1])",
-        "    if False:\n        trailing = cursor_to(cursor[0], cursor[1])",
     ),
     (
         "TUI: 未知斜杠命令被当成提问发给模型",
