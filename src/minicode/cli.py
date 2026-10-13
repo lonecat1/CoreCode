@@ -44,6 +44,7 @@ from .ui import (
     build_console_ui,
     paint,
     render_banner,
+    set_animation_enabled,
 )
 
 #: `/exit` 之外还会结束进程的输入。
@@ -298,6 +299,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="自动批准所有权限请求（危险：仅用于受信任的脚本场景）",
     )
+    parser.add_argument(
+        "--no-animation",
+        action="store_true",
+        help="关闭启动动画与转圈（非终端环境下本就会自动关闭）",
+    )
     return parser
 
 
@@ -333,6 +339,9 @@ def main(argv: list[str] | None = None) -> int:
     _ensure_utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+
+    if getattr(args, "no_animation", False):
+        set_animation_enabled(False)
 
     callbacks = HostCallbacks(
         on_assistant=lambda text, is_final: print(f"\n{text}\n"),
@@ -423,6 +432,7 @@ def _run_repl(host: SessionHost) -> int:
     Git Bash / MSYS2 等环境下按键永远读不到，已移除。见 README。）
     """
     ui = build_console_ui()
+    ui.play_startup()
     _print_banner(host, ui)
     _attach_ui_callbacks(host, ui)
 

@@ -18,12 +18,25 @@ from __future__ import annotations
 import io
 import os
 import sys
+import time
 import unittest
 from unittest.mock import patch
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
+from minicode.ui.animate import (  # noqa: E402
+    ERASE_LINE,
+    ERASE_TO_END,
+    BlockAnimator,
+    Spinner,
+    cursor_up,
+    spinner_glyph,
+)
+from minicode.ui.caps import (  # noqa: E402
+    set_animation_enabled,
+    supports_animation,
+)
 from minicode.ui.console import ConsoleUI, _shorten  # noqa: E402
 from minicode.ui.render import (  # noqa: E402
     MAX_BODY_WIDTH,
@@ -62,6 +75,13 @@ unittest.TestCase.maxDiff = None
 #: 干净的着色环境：确保断言可预测。
 COLOR_ON = {"NO_COLOR": "", "TERM": "xterm-256color"}
 COLOR_OFF = {"NO_COLOR": "1"}
+
+
+class _FakeTty(io.StringIO):
+    """一个「看起来像终端」的流，用于探测动画能力。"""
+
+    def isatty(self) -> bool:
+        return True
 
 
 class ColorEnvMixin(unittest.TestCase):
@@ -572,6 +592,389 @@ class ConsoleUITests(ColorEnvMixin):
         output = stream.getvalue()
         for forbidden in ("\x1b[2J", "\x1b[H", "\x1b[?25", "\x1b[1A", "\x1b[2K"):
             self.assertNotIn(forbidden, output, f"不该出现 {forbidden!r}")
+
+
+class AnimationCapabilityTests(unittest.TestCase):
+    """动画是**可选增强**，绝不能成为可用性的前提。
+
+    这里的每个断言都在保护同一条性质：**环境不确定时宁可不动画**。
+    本项目此前反复失败于「把可选能力当成必需能力」（全屏 TUI 依赖读键，
+    在 Git Bash 下按键永远读不到）。
+    """
+
+    def setUp(self) -> None:
+        set_animation_enabled(None)
+
+    def tearDown(self) -> None:
+        set_animation_enabled(None)
+
+    def test_non_tty_disables_animation(self) -> None:
+        """**最重要的一条**：重定向到文件时绝不能有动画。
+
+        否则 `\\r` 与光标移动序列会把文件内容搅乱。
+        """
+        self.assertFalse(supports_animation(io.StringIO()))
+
+    def test_no_color_disables_animation(self) -> None:
+        with patch.dict(os.environ, {"NO_COLOR": "1"}):
+            self.assertFalse(supports_animation(_FakeTty()))
+
+    def test_dumb_terminal_disables_animation(self) -> None:
+        with patch.dict(os.environ, {"TERM": "dumb", "NO_COLOR": ""}):
+            self.assertFalse(supports_animation(_FakeTty()))
+
+    def test_explicit_disable_wins(self) -> None:
+        set_animation_enabled(False)
+        self.assertFalse(supports_animation(_FakeTty()))
+
+    def test_tty_with_clean_env_allows_animation(self) -> None:
+        with patch.dict(os.environ, {"NO_COLOR": "", "TERM": "xterm-256color"}):
+            self.assertTrue(supports_animation(_FakeTty()))
+
+    def test_require_vt_is_stricter(self) -> None:
+        """需要光标移动的动画必须额外确认 VT 可用。
+
+        Windows 上 ANSI 默认关闭；不确认的话 `ESC[1A` 会以字面量打印出来。
+        """
+        with patch.dict(os.environ, {"NO_COLOR": "", "TERM": "xterm"}):
+            with patch("minicode.ui.caps.enable_virtual_terminal", return_value=False):
+                self.assertFalse(
+                    supports_animation(_FakeTty(), require_vt=True),
+                    "VT 不可用时不得做需要光标移动的动画",
+                )
+                self.assertTrue(
+                    supports_animation(_FakeTty(), require_vt=False),
+                    "只用 \\r 的动画不依赖 VT",
+                )
+
+
+class SpinnerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        set_color_enabled(None)
+        set_animation_enabled(None)
+        self._env = patch.dict(os.environ, COLOR_ON)
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        set_color_enabled(None)
+        set_animation_enabled(None)
+
+    def _spinner(self, **kwargs: object):
+        stream = io.StringIO()
+        return Spinner(label="思考中", stream=stream, enabled=True, **kwargs), stream
+
+    def test_frame_uses_carriage_return(self) -> None:
+        """转圈只发 `\\r` 回行首重写——不移动光标，因此最安全。"""
+        spinner, stream = self._spinner()
+        spinner.tick()
+        output = stream.getvalue()
+        self.assertTrue(output.startswith("\r"))
+        self.assertIn("思考中", output)
+
+    def test_frame_erases_before_writing(self) -> None:
+        """必须先擦行再写，否则长标签变短时会留下残尾。"""
+        spinner, stream = self._spinner()
+        spinner.tick()
+        self.assertIn(ERASE_LINE, stream.getvalue())
+
+    def test_glyph_advances_each_tick(self) -> None:
+        spinner, stream = self._spinner()
+        spinner.tick()
+        first = stream.getvalue()
+        spinner.tick()
+        self.assertNotEqual(first, stream.getvalue())
+
+    def test_stop_erases_the_line(self) -> None:
+        """**必须擦干净**：否则转圈残影会与正式输出混在一起。"""
+        spinner, stream = self._spinner()
+        spinner.tick()
+        stream.seek(0)
+        stream.truncate(0)
+        spinner.stop()
+        output = stream.getvalue()
+        self.assertIn(ERASE_LINE, output)
+        self.assertNotIn("思考中", output, "停止后不该还留着标签")
+
+    def test_stop_without_start_is_safe(self) -> None:
+        spinner, _stream = self._spinner()
+        spinner.stop()  # 不应抛
+
+    def test_disabled_spinner_outputs_nothing(self) -> None:
+        """禁用时必须完全静默——连空行都不留。"""
+        stream = io.StringIO()
+        spinner = Spinner(label="思考中", stream=stream, enabled=False)
+        spinner.tick()
+        spinner.start()
+        spinner.stop()
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_context_manager_stops(self) -> None:
+        spinner, stream = self._spinner()
+        with spinner:
+            spinner.tick()
+        self.assertIn(ERASE_LINE, stream.getvalue())
+
+    def test_ascii_fallback_glyphs(self) -> None:
+        """终端字体缺盲文字形时的退路。"""
+        from minicode.ui.animate import SPINNER_ASCII, spinner_glyph
+
+        for index in range(len(SPINNER_ASCII)):
+            self.assertEqual(spinner_glyph(index, ascii_only=True), SPINNER_ASCII[index])
+
+    def test_glyph_cycles(self) -> None:
+        from minicode.ui.animate import SPINNER_FRAMES
+
+        self.assertEqual(spinner_glyph(0), SPINNER_FRAMES[0])
+        self.assertEqual(spinner_glyph(len(SPINNER_FRAMES)), SPINNER_FRAMES[0])
+
+
+class BlockAnimatorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        set_color_enabled(None)
+        self._env = patch.dict(os.environ, COLOR_ON)
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        set_color_enabled(None)
+
+    def _animator(self, height: int = 3):
+        stream = io.StringIO()
+        return BlockAnimator(height=height, width=40, stream=stream, enabled=True), stream
+
+    def test_first_frame_is_written_plainly(self) -> None:
+        animator, stream = self._animator()
+        animator.render(["a", "b", "c"])
+        self.assertEqual(stream.getvalue(), "a\nb\nc")
+
+    def test_subsequent_frame_moves_up_relatively(self) -> None:
+        """**相对移动**是它与失败的全屏 TUI 的本质区别。
+
+        全屏 TUI 用绝对定位（`ESC[<行>;1H`），要求「渲染行数恰好等于终端
+        行数」，一旦不等就整体错位。相对移动只需要知道**自己占了几行**。
+        """
+        animator, stream = self._animator()
+        animator.render(["a", "b", "c"])
+        stream.seek(0)
+        stream.truncate(0)
+        animator.render(["x", "y", "z"])
+        self.assertTrue(stream.getvalue().startswith(cursor_up(2)))
+
+    def test_frame_height_is_forced_constant(self) -> None:
+        """帧高必须固定，否则相对移动会算错、画面逐渐漂移。"""
+        animator, stream = self._animator(height=3)
+        animator.render(["只有一行"])  # 不足 3 行
+        self.assertEqual(stream.getvalue().count("\n"), 2, "应补齐到 3 行")
+
+    def test_overlong_frame_is_truncated(self) -> None:
+        """超宽会触发终端自动折行，同样破坏行数记账。"""
+        animator, stream = self._animator(height=2)
+        animator.render(["x" * 200, "y"])
+        for line in stream.getvalue().split("\n"):
+            self.assertLessEqual(string_display_width(line), 40)
+
+    def test_extra_lines_are_dropped(self) -> None:
+        animator, stream = self._animator(height=2)
+        animator.render(["a", "b", "c", "d"])
+        self.assertEqual(len(stream.getvalue().split("\n")), 2)
+
+    def test_clear_erases_the_block(self) -> None:
+        """必须擦干净：否则动画残影与后续输出混在一起。"""
+        animator, stream = self._animator()
+        animator.render(["a", "b", "c"])
+        stream.seek(0)
+        stream.truncate(0)
+        animator.clear()
+        output = stream.getvalue()
+        self.assertIn(cursor_up(2), output)
+        self.assertIn(ERASE_TO_END, output)
+
+    def test_clear_without_render_is_safe(self) -> None:
+        animator, stream = self._animator()
+        animator.clear()
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_disabled_animator_outputs_nothing(self) -> None:
+        stream = io.StringIO()
+        animator = BlockAnimator(height=3, width=40, stream=stream, enabled=False)
+        animator.render(["a", "b", "c"])
+        animator.clear()
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_play_respects_max_seconds(self) -> None:
+        """启动动画绝不能拖慢启动——必须有硬上限。"""
+        animator, stream = self._animator(height=2)
+        frames = [["a"], ["b"], ["c"], ["d"], ["e"]] * 20
+        started = time.monotonic()
+        animator.play(frames, interval=0.05, max_seconds=0.15)
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 1.0, "应被 max_seconds 截断")
+
+    def test_play_can_be_aborted(self) -> None:
+        """用户一开始输入就该中断动画。"""
+        animator, _stream = self._animator(height=2)
+        played: list[int] = []
+
+        def should_abort() -> bool:
+            return len(played) >= 1
+
+        frames = [["a"], ["b"], ["c"], ["d"]]
+        original = animator.render
+
+        def counting_render(lines, **kwargs):  # noqa: ANN001
+            played.append(1)
+            return original(lines, **kwargs)
+
+        animator.render = counting_render  # type: ignore[method-assign]
+        animator.play(frames, interval=0.0, should_abort=should_abort)
+        self.assertLessEqual(len(played), 2, "应在 should_abort 后立刻停下")
+
+
+class StartupAnimationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        set_color_enabled(None)
+        self._env = patch.dict(os.environ, COLOR_ON)
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        set_color_enabled(None)
+
+    def test_frames_have_constant_height(self) -> None:
+        """帧高必须一致，否则多行动画的相对移动会算错。"""
+        from minicode.ui.startup import StartupAnimation
+
+        animation = StartupAnimation(width=40, height=5, enabled=True)
+        frames = animation.frames()
+        self.assertTrue(frames)
+        heights = {len(frame) for frame in frames}
+        self.assertEqual(len(heights), 1, f"帧高不一致: {heights}")
+
+    def test_frames_fit_width(self) -> None:
+        from minicode.ui.startup import StartupAnimation
+
+        animation = StartupAnimation(width=20, height=5, enabled=True)
+        for frame in animation.frames():
+            for line in frame:
+                self.assertLessEqual(string_display_width(line), 20)
+
+    def test_narrow_terminal_skips_animation(self) -> None:
+        """终端太窄时**不播**，而不是截断。
+
+        像素画被截断会变成一堆无意义的方块——不如直接不播。
+        这是「宁可没有动画」原则的体现。
+        """
+        from minicode.ui.startup import StartupAnimation
+
+        self.assertEqual(
+            StartupAnimation(width=10, height=5, enabled=True).frames(),
+            [],
+            "窄终端下不该有帧",
+        )
+
+    def test_wide_enough_terminal_has_frames(self) -> None:
+        from minicode.ui.startup import StartupAnimation
+
+        self.assertTrue(StartupAnimation(width=40, height=5, enabled=True).frames())
+
+    def test_animation_progressively_lights_up(self) -> None:
+        """动画应当是「逐渐点亮」，不是每帧全变。"""
+        from minicode.ui.startup import PIXEL_ON, StartupAnimation
+
+        frames = StartupAnimation(width=40, height=5, enabled=True).frames()
+        counts = [sum(row.count(PIXEL_ON) for row in frame) for frame in frames]
+        self.assertEqual(counts, sorted(counts), f"点亮数应单调不减: {counts}")
+        self.assertLess(counts[0], counts[-1], "应当确实有变化")
+
+    def test_disabled_animation_outputs_nothing(self) -> None:
+        """非终端环境下必须完全静默，不留空行。"""
+        from minicode.ui.startup import StartupAnimation
+
+        stream = io.StringIO()
+        StartupAnimation(width=40, enabled=False, stream=stream).play()
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_play_clears_afterwards(self) -> None:
+        """播放完必须擦掉，否则残影留在屏幕上。"""
+        from minicode.ui.startup import StartupAnimation
+
+        stream = io.StringIO()
+        StartupAnimation(
+            width=40, height=3, enabled=True, stream=stream, max_seconds=0.05
+        ).play()
+        self.assertIn(ERASE_TO_END, stream.getvalue())
+
+    def test_static_title_is_available_without_animation(self) -> None:
+        """动画只是开场；跳过时用户仍要能看到完整信息。"""
+        from minicode.ui.startup import banner_title_lines, startup_hint
+
+        lines = banner_title_lines()
+        self.assertTrue(lines)
+        self.assertIn("MiniCode", strip_ansi("\n".join(lines)))
+        self.assertTrue(startup_hint())
+
+
+class AnimatedConsoleTests(ColorEnvMixin):
+    """动画与普通输出的协作。"""
+
+    def _ui(self, *, animate: bool) -> tuple[ConsoleUI, io.StringIO]:
+        stream = io.StringIO()
+        return ConsoleUI(stream=stream, width=60, animate=animate), stream
+
+    def test_animation_disabled_for_non_tty_stream(self) -> None:
+        """StringIO 不是终端 → 动画必须自动关闭。"""
+        ui, _stream = self._ui(animate=False)
+        self.assertFalse(ui.animate)
+
+    def test_no_animation_output_when_disabled(self) -> None:
+        ui, stream = self._ui(animate=False)
+        ui.play_startup()
+        ui.begin_turn()
+        ui.end_turn()
+        self.assertNotIn("\x1b[", stream.getvalue())
+        self.assertNotIn("\r", stream.getvalue())
+
+    def test_write_stops_spinner_first(self) -> None:
+        """**关键**：正式输出前必须擦掉转圈，否则两者叠在同一行。"""
+        ui, stream = self._ui(animate=True)
+        ui.begin_turn()
+        ui.write("正式内容")
+        output = stream.getvalue()
+        erase_at = output.rfind(ERASE_LINE)
+        content_at = output.rfind("正式内容")
+        self.assertGreater(erase_at, -1, "应擦掉转圈")
+        self.assertLess(erase_at, content_at, "擦除应发生在写入之前")
+
+    def test_end_turn_stops_spinner(self) -> None:
+        ui, stream = self._ui(animate=True)
+        ui.begin_turn()
+        ui.end_turn()
+        self.assertIn(ERASE_LINE, stream.getvalue())
+
+    def test_progress_stops_spinner(self) -> None:
+        """进度消息本身就是「还在干活」的信号，转圈是多余的。"""
+        ui, stream = self._ui(animate=True)
+        ui.begin_turn()
+        stream.seek(0)
+        stream.truncate(0)
+        ui.progress("进行中")
+        self.assertIn(ERASE_LINE, stream.getvalue())
+
+    def test_spinner_never_leaks_into_redirected_output(self) -> None:
+        """**最重要的一条**：非终端下整个回合不该有任何动画痕迹。"""
+        ui, stream = self._ui(animate=False)
+        ui.echo_user("输入")
+        ui.begin_turn()
+        ui.tool_start("read_file")
+        ui.tool_result("read_file", ok=True, detail="完成")
+        ui.assistant("回答\n", is_final=True)
+        ui.end_turn()
+
+        output = stream.getvalue()
+        self.assertNotIn("\r", output, "不该有回车")
+        self.assertNotIn("\x1b[2K", output, "不该有擦行")
+        self.assertNotIn("\x1b[", output, "不该有光标移动")
 
 
 if __name__ == "__main__":

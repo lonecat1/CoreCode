@@ -16,6 +16,21 @@ Claude Code 的默认界面本身就是**美化过的行模式 REPL**，不是�
 决定何时打印。因此可以被完整测试，也能在管道里安全使用。
 """
 
+from .animate import (
+    SPINNER_ASCII,
+    SPINNER_FRAMES,
+    BlockAnimator,
+    Spinner,
+    cursor_down,
+    cursor_up,
+    hint_line,
+    spinner_glyph,
+)
+from .caps import (
+    enable_virtual_terminal,
+    set_animation_enabled,
+    supports_animation,
+)
 from .console import ConsoleUI, build_console_ui
 from .render import (
     DEFAULT_WIDTH,
@@ -90,8 +105,7 @@ from .width import (
 )
 
 __all__ = [
-    "BOLD",
-    "BORDER",
+    "BOLD",    "BORDER",
     "BOX_BOTTOM_LEFT",
     "BOX_BOTTOM_RIGHT",
     "BOX_HORIZONTAL",
@@ -100,6 +114,7 @@ __all__ = [
     "BOX_VERTICAL",
     "BRIGHT_CYAN",
     "BRIGHT_RED",
+    "BlockAnimator",
     "COLOR_ASSISTANT",
     "COLOR_BANNER_TITLE",
     "COLOR_ERROR",
@@ -129,15 +144,25 @@ __all__ = [
     "RESET",
     "REVERSE",
     "SPINNER",
+    "SPINNER_ASCII",
+    "SPINNER_FRAMES",
+    "Spinner",
     "StreamPrinter",
     "YELLOW",
     "char_display_width",
     "color_enabled",
     "contains_escape",
     "build_console_ui",
+    "cursor_down",
+    "cursor_up",
+    "enable_virtual_terminal",
+    "hint_line",
     "output_width",
     "pad_plain",
     "paint",
+    "set_animation_enabled",
+    "spinner_glyph",
+    "supports_animation",
     "render_assistant",
     "render_banner",
     "render_error",

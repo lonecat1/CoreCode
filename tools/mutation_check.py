@@ -31,6 +31,9 @@ TOOLS_GREP = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
 UI_THEME = os.path.join(REPO, "src", "minicode", "ui", "theme.py")
 UI_RENDER = os.path.join(REPO, "src", "minicode", "ui", "render.py")
 UI_CONSOLE = os.path.join(REPO, "src", "minicode", "ui", "console.py")
+UI_CAPS = os.path.join(REPO, "src", "minicode", "ui", "caps.py")
+UI_ANIMATE = os.path.join(REPO, "src", "minicode", "ui", "animate.py")
+UI_STARTUP = os.path.join(REPO, "src", "minicode", "ui", "startup.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -308,10 +311,64 @@ MUTATIONS = [
         "UI: 回合结束不冲流式缓冲",
         UI_CONSOLE,
         "    def end_turn(self) -> None:\n"
-        '        """回合结束：冲掉流式尾巴，并留一个空行。"""\n'
+        '        """回合结束：擦掉转圈、冲掉流式尾巴，并留一个空行。"""\n'
+        "        self.stop_spinner()\n"
         "        self.flush_assistant()",
         "    def end_turn(self) -> None:\n"
-        '        """回合结束：冲掉流式尾巴，并留一个空行。"""',
+        '        """回合结束：擦掉转圈、冲掉流式尾巴，并留一个空行。"""\n'
+        "        self.stop_spinner()",
+    ),
+    (
+        "动画: 非终端也做动画（\\r 污染重定向文件）",
+        UI_CAPS,
+        "    if not is_tty(stream):\n        return False",
+        "    if False:\n        return False",
+    ),
+    (
+        "动画: 需要 VT 的动画不检查 VT（Windows 打印字面量）",
+        UI_CAPS,
+        "    if require_vt and not enable_virtual_terminal():\n        return False",
+        "    if False:\n        return False",
+    ),
+    (
+        "动画: 转圈停止时不擦除（残影留在屏幕上）",
+        UI_ANIMATE,
+        "        if self._drawn and self.enabled:\n"
+        "            with self._lock:\n"
+        "                self._write(CARRIAGE_RETURN + ERASE_LINE)\n"
+        "            self._drawn = False",
+        "        if False:\n            self._drawn = False",
+    ),
+    (
+        "动画: 块动画帧高不固定（相对移动算错、画面漂移）",
+        UI_ANIMATE,
+        "        while len(frame) < self.height:\n            frame.append(\"\")",
+        "        pass",
+    ),
+    (
+        "动画: 块动画用绝对定位而非相对移动",
+        UI_ANIMATE,
+        "                parts.append(cursor_up(self._drawn_height - 1))",
+        "                parts.append(\"\")",
+    ),
+    (
+        "动画: 块动画 clear 不擦除（残影）",
+        UI_ANIMATE,
+        "            parts = [cursor_up(self._drawn_height - 1), CARRIAGE_RETURN, ERASE_TO_END]",
+        "            parts = []",
+    ),
+    (
+        "动画: 窄终端下截断像素画（字形变乱码）",
+        UI_STARTUP,
+        "        if natural == 0 or natural > self.width:\n            return []",
+        "        if natural == 0:\n            return []",
+    ),
+    (
+        "动画: 启动动画不设时长上限（拖慢启动）",
+        UI_ANIMATE,
+        "            if max_seconds is not None and time.monotonic() - started > max_seconds:\n"
+        "                break",
+        "            if False:\n                break",
     ),
 ]
 
