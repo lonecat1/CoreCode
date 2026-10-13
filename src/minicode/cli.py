@@ -37,6 +37,14 @@ from .permissions import (
 from .runtime.plan import PlanManager
 from .tools import create_root_registry, create_worker_registry
 from .types import ModelAdapter
+from .ui import (
+    COLOR_HINT,
+    COLOR_USER,
+    ConsoleUI,
+    build_console_ui,
+    paint,
+    render_banner,
+)
 
 #: `/exit` 之外还会结束进程的输入。
 _EXIT_WORDS = frozenset({"/exit", "/quit", "exit", "quit"})
@@ -290,11 +298,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="自动批准所有权限请求（危险：仅用于受信任的脚本场景）",
     )
-    parser.add_argument(
-        "--tui",
-        action="store_true",
-        help="使用全屏差分帧界面（需要真实终端；非终端环境下自动回退到行模式）",
-    )
     return parser
 
 
@@ -363,19 +366,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.prompt:
             return _run_once(host, args.prompt)
-        if args.tui:
-            code = _run_tui(host)
-            if code is not None:
-                return code
-            # 回退原因要说清楚，并给出可操作的建议。
-            # 静默回退会让用户以为「--tui 没生效」，却不知道原因。
-            print(
-                "无法进入全屏界面：当前不是交互式终端。\n"
-                "  --tui 需要 stdin 与 stdout 都是终端（管道、重定向、CI 里不是）。\n"
-                "  已回退到行模式。若你在真实终端里看到这条消息，"
-                "请检查是否把输出重定向到了文件或管道。",
-                file=sys.stderr,
-            )
         return _run_repl(host)
     except KeyboardInterrupt:
         print()
@@ -384,99 +374,61 @@ def main(argv: list[str] | None = None) -> int:
         host.stop()
 
 
-def _run_tui(host: SessionHost) -> int | None:
-    """尝试全屏界面。非 TTY 时返回 None，让调用方回退到行模式。"""
-    from .tui import (
-        AppState,
-        HostBridge,
-        Terminal,
-        build_banner_stats,
-        run_tui,
-    )
-
-    terminal = Terminal()
-    if not terminal.interactive:
-        return None
-
-    from .tui import UiEvents
-
-    events = UiEvents()
-    state = AppState()
-    state.banner = build_banner_stats(host)
-
-    def run_local(text: str) -> str | None:
-        reply = host.runtime.command(text)
-        if reply is not None:
-            return reply
-        return handle_local_command(host, text)
-
-    def run_turn(text: str) -> None:
-        # 把宿主的观察点接到事件队列上。回合跑在后台线程，因此只能往队列里
-        # 推事件，由主线程在重绘点并入——直接改状态会踩数据竞争。
-        host.callbacks.on_assistant = lambda content, _final: events.push(
-            "assistant", content
-        )
-        host.callbacks.on_progress = lambda content: events.push("progress", content)
-        host.callbacks.on_tool_start = lambda name, _data: events.push(
-            "tool_start", str(name)
-        )
-        host.callbacks.on_tool_result = lambda name, output, is_error: events.push(
-            "tool_result", str(name), not is_error, str(output)[:200]
-        )
-        host.callbacks.on_notice = lambda content: events.push("notice", content)
-
-        result = host.runtime.submit(text)
-        if result.outcome in ("failed", "aborted"):
-            events.push("error", f"回合结束：{result.outcome} {result.error or ''}")
-
-    bridge = HostBridge(
-        run_turn=run_turn,
-        run_local=run_local,
-        is_busy=lambda: host.is_busy,
-        summary=lambda: build_banner_stats(host),
-    )
-    return run_tui(state, bridge, terminal=terminal)
-
-
 def _run_once(host: SessionHost, prompt: str) -> int:
     """单次提问后退出。这是集成测试与脚本使用的主路径。
 
     分派顺序必须与 REPL 一致（`_dispatch`）：运行时命令 → 本地命令 → 普通回合。
     少了中间那一步，`-p /status` 之类的本地命令会被当成对话内容发给模型。
+
+    输出走与 REPL 相同的界面层，因此两种模式的外观一致；同时因为界面层
+    会在非终端环境下自动关闭颜色，`-p` 的输出可以直接重定向到文件。
     """
+    ui = build_console_ui()
+    _attach_ui_callbacks(host, ui)
     try:
         reply = host.runtime.command(prompt)
         if reply is not None:
-            print(reply)
+            ui.write(reply)
             return 0
 
         local = handle_local_command(host, prompt)
         if local is not None:
-            print(local)
+            ui.write(local)
             return 0
 
         if prompt.startswith("/"):
-            print(f"未知命令：{prompt}。输入 /help 查看可用命令。", file=sys.stderr)
+            ui.error(f"未知命令：{prompt}。输入 /help 查看可用命令。")
             return 1
 
+        ui.begin_turn()
         result = host.runtime.submit(prompt)
+        ui.end_turn()
         if result.outcome in ("failed", "aborted"):
-            print(f"\n回合结束：{result.outcome} {result.error or ''}", file=sys.stderr)
+            ui.error(f"回合结束：{result.outcome} {result.error or ''}")
             return 1
         return 0
     except Exception as error:  # noqa: BLE001 - CLI 顶层要把错误变成退出码
-        print(f"错误：{error}", file=sys.stderr)
+        ui.error(f"错误：{error}")
         return 1
 
 
 def _run_repl(host: SessionHost) -> int:
-    """交互式行模式。"""
-    print(_banner(host))
-    print("输入 /help 查看命令，/exit 退出。\n")
+    """交互式行模式（美化输出）。
+
+    **这是默认且唯一推荐的交互方式。** 它不做 raw mode、不做光标定位、
+    不做全屏重绘——只往 stdout 写文本。因此在你任何终端里都能工作，
+    也能安全地在管道/CI 里使用。
+
+    （早先有一个全屏 TUI 模式，因为依赖 raw mode 与非阻塞读键，在
+    Git Bash / MSYS2 等环境下按键永远读不到，已移除。见 README。）
+    """
+    ui = build_console_ui()
+    _print_banner(host, ui)
+    _attach_ui_callbacks(host, ui)
 
     while True:
         try:
-            line = input("› ").strip()
+            line = input(paint("› ", COLOR_USER)).strip()
         except EOFError:
             print()
             return 0
@@ -491,52 +443,82 @@ def _run_repl(host: SessionHost) -> int:
             return 0
 
         try:
-            _dispatch(host, line)
+            _dispatch(host, line, ui)
         except KeyboardInterrupt:
-            print("\n已中断。")
+            ui.notice("已中断。")
             host.runtime.turns.stop("用户中断")
         except Exception as error:  # noqa: BLE001 - 单条命令失败不该退出 REPL
-            print(f"错误：{error}", file=sys.stderr)
+            ui.error(f"错误：{error}")
 
 
-def _dispatch(host: SessionHost, line: str) -> None:
+def _attach_ui_callbacks(host: SessionHost, ui: "ConsoleUI") -> None:
+    """把界面接到宿主的观察点上。
+
+    宿主通过 `HostCallbacks` 暴露观察点，因此界面层不需要知道 agent 循环的
+    任何细节——这也是行模式界面能这么薄的原因。
+    """
+    callbacks = ui.callbacks()
+    host.callbacks.on_assistant = callbacks["on_assistant"]
+    host.callbacks.on_progress = callbacks["on_progress"]
+    host.callbacks.on_tool_start = callbacks["on_tool_start"]
+    host.callbacks.on_tool_result = callbacks["on_tool_result"]
+    host.callbacks.on_notice = callbacks["on_notice"]
+
+
+def _print_banner(host: SessionHost, ui: "ConsoleUI") -> None:
+    from .tools import create_worker_registry
+
+    model_name = host.runtime_config.model if host.runtime_config else "离线 mock"
+    skills = []
+    try:
+        skills = host.tools.skills()
+    except Exception:  # noqa: BLE001
+        skills = []
+
+    ui.write(
+        render_banner(
+            model=model_name,
+            session_id=host.session_id,
+            cwd=host.cwd,
+            tool_count=len(host.tools.list()),
+            readonly_tool_count=len(create_worker_registry(host.tools).list()),
+            skill_count=len(skills),
+            width=ui.width,
+        )
+    )
+    ui.write(
+        paint("输入 ", COLOR_HINT)
+        + paint("/help", COLOR_USER)
+        + paint(" 查看命令 · ", COLOR_HINT)
+        + paint("/exit", COLOR_USER)
+        + paint(" 退出", COLOR_HINT)
+    )
+    ui.blank()
+
+
+def _dispatch(host: SessionHost, line: str, ui: "ConsoleUI") -> None:
     """一条输入的分派顺序：运行时命令 → 本地命令 → 普通回合。"""
     reply = host.runtime.command(line)
     if reply is not None:
-        print(reply)
+        ui.write(reply)
+        ui.blank()
         return
 
     local = handle_local_command(host, line)
     if local is not None:
-        print(local)
+        ui.write(local)
+        ui.blank()
         return
 
     if line.startswith("/"):
-        print(f"未知命令：{line}。输入 /help 查看可用命令。")
+        ui.error(f"未知命令：{line}。输入 /help 查看可用命令。")
         return
 
-    host.runtime.submit(line)
-
-
-# ---------------------------------------------------------------------------
-# 展示
-# ---------------------------------------------------------------------------
-
-
-def _banner(host: SessionHost) -> str:
-    model_name = host.runtime_config.model if host.runtime_config else "离线 mock"
-    return "\n".join(
-        [
-            "╭──────────────────────────────────────────────╮",
-            "│  MiniCode (Python)                           │",
-            "╰──────────────────────────────────────────────╯",
-            f"  模型    : {model_name}",
-            f"  会话    : {host.session_id}",
-            f"  工作目录: {host.cwd}",
-            f"  工具    : {len(host.tools.list())} 个"
-            f"（子 Agent 可见 {len(create_worker_registry(host.tools).list())} 个只读工具）",
-        ]
-    )
+    ui.begin_turn()
+    result = host.runtime.submit(line)
+    ui.end_turn()
+    if result.outcome in ("failed", "aborted"):
+        ui.error(f"回合结束：{result.outcome} {result.error or ''}")
 
 
 def _print_sessions(host: SessionHost) -> None:

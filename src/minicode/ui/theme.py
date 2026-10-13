@@ -105,15 +105,36 @@ SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧")
 def color_enabled() -> bool:
     """是否启用颜色。
 
-    遵守 `NO_COLOR`（https://no-color.org/）：只要该变量存在且非空就关闭。
-    这是被广泛遵守的约定，也是用户在色彩显示异常时唯一的自救手段。
+    三个条件**同时**成立才上色：
+
+      1. 没有被 `_color_override` 显式关掉（CLI 发现 stdout 不是终端时会关）；
+      2. 环境变量 `NO_COLOR` 未设置（https://no-color.org/，被广泛遵守，
+         也是用户在色彩显示异常时唯一的自救手段）；
+      3. 环境变量 `TERM` 不是 `dumb`。
 
     **只读，不写。** 早先的实现在探测到终端不支持 ANSI 时用
     `os.environ.setdefault("NO_COLOR", "1")` 把它设进去，结果污染了整个进程
     ——连边框字符都被当成「不该上色」而丢失，而且这个副作用会泄漏到子进程。
     运行时状态应当用参数表达，不要借环境变量传递。
     """
-    return not os.environ.get("NO_COLOR")
+    if _color_override is False:
+        return False
+    if os.environ.get("NO_COLOR"):
+        return False
+    if (os.environ.get("TERM") or "").strip().lower() == "dumb":
+        return False
+    return True
+
+
+#: 显式覆盖。`None` = 按环境判断；`False` = 强制关闭。
+#: 由 CLI 在启动时设置（stdout 不是终端就关掉，避免污染重定向的文件）。
+_color_override: bool | None = None
+
+
+def set_color_enabled(enabled: bool | None) -> None:
+    """显式开关颜色。传 `None` 恢复为按环境判断。"""
+    global _color_override
+    _color_override = enabled
 
 
 def paint(text: str, *codes: str) -> str:

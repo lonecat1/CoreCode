@@ -25,15 +25,12 @@ SKILLS = os.path.join(REPO, "src", "minicode", "skills.py")
 TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
 MCP_STDIO = os.path.join(REPO, "src", "minicode", "mcp", "stdio_client.py")
 MCP_JSONRPC = os.path.join(REPO, "src", "minicode", "mcp", "jsonrpc.py")
-TUI_WIDTH = os.path.join(REPO, "src", "minicode", "tui", "width.py")
-TUI_SCREEN = os.path.join(REPO, "src", "minicode", "tui", "screen.py")
-TUI_APP = os.path.join(REPO, "src", "minicode", "tui", "app.py")
-TUI_THEME = os.path.join(REPO, "src", "minicode", "tui", "theme.py")
-TUI_TERMINAL = os.path.join(REPO, "src", "minicode", "tui", "terminal.py")
-TUI_RUNNER = os.path.join(REPO, "src", "minicode", "tui", "runner.py")
 CONFIG = os.path.join(REPO, "src", "minicode", "config.py")
 TOOLS_FILES = os.path.join(REPO, "src", "minicode", "tools", "files.py")
 TOOLS_GREP = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
+UI_THEME = os.path.join(REPO, "src", "minicode", "ui", "theme.py")
+UI_RENDER = os.path.join(REPO, "src", "minicode", "ui", "render.py")
+UI_CONSOLE = os.path.join(REPO, "src", "minicode", "ui", "console.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -221,136 +218,6 @@ MUTATIONS = [
         "                return messages",
     ),
     (
-        "TUI: 未变化的行也重绘（差分失效，会闪）",
-        TUI_SCREEN,
-        "                if old == line:\n"
-        "                    # 没变：只移动，不重写。这是「不闪」的关键。\n"
-        "                    continue",
-        "                if False:\n                    continue",
-    ),
-    (
-        "TUI: 内容没变也照发定位序列（无变化不再零输出）",
-        TUI_SCREEN,
-        "        if self.lines == new_lines and self.cursor_row == target:\n"
-        "            return \"\"",
-        "        if False:\n            return \"\"",
-    ),
-    (
-        "TUI: 区域变短时不擦除残影",
-        TUI_SCREEN,
-        "            if len(new_lines) < len(previous):\n"
-        "                output.append(CARRIAGE_RETURN + ERASE_TO_END)",
-        "            if False:\n"
-        "                output.append(CARRIAGE_RETURN + ERASE_TO_END)",
-    ),
-    (
-        "TUI: 重绘前不回到区域首行（会画到错位置）",
-        TUI_SCREEN,
-        "            output.append(cursor_up(len(self.lines) - 1))",
-        "            output.append(\"\")",
-    ),
-    (
-        "TUI: 超宽行不再截断（终端自动折行，行数记账失效）",
-        TUI_APP,
-        "    return [\n"
-        "        line if string_display_width(line) <= limit else truncate_plain(line, limit)\n"
-        "        for line in lines\n"
-        "    ]",
-        "    return list(lines)",
-    ),
-    (
-        "TUI: 区域高度不再受终端行数约束（会顶出屏幕）",
-        TUI_APP,
-        "    return max(MIN_REGION_LINES, min(MAX_REGION_LINES, max(1, rows - 1)))",
-        "    return MAX_REGION_LINES",
-    ),
-    (
-        "TUI: 宽字符不再算作 2 列",
-        TUI_WIDTH,
-        "    for start, end in _WIDE_RANGES:\n"
-        "        if start <= code <= end:\n"
-        "            return 2",
-        "    for start, end in _WIDE_RANGES:\n"
-        "        if False:\n"
-        "            return 2",
-    ),
-    (
-        "TUI: 组合附加符号不再算作 0 宽",
-        TUI_WIDTH,
-        "    for start, end in _COMBINING_RANGES:\n"
-        "        if start <= code <= end:\n"
-        "            return 0",
-        "    for start, end in _COMBINING_RANGES:\n"
-        "        if False:\n"
-        "            return 0",
-    ),
-    (
-        "TUI: paint 参数顺序写反也不再报错（静默画错）",
-        TUI_THEME,
-        "    if codes and text.startswith(\"\\x1b[\") and not any(c.startswith(\"\\x1b[\") for c in codes):",
-        "    if False:",
-    ),
-    (
-        "TUI: NO_COLOR 被无视",
-        TUI_THEME,
-        '    return not os.environ.get("NO_COLOR")',
-        "    return True",
-    ),
-    (
-        "TUI: 不支持 ANSI 时仍打印转义序列（界面会糊掉）",
-        TUI_TERMINAL,
-        "        if not self.ansi:\n"
-        "            # 降级：整块重印，不做原地重绘。会累积，但至少可读、不错乱。\n"
-        "            self.write(\"\\n\".join(lines) + \"\\n\")\n"
-        "            return",
-        "        if False:\n"
-        "            self.write(\"\\n\".join(lines) + \"\\n\")\n"
-        "            return",
-    ),
-    (
-        "TUI: 退出时不恢复光标（终端会失去光标）",
-        TUI_TERMINAL,
-        "        if self._cursor_hidden:\n"
-        "            self.write(SHOW_CURSOR)\n"
-        "            self._cursor_hidden = False",
-        "        if False:\n"
-        "            self.write(SHOW_CURSOR)\n"
-        "            self._cursor_hidden = False",
-    ),
-    (
-        "TUI: 用 isatty 而非真控制台判定（Git Bash 下按键全失效）",
-        TUI_TERMINAL,
-        '        self._use_msvcrt = os.name == "nt" and is_real_windows_console(-10)',
-        '        self._use_msvcrt = os.name == "nt"',
-    ),
-    (
-        "TUI: 半个转义序列被立刻当成 Esc（方向键失效）",
-        TUI_TERMINAL,
-        "        if any(seq.startswith(remaining) for seq in ESCAPE_SEQUENCES):\n"
-        "            return None, 0",
-        "        if False:\n            return None, 0",
-    ),
-    (
-        "TUI: 悬空 Esc 永不触发（按 Esc 没反应）",
-        TUI_TERMINAL,
-        "                    if time.monotonic() >= escape_deadline:\n"
-        "                        self._key_queue.put(KEY_ESCAPE)",
-        "                    if False:\n"
-        "                        self._key_queue.put(KEY_ESCAPE)",
-    ),
-    (
-        "TUI: Windows 扫描码不再翻译（方向键变乱码）",
-        TUI_TERMINAL,
-        "                keys.append(WINDOWS_SCAN_CODES.get(pending[index + 1], KEY_ESCAPE))",
-        "                keys.append(KEY_ESCAPE)",
-    ),
-    (
-        "TUI: 输入通道坏掉时不再提示（用户对着不响应的界面猜）",
-        TUI_TERMINAL,
-        "            if not sys.stdin.isatty():",
-        "            if False:",
-    ),
-    (
         "配置: 环境变量重新压过 settings.json",
         CONFIG,
         "    return str(from_settings or source.get(key) or \"\").strip()",
@@ -399,11 +266,52 @@ MUTATIONS = [
         "    recursive = True",
     ),
     (
-        "TUI: 未知斜杠命令被当成提问发给模型",
-        TUI_RUNNER,
-        '        state.push("error", f"未知命令：{stripped}。输入 /help 查看可用命令。")\n'
-        "        return",
-        '        state.push("error", "未知命令")',
+        "UI: 非终端也上色（转义序列污染重定向的文件）",
+        UI_THEME,
+        "    if _color_override is False:\n        return False",
+        "    if False:\n        return False",
+    ),
+    (
+        "UI: NO_COLOR 被无视",
+        UI_THEME,
+        '    if os.environ.get("NO_COLOR"):\n        return False',
+        "    if False:\n        return False",
+    ),
+    (
+        "UI: 非终端流也被判定为支持颜色",
+        UI_RENDER,
+        "    try:\n        return bool(stream.isatty())\n"
+        "    except (AttributeError, ValueError):\n        return False",
+        "    return True",
+    ),
+    (
+        "UI: 流式输出不 flush 尾巴（丢最后一段）",
+        UI_RENDER,
+        "        if not self._buffer:\n            return \"\"\n"
+        "        tail, self._buffer = self._buffer, \"\"",
+        "        if True:\n            return \"\"\n"
+        "        tail, self._buffer = self._buffer, \"\"",
+    ),
+    (
+        "UI: 工具输出不压缩（刷屏）",
+        UI_CONSOLE,
+        "        short = _shorten(detail)\n        label = short or summary",
+        "        label = summary",
+    ),
+    (
+        "UI: ask_user 不再醒目提示（用户以为程序卡住）",
+        UI_CONSOLE,
+        '        if summary == "ask_user":\n            self.question(detail)\n            return',
+        '        if False:\n            self.question(detail)\n            return',
+    ),
+    (
+        "UI: 回合结束不冲流式缓冲",
+        UI_CONSOLE,
+        "    def end_turn(self) -> None:\n"
+        '        """回合结束：冲掉流式尾巴，并留一个空行。"""\n'
+        "        self.flush_assistant()",
+        "    def end_turn(self) -> None:\n"
+        '        """回合结束：冲掉流式尾巴，并留一个空行。"""',
     ),
 ]
 
