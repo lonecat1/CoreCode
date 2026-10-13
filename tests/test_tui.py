@@ -16,6 +16,7 @@ import io
 import os
 import sys
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -647,6 +648,389 @@ class AppStateTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # 终端
 # ---------------------------------------------------------------------------
+
+
+class KeySplittingTests(unittest.TestCase):
+    """把原始输入切成逻辑键 —— 读取线程的核心。
+
+    这类逻辑最容易出错的地方是**跨块到达的序列**：读取线程逐字符读，
+    因此 `\\x1b[A`（方向键）会分三次到达，必须缓冲到凑齐才能判定。
+    """
+
+    def _terminal(self) -> Terminal:
+        return Terminal(io.StringIO(), force_non_interactive=True, ansi=True)
+
+    def test_single_characters(self) -> None:
+        keys, rest = self._terminal()._split_keys("abc")  # noqa: SLF001
+        self.assertEqual(keys, ["a", "b", "c"])
+        self.assertEqual(rest, "")
+
+    def test_windows_scan_codes(self) -> None:
+        terminal = self._terminal()
+        for raw, expected in (
+            ("\x00H", KEY_UP),
+            ("\x00P", KEY_DOWN),
+            ("\xe0K", KEY_LEFT),
+            ("\xe0M", KEY_RIGHT),
+            ("\x00I", KEY_PAGE_UP),
+        ):
+            with self.subTest(raw=raw):
+                keys, rest = terminal._split_keys(raw)  # noqa: SLF001
+                self.assertEqual(keys, [expected])
+                self.assertEqual(rest, "")
+
+    def test_ansi_sequences(self) -> None:
+        terminal = self._terminal()
+        for raw, expected in (
+            ("\x1b[A", KEY_UP),
+            ("\x1b[B", KEY_DOWN),
+            ("\x1b[5~", KEY_PAGE_UP),
+            ("\x1b[H", KEY_HOME),
+        ):
+            with self.subTest(raw=raw):
+                keys, rest = terminal._split_keys(raw)  # noqa: SLF001
+                self.assertEqual(keys, [expected])
+                self.assertEqual(rest, "")
+
+    def test_incomplete_escape_sequence_waits(self) -> None:
+        """**关键**：半个转义序列必须留在缓冲里等后续字节。
+
+        不缓冲的话，`\\x1b` 会被立刻当成 Esc，方向键就失效了。
+        """
+        terminal = self._terminal()
+        keys, rest = terminal._split_keys("\x1b")  # noqa: SLF001
+        self.assertEqual(keys, [], "不应立刻判定为 Esc")
+        self.assertEqual(rest, "\x1b", "应留在缓冲里")
+
+        keys, rest = terminal._split_keys(rest + "[A")  # noqa: SLF001
+        self.assertEqual(keys, [KEY_UP])
+        self.assertEqual(rest, "")
+
+    def test_incomplete_scan_code_waits(self) -> None:
+        terminal = self._terminal()
+        keys, rest = terminal._split_keys("\x00")  # noqa: SLF001
+        self.assertEqual(keys, [])
+        self.assertEqual(rest, "\x00")
+
+        keys, rest = terminal._split_keys(rest + "H")  # noqa: SLF001
+        self.assertEqual(keys, [KEY_UP])
+
+    def test_control_characters(self) -> None:
+        terminal = self._terminal()
+        keys, _ = terminal._split_keys("\r\x7f\x03\x04")  # noqa: SLF001
+        self.assertEqual(keys, [KEY_ENTER, KEY_BACKSPACE, KEY_CTRL_C, KEY_CTRL_D])
+
+    def test_mixed_sequence(self) -> None:
+        terminal = self._terminal()
+        keys, rest = terminal._split_keys("a\x00Hb")  # noqa: SLF001
+        self.assertEqual(keys, ["a", KEY_UP, "b"])
+        self.assertEqual(rest, "")
+
+
+class ReaderThreadTests(unittest.TestCase):
+    """读取线程的端到端行为（用可控的假 stdin 驱动）。"""
+
+    class FakeStdin:
+        def __init__(self, data: str, *, eof_after: bool = True) -> None:
+            self._data = list(data)
+            self._index = 0
+            self._eof_after = eof_after
+
+        def read(self, _n: int = 1) -> str:
+            if self._index >= len(self._data):
+                time.sleep(0.02)
+                return "" if self._eof_after else ""
+            char = self._data[self._index]
+            self._index += 1
+            time.sleep(0.005)
+            return char
+
+        def fileno(self) -> int:
+            raise io.UnsupportedOperation("no fileno")
+
+        def isatty(self) -> bool:
+            return True
+
+    def _drain(self, terminal: Terminal, count: int, timeout: float = 3.0) -> list[str]:
+        got: list[str] = []
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and len(got) < count:
+            key = terminal.read_key()
+            if key is not None:
+                got.append(key)
+            time.sleep(0.005)
+        return got
+
+    def test_reads_mixed_input(self) -> None:
+        """打字、扫描码方向键、ANSI 方向键、控制键混在一起都要正确。"""
+        original = sys.stdin
+        sys.stdin = self.FakeStdin("ab\x00H\x1b[B\r\x03")  # type: ignore[assignment]
+        try:
+            terminal = Terminal(io.StringIO(), ansi=False)
+            terminal.interactive = True
+            terminal._use_msvcrt = False  # noqa: SLF001 - 强制走通用路径
+            got = self._drain(terminal, 6)
+            terminal.stop_reader()
+        finally:
+            sys.stdin = original
+
+        self.assertEqual(
+            got, ["a", "b", KEY_UP, KEY_DOWN, KEY_ENTER, KEY_CTRL_C]
+        )
+
+    def test_lone_escape_eventually_fires(self) -> None:
+        """单独的 `\\x1b` 必须**最终**产出 Esc，不能永远等下去。
+
+        没有这个超时兜底，按 Esc 键永远没反应——因为读取线程无法区分
+        「用户按了 Esc」和「方向键序列的开头」。
+        """
+        original = sys.stdin
+        sys.stdin = self.FakeStdin("\x1b")  # type: ignore[assignment]
+        try:
+            terminal = Terminal(io.StringIO(), ansi=False)
+            terminal.interactive = True
+            terminal._use_msvcrt = False  # noqa: SLF001
+            got = self._drain(terminal, 1, timeout=2.0)
+            terminal.stop_reader()
+        finally:
+            sys.stdin = original
+
+        self.assertEqual(got, [KEY_ESCAPE])
+
+    def test_reader_stops_on_eof(self) -> None:
+        original = sys.stdin
+        sys.stdin = self.FakeStdin("a")  # type: ignore[assignment]
+        try:
+            terminal = Terminal(io.StringIO(), ansi=False)
+            terminal.interactive = True
+            terminal._use_msvcrt = False  # noqa: SLF001
+            self._drain(terminal, 1)
+            terminal.stop_reader()
+            # 再读应当稳定返回 None，而不是抛异常
+            for _ in range(5):
+                self.assertIsNone(terminal.read_key())
+        finally:
+            sys.stdin = original
+
+
+class RealConsoleDetectionTests(unittest.TestCase):
+    """`is_real_windows_console` 与 `isatty` 是**不同**的判据。
+
+    这个区别是本项目实际踩过的坑：Git Bash / MSYS2 下 `isatty()` 为真，
+    但标准句柄不是 Windows 控制台，`msvcrt.kbhit()` 永远返回 False——
+    界面画出来了，按键完全没反应。
+
+    ## 为什么这些测试要构造环境而不是依赖当前环境
+
+    我最初的版本直接断言 `_use_msvcrt` 的值，但**当前测试环境里
+    `isatty()` 本来就是 False**，于是「用 isatty 判定」和「用真控制台判定」
+    两种实现恰好给出相同结果——变异检查里那条变异因此存活。
+    必须显式构造「isatty 为真但句柄不是控制台」这个组合才能区分。
+    """
+
+    def test_returns_false_off_windows(self) -> None:
+        from minicode.tui.terminal import is_real_windows_console
+
+        if os.name != "nt":
+            self.assertFalse(is_real_windows_console(-10))
+
+    def test_does_not_raise_on_any_platform(self) -> None:
+        from minicode.tui.terminal import is_real_windows_console
+
+        self.assertIn(is_real_windows_console(-10), (True, False))
+
+    def test_msvcrt_requires_a_real_console_not_just_isatty(self) -> None:
+        """**关键区分**：isatty 为真、句柄不是控制台时，不得启用 msvcrt。
+
+        这正是 Git Bash 的情形。用 `isatty()` 判定的实现会在这里失败。
+        """
+        import minicode.tui.terminal as terminal_module
+
+        class FakeStdin:
+            def isatty(self) -> bool:
+                return True  # Git Bash 下确实为真
+
+            def read(self, _n: int = 1) -> str:
+                return ""
+
+        with patch.object(terminal_module.sys, "stdin", FakeStdin()):
+            with patch.object(
+                terminal_module, "is_real_windows_console", lambda _which=-10: False
+            ):
+                terminal = Terminal(io.StringIO(), ansi=False)
+        self.assertFalse(
+            terminal._use_msvcrt,  # noqa: SLF001
+            "句柄不是真控制台时不得启用 msvcrt（否则 kbhit 永远返回 False）",
+        )
+
+    def test_msvcrt_enabled_when_console_is_real(self) -> None:
+        """反过来：句柄确实是控制台时才启用 msvcrt 快路径。"""
+        import minicode.tui.terminal as terminal_module
+
+        if os.name != "nt":
+            self.skipTest("仅 Windows 适用")
+        with patch.object(
+            terminal_module, "is_real_windows_console", lambda _which=-10: True
+        ):
+            terminal = Terminal(io.StringIO(), ansi=False)
+        self.assertTrue(terminal._use_msvcrt)  # noqa: SLF001
+
+    def test_diagnosis_flags_non_tty_stdin(self) -> None:
+        """stdin 不是终端时必须给出**对应那条**诊断。
+
+        断言必须落在具体措辞上：两种诊断消息都含 "stdin"，只断言这个词的话，
+        即便「非终端」这条分支失效、落到下面 MSYS 分支，测试也照样通过
+        ——变异检查抓到过这一点。
+        """
+        import minicode.tui.terminal as terminal_module
+
+        class NotATty:
+            def isatty(self) -> bool:
+                return False
+
+            def read(self, _n: int = 1) -> str:
+                return ""
+
+        with patch.object(terminal_module.sys, "stdin", NotATty()):
+            terminal = Terminal(io.StringIO(), ansi=False)
+            diagnosis = terminal.input_diagnosis()
+
+        self.assertIsNotNone(diagnosis, "非终端 stdin 必须被检出")
+        self.assertIn("不是终端", diagnosis or "", "应报「不是终端」这条")
+        self.assertNotIn("Windows 控制台", diagnosis or "", "不该落到 MSYS 那条")
+
+    def test_diagnosis_flags_msys_style_console(self) -> None:
+        """Git Bash 风格（isatty 真、句柄假）必须给出提示。"""
+        import minicode.tui.terminal as terminal_module
+
+        if os.name != "nt":
+            self.skipTest("仅 Windows 适用")
+
+        class FakeStdin:
+            def isatty(self) -> bool:
+                return True
+
+            def read(self, _n: int = 1) -> str:
+                return ""
+
+        with patch.object(terminal_module.sys, "stdin", FakeStdin()):
+            with patch.object(
+                terminal_module, "is_real_windows_console", lambda _which=-10: False
+            ):
+                terminal = Terminal(io.StringIO(), ansi=False)
+                diagnosis = terminal.input_diagnosis()
+        self.assertIsNotNone(diagnosis)
+        self.assertIn("MSYS", diagnosis or "")
+
+    def test_diagnosis_is_silent_when_injected_source_exists(self) -> None:
+        """测试注入按键源时不该报诊断——那会干扰测试输出。"""
+        terminal = Terminal(
+            io.StringIO(),
+            key_source=lambda: None,
+            size_source=lambda: SIZE,
+            ansi=False,
+        )
+        self.assertIsNone(terminal.input_diagnosis())
+
+    def test_terminal_records_which_input_path_it_uses(self) -> None:
+        terminal = Terminal(io.StringIO(), force_non_interactive=True, ansi=True)
+        self.assertIsInstance(terminal._use_msvcrt, bool)  # noqa: SLF001
+
+
+class InputDeadmanSwitchTests(unittest.TestCase):
+    """输入通道可疑且迟迟无按键时，必须主动退回行模式。
+
+    绝不能把用户留在一个不响应的界面里——那是最糟的失败方式：看起来正常，
+    实际什么都不响应。
+    """
+
+    def test_suspect_input_falls_back_after_timeout(self) -> None:
+        from minicode.tui.runner import run_tui
+
+        class SuspectTerminal(ScriptedTerminal):
+            """自检报告有问题、且永远读不到按键。"""
+
+            def input_diagnosis(self) -> str | None:
+                return "模拟：stdin 不是控制台"
+
+        terminal = SuspectTerminal([])  # 没有任何按键
+        terminal._keys = []
+        with patch("minicode.tui.runner._INPUT_DEADMAN_SECONDS", 0.05):
+            code = run_tui(AppState(), _bridge(), terminal=terminal)
+        self.assertEqual(code, -1, "应返回 -1 让调用方回退到行模式")
+
+    def test_healthy_input_does_not_fall_back(self) -> None:
+        """自检正常时不该误触发保底。"""
+        from minicode.tui.runner import run_tui
+
+        terminal = ScriptedTerminal([KEY_CTRL_D])
+        with patch("minicode.tui.runner._INPUT_DEADMAN_SECONDS", 0.05):
+            code = run_tui(AppState(), _bridge(), terminal=terminal)
+        self.assertEqual(code, 0, "正常通道应正常退出，而不是回退")
+
+    def test_any_keypress_disarms_the_deadman(self) -> None:
+        """只要收到过一个按键，就不该再触发保底。
+
+        注意 `Ctrl-D` 只在**输入为空**时才退出（有内容时它不清空输入，
+        见 `handle_key`）。因此这里用 `max_iterations` 给循环一个确定的
+        退出路径——否则按键耗尽后 `read_key()` 永远返回 None，循环会一直跑
+        （真实交互本该如此，但测试必须有出口）。
+        """
+        from minicode.tui.runner import run_tui
+
+        class SuspectTerminal(ScriptedTerminal):
+            def input_diagnosis(self) -> str | None:
+                return "模拟：可疑"
+
+        # 先打一个字符证明通道可用，然后大量空转（超过保底时间）
+        terminal = SuspectTerminal([*_type("x")])
+        with patch("minicode.tui.runner._INPUT_DEADMAN_SECONDS", 0.01):
+            # 帧间隔也要 patch：否则 400 次迭代 × 30ms ≈ 12 秒，
+            # 一条测试不该这么慢。
+            with patch("minicode.tui.runner._FRAME_INTERVAL", 0.0):
+                code = run_tui(
+                    AppState(), _bridge(), terminal=terminal, max_iterations=400
+                )
+        # 收到过按键 → 不该走保底回退（那会返回 -1）；应跑到迭代上限返回 0
+        self.assertEqual(code, 0, "收到过按键后不该回退到行模式")
+
+    def test_deadman_only_fires_before_any_key(self) -> None:
+        """保底只在「一个键都没收到」时生效——这是它的精确边界。"""
+        from minicode.tui.runner import run_tui
+
+        class SuspectTerminal(ScriptedTerminal):
+            def input_diagnosis(self) -> str | None:
+                return "模拟：可疑"
+
+        # 没有任何按键：保底应当触发
+        silent = SuspectTerminal([])
+        with patch("minicode.tui.runner._INPUT_DEADMAN_SECONDS", 0.02):
+            self.assertEqual(
+                run_tui(AppState(), _bridge(), terminal=silent), -1
+            )
+
+        # 有按键：不触发
+        talking = SuspectTerminal([*_type("a")])
+        with patch("minicode.tui.runner._INPUT_DEADMAN_SECONDS", 0.02):
+            with patch("minicode.tui.runner._FRAME_INTERVAL", 0.0):
+                self.assertEqual(
+                    run_tui(
+                        AppState(), _bridge(), terminal=talking, max_iterations=200
+                    ),
+                    0,
+                )
+
+    def test_diagnosis_is_shown_to_the_user(self) -> None:
+        """诊断文本必须真的出现在界面上——否则等于没说。"""
+        from minicode.tui.runner import run_tui
+
+        class SuspectTerminal(ScriptedTerminal):
+            def input_diagnosis(self) -> str | None:
+                return "这是诊断文本"
+
+        terminal = SuspectTerminal([KEY_CTRL_D])
+        run_tui(AppState(), _bridge(), terminal=terminal)
+        self.assertIn("这是诊断文本", _rendered(terminal))
 
 
 class TerminalTests(unittest.TestCase):

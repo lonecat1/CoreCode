@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import ctypes
 import os
+import queue
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -200,6 +202,41 @@ def is_tty() -> bool:
         return False
 
 
+def is_real_windows_console(which: int = -10) -> bool:
+    """指定的标准句柄是否是一个**真正的** Windows 控制台。
+
+    **这是与 `isatty()` 不同的判据，而取键时必须用它。**
+
+    `msvcrt.kbhit()` / `getwch()` 只在标准句柄确实是控制台时才工作。在
+    Git Bash / MSYS2 / Cygwin 下，stdin 是模拟终端（pty）或管道，`isatty()`
+    可能返回 True，但 `GetConsoleMode` 会失败——此时 `kbhit()` **永远返回
+    False**，表现为「界面画出来了，但按键完全无反应」。
+
+    这个 bug 真实发生过：我仅凭 `isatty()` 就选了 msvcrt 路径。
+    """
+    if os.name != "nt":
+        return False
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetStdHandle.argtypes = [ctypes.c_uint32]
+        kernel32.GetStdHandle.restype = ctypes.c_void_p
+        kernel32.GetConsoleMode.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint32),
+        ]
+        kernel32.GetConsoleMode.restype = ctypes.c_int
+
+        handle = kernel32.GetStdHandle(which & 0xFFFFFFFF)
+        if not handle:
+            return False
+        mode = ctypes.c_uint32()
+        return bool(
+            kernel32.GetConsoleMode(ctypes.c_void_p(handle), ctypes.byref(mode))
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
 # ---------------------------------------------------------------------------
 # ANSI 能力
 # ---------------------------------------------------------------------------
@@ -267,11 +304,23 @@ class Terminal:
 
         #: 可注入的按键源与尺寸源，仅用于测试。
         #:
-        #: 真实的 `msvcrt` / `select` 路径在自动化环境里没法驱动，于是
-        #: 「按键处理是否正确」就永远得不到验证。把它们变成可替换的，就能用
-        #: 脚本按键真正跑完整个交互循环。生产代码不传，走的仍是原生实现。
+        #: 真实的终端取键路径在自动化环境里没法驱动，于是「按键处理是否正确」
+        #: 就永远得不到验证。把它们变成可替换的，就能用脚本按键真正跑完整个
+        #: 交互循环。生产代码不传，走的仍是原生实现。
         self._key_source = key_source
         self._size_source = size_source
+
+        #: 读取线程与它产出的键队列（见 `read_key` 的说明）。
+        self._reader: threading.Thread | None = None
+        self._reader_stop = threading.Event()
+        self._key_queue: queue.Queue[str] = queue.Queue()
+
+        #: 是否可以用 msvcrt 的「无需回车」路径。
+        #:
+        #: **判据必须是「标准句柄真的是控制台」，不能是 `isatty()`。**
+        #: Git Bash / MSYS2 下 `isatty()` 为真但 `GetConsoleMode` 失败，
+        #: 此时 `kbhit()` 永远返回 False —— 界面出来了，按键完全没反应。
+        self._use_msvcrt = os.name == "nt" and is_real_windows_console(-10)
 
         #: 是否可以使用 ANSI 转义序列。显式传入优先；否则探测。
         #: 探测失败时降级为纯文本，绝不打印乱码。
@@ -298,6 +347,7 @@ class Terminal:
         必须在 `finally` 里调用：没有它用户会留在一个没有光标的终端里
         ——这是 TUI 最糟糕的失败方式。
         """
+        self.stop_reader()
         if self._cursor_hidden:
             self.write(SHOW_CURSOR)
             self._cursor_hidden = False
@@ -316,6 +366,47 @@ class Terminal:
         if self.ansi:
             self.write(SHOW_CURSOR)
             self._cursor_hidden = False
+
+    # -- 输入能力自检 -------------------------------------------------------
+
+    def input_diagnosis(self) -> str | None:
+        """检查「按键能不能读到」。返回问题描述，正常时返回 None。
+
+        这个检查存在的理由：**输入通道坏掉时的表现是「按键完全没反应」**，
+        用户看到界面正常显示，会以为程序卡死，完全不知道是环境问题。
+        提前检出并说清楚原因，比让人对着一个不响应的界面猜要好得多。
+
+        已知会出问题的情况：
+          - stdin 不是终端（被重定向、或在某些 IDE 的终端里）；
+          - Git Bash / MSYS2 / Cygwin 下 `isatty()` 为真但标准句柄不是
+            Windows 控制台，`msvcrt` 接口不可用；
+          - stdin 已被别的东西读走（例如外层脚本）。
+        """
+        if self._key_source is not None:
+            return None  # 测试注入的按键源，无需检查
+
+        try:
+            if not sys.stdin.isatty():
+                return (
+                    "stdin 不是终端（可能被重定向或管道占用）。\n"
+                    "  按键无法读取。请直接在终端里运行，或用行模式：minicode"
+                )
+        except (AttributeError, ValueError):
+            return "无法判断 stdin 是否为终端，按键可能无法读取。"
+
+        if os.name == "nt" and not self._use_msvcrt and not self._console_handle_ok():
+            # 既没有 msvcrt，也没有可用的控制台句柄——大概率是 MSYS 类环境。
+            # 这种情况下通用路径仍然可能工作（pty 上的 select），因此不直接
+            # 判定失败，只提示。
+            return (
+                "stdin 不是 Windows 控制台（常见于 Git Bash / MSYS2 / Cygwin）。\n"
+                "  已改用通用读取路径；若按键仍无反应，请换用 PowerShell 或\n"
+                "  Windows Terminal，或使用行模式：minicode"
+            )
+        return None
+
+    def _console_handle_ok(self) -> bool:
+        return is_real_windows_console(-10)
 
     # -- 输出 ---------------------------------------------------------------
 
@@ -363,99 +454,230 @@ class Terminal:
     # -- 输入 ---------------------------------------------------------------
 
     def read_key(self) -> str | None:
-        """非阻塞地读一个逻辑键。
+        """非阻塞地取一个逻辑键；没有按键时立即返回 None。
 
-        **没有按键时立即返回 None**，调用方靠它在等待输入期间继续重绘。
+        ## 为什么用「读取线程」而不是「非阻塞轮询」
 
-        ## 为什么不能用 `sys.stdin.read(1)`
+        早先的实现按平台选非阻塞接口：Windows 用 `msvcrt.kbhit()`，
+        POSIX 用 `select()`。两者都有一个致命前提——**stdin 必须是那类接口
+        认得的终端**：
 
-        控制台输入是**行缓冲**的：`sys.stdin.read(1)` 会一直阻塞到用户按回车，
-        按键根本送不进来，整个界面无法使用。这是本实现最初的写法，在 Windows
-        上实测完全不可用。正确做法是平台原生的「有键就读、没键就走」。
+          - `msvcrt.kbhit()` 只在标准句柄是**真正的 Windows 控制台**时有效。
+            在 Git Bash / MSYS2 / Cygwin 下 stdin 是 pty 或管道，`isatty()`
+            可能返回 True 而 `GetConsoleMode` 失败，于是 `kbhit()` **永远返回
+            False**——界面画出来了，按键完全无反应。这是实际发生过的故障。
+          - `select()` 在 Windows 上不能用于控制台句柄。
+
+        改为**一条后台线程做阻塞读取、主线程从队列取**：
+
+          - 不依赖任何「非阻塞探测」接口，因此对控制台、pty、管道一视同仁；
+          - 主循环仍是「取不到就重绘」，不会阻塞界面；
+          - 转义序列与扫描码的解码都收在读取线程里，与传输方式无关。
+
+        代价是多一条线程，而它本来就在等 I/O，几乎不耗 CPU。
         """
         if not self.interactive:
             return None
         if self._key_source is not None:
             return self._key_source()
-        if os.name == "nt":
-            return self._read_key_windows()
-        return self._read_key_posix()
 
-    def _read_key_windows(self) -> str | None:
+        self._ensure_reader()
         try:
-            import msvcrt
-        except ImportError:
-            return None
-        try:
-            if not msvcrt.kbhit():
-                return None
-            char = msvcrt.getwch()
-        except (OSError, ValueError):
-            return None
-        if not char:
+            return self._key_queue.get_nowait()
+        except queue.Empty:
             return None
 
-        # 扩展键：前缀 \x00 或 \xe0，第二字节是扫描码。
-        if char in ("\x00", "\xe0"):
+    def _ensure_reader(self) -> None:
+        if self._reader is not None:
+            return
+        self._reader = threading.Thread(
+            target=self._read_loop, name="minicode-keys", daemon=True
+        )
+        self._reader.start()
+
+    def _read_loop(self) -> None:
+        """后台线程：阻塞读原始输入，解码成逻辑键后放进队列。
+
+        退出条件：读到 EOF、流被关闭、或 `stop_reader()` 被调用。
+
+        ## 悬空转义序列的处理
+
+        单独的 `\\x1b` 既可能是「用户按了 Esc」，也可能是某个转义序列的开头
+        （`\\x1b[A` = 方向键）。因此收到 `\\x1b` 后必须**限时等待**后续字节：
+
+          - 等到了 → 是方向键等功能键；
+          - 等够了还没有 → 判定为用户按了 Esc。
+
+        没有这个兜底，`\\x1b` 会永久留在缓冲里，**按 Esc 永远没反应**。
+        这也是读取必须支持超时的原因——无限阻塞的话超时根本检查不到。
+        """
+        stream = sys.stdin
+        pending = ""
+        escape_deadline: float | None = None
+
+        while not self._reader_stop.is_set():
+            # 有悬空转义序列时用短超时读取，否则可以一直等。
+            timeout = None
+            if escape_deadline is not None:
+                timeout = max(0.0, escape_deadline - time.monotonic())
+
             try:
-                if not msvcrt.kbhit():
-                    time.sleep(_ESCAPE_GRACE)
-                if not msvcrt.kbhit():
-                    return KEY_ESCAPE
-                scan = msvcrt.getwch()
+                chunk = self._read_chunk(stream, timeout)
             except (OSError, ValueError):
-                return KEY_ESCAPE
-            return WINDOWS_SCAN_CODES.get(scan, KEY_ESCAPE)
+                break
 
-        return decode_key(char)
+            if chunk is None:
+                if timeout is not None and escape_deadline is not None:
+                    # 限时等待结束仍无后续 → 用户按的是 Esc。
+                    if time.monotonic() >= escape_deadline:
+                        self._key_queue.put(KEY_ESCAPE)
+                        pending = pending[1:]
+                        escape_deadline = None
+                    continue
+                break  # EOF
 
-    def _read_key_posix(self) -> str | None:
+            pending += chunk
+            keys, pending = self._split_keys(pending)
+            for key in keys:
+                self._key_queue.put(key)
+
+            escape_deadline = (
+                time.monotonic() + _ESCAPE_GRACE if pending.startswith("\x1b") else None
+            )
+
+        # 流结束时把残留字节按单键处理，避免丢掉最后一个按键。
+        for char in pending:
+            decoded = decode_key(char)
+            if decoded is not None:
+                self._key_queue.put(decoded)
+
+    def _read_chunk(self, stream: Any, timeout: float | None = None) -> str | None:
+        """读一小段原始输入。返回 None 表示「本次没有数据」或流已结束。
+
+        `timeout=None` 表示可以无限等；否则最多等这么久。
+
+        Windows 上若 msvcrt 可用，走「逐字符、无需回车」的路径；否则退回
+        通用路径（`select` 或阻塞读取）——那可能需要回车，但**至少能用**，
+        比「完全没反应」好得多。
+        """
+        if self._use_msvcrt:
+            try:
+                import msvcrt
+
+                deadline = None if timeout is None else time.monotonic() + timeout
+                while not msvcrt.kbhit():
+                    if self._reader_stop.wait(0.005):
+                        return None
+                    if deadline is not None and time.monotonic() >= deadline:
+                        return None
+                return msvcrt.getwch()
+            except (ImportError, OSError, ValueError):
+                # 该环境下 msvcrt 不可用（例如 Git Bash）——永久退回通用路径。
+                self._use_msvcrt = False
+
+        return self._read_chunk_generic(stream, timeout)
+
+    def _read_chunk_generic(self, stream: Any, timeout: float | None) -> str | None:
+        """通用读取：能用 `select` 就限时等，否则退化为阻塞读。"""
+        fd: int | None = None
         try:
-            import select
+            fd = stream.fileno()
+        except (AttributeError, OSError, ValueError):
+            fd = None
 
-            fd = sys.stdin.fileno()
-        except (ImportError, OSError, ValueError):
-            return None
+        if fd is not None:
+            try:
+                import select
+
+                ready, _r, _e = select.select([fd], [], [], timeout)
+                if not ready:
+                    return None  # 超时（或无限等时不会走到这里）
+                data = os.read(fd, 1)
+                if not data:
+                    return None
+                return data.decode("utf-8", errors="replace")
+            except (ImportError, OSError, ValueError):
+                pass  # select 不可用（Windows 上的控制台句柄就是这样）
+
+        # 最后手段：阻塞读一个字符。无法限时，但保证「至少能输入」。
         try:
-            ready, _r, _e = select.select([fd], [], [], 0)
+            char = stream.read(1)
         except (OSError, ValueError):
             return None
-        if not ready:
-            return None
+        return char or None
 
-        try:
-            first = os.read(fd, 1)
-        except OSError:
-            return None
-        if not first:
-            return None
+    def _split_keys(self, pending: str) -> tuple[list[str], str]:
+        """从缓冲里切出完整的逻辑键，返回 `(键列表, 剩余缓冲)`。
 
-        char = first.decode("utf-8", errors="replace")
+        需要缓冲是因为两类序列可能跨多次读取到达：
 
-        if char == "\x1b":
-            buffer = char
-            deadline = time.monotonic() + _ESCAPE_GRACE
-            while time.monotonic() < deadline and len(buffer) < 8:
-                try:
-                    ready, _r, _e = select.select([fd], [], [], 0.002)
-                except (OSError, ValueError):
-                    break
-                if not ready:
-                    continue
-                try:
-                    nxt = os.read(fd, 1)
-                except OSError:
-                    break
-                if not nxt:
-                    break
-                buffer += nxt.decode("utf-8", errors="replace")
-                if buffer in ESCAPE_SEQUENCES:
-                    break
-                if not any(seq.startswith(buffer) for seq in ESCAPE_SEQUENCES):
-                    break
-            return decode_key(buffer)
+          - Windows 扩展键：`\\x00`/`\\xe0` + 扫描码（两字节）
+          - ANSI 转义序列：`\\x1b[A` 等（两到六字节）
+        """
+        keys: list[str] = []
+        index = 0
+        length = len(pending)
 
-        return decode_key(char)
+        while index < length:
+            char = pending[index]
+
+            # Windows 扩展键
+            if char in ("\x00", "\xe0"):
+                if index + 1 >= length:
+                    break  # 扫描码还没到
+                keys.append(WINDOWS_SCAN_CODES.get(pending[index + 1], KEY_ESCAPE))
+                index += 2
+                continue
+
+            # ANSI 转义序列
+            if char == "\x1b":
+                matched, consumed = self._match_escape(pending, index)
+                if consumed == 0:
+                    break  # 序列还没收齐
+                keys.append(matched)
+                index += consumed
+                continue
+
+            decoded = decode_key(char)
+            if decoded is not None:
+                keys.append(decoded)
+            index += 1
+
+        return keys, pending[index:]
+
+    def _match_escape(self, pending: str, start: int) -> tuple[str | None, int]:
+        """尝试从 `start` 起匹配一个转义序列。
+
+        返回 `(逻辑键, 消耗的字符数)`。`consumed == 0` 表示「还需要更多字节」。
+        """
+        remaining = pending[start:]
+
+        # 已经是完整已知序列
+        if remaining in ESCAPE_SEQUENCES:
+            return ESCAPE_SEQUENCES[remaining], len(remaining)
+
+        # 还有可能是某个已知序列的前缀 → 继续等
+        if any(seq.startswith(remaining) for seq in ESCAPE_SEQUENCES):
+            return None, 0
+
+        # 不再匹配任何已知序列：取最长能匹配的前缀，剩下的留给后续。
+        best = ""
+        for seq in ESCAPE_SEQUENCES:
+            if remaining.startswith(seq) and len(seq) > len(best):
+                best = seq
+        if best:
+            return ESCAPE_SEQUENCES[best], len(best)
+
+        # 单个 Esc（后面跟的不是序列的一部分）
+        if len(remaining) == 1:
+            # 等一小会儿看是否有后续；没有就当作单独的 Esc。
+            # 这里直接返回 Esc，避免「按 Esc 没反应」。
+            return KEY_ESCAPE, 1
+        return KEY_ESCAPE, 1
+
+    def stop_reader(self) -> None:
+        """让读取线程退出（`leave()` 会调用）。"""
+        self._reader_stop.set()
 
     # -- 原始模式 -----------------------------------------------------------
 

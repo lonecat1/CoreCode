@@ -38,6 +38,10 @@ _FRAME_INTERVAL = 0.03
 #: 之后卡在一个无响应的界面里。
 _EXIT_WAIT_SECONDS = 30.0
 
+#: 输入通道保底时间（秒）。自检可疑时，若这么久都没收到任何按键，
+#: 就主动退回行模式。10 秒足够让用户意识到「按了没反应」并放弃。
+_INPUT_DEADMAN_SECONDS = 10.0
+
 
 @dataclass
 class HostBridge:
@@ -98,6 +102,20 @@ def run_tui(
     running = False
     iterations = 0
 
+    # 输入通道自检。坏掉时的表现是「按键完全没反应」，用户会以为程序卡死，
+    # 完全不知道是环境问题。提前把原因摆在界面上，比让人对着不响应的界面
+    # 反复重试要好得多。
+    diagnosis = term.input_diagnosis()
+    input_suspect = diagnosis is not None
+    if input_suspect:
+        state.push("error", f"输入通道可能不可用：\n{diagnosis}")
+
+    #: 是否曾成功读到过按键；以及首帧时间。二者用于「输入通道保底」：
+    #: 自检可疑且若干秒内一个键都没收到，就主动退回行模式——
+    #: 绝不能把用户留在一个不响应的界面里。
+    received_any_key = False
+    started_at = time.monotonic()
+
     def apply_events() -> None:
         nonlocal running
         items, finished = events.drain()
@@ -136,10 +154,20 @@ def run_tui(
                 state.animation_frame += 1
                 time.sleep(_FRAME_INTERVAL)
                 iterations += 1
+                # 保底：自检可疑且迟迟收不到任何按键 → 主动退出，让调用方
+                # 回退到行模式。用户至少能继续干活，而不是对着死界面。
+                if (
+                    input_suspect
+                    and not received_any_key
+                    and time.monotonic() - started_at > _INPUT_DEADMAN_SECONDS
+                ):
+                    term.leave()
+                    return -1
                 if max_iterations is not None and iterations >= max_iterations:
                     return 0
                 continue
 
+            received_any_key = True
             iterations += 1
             # Ctrl-C 在回合进行中是「中断回合」，不是「退出程序」。
             if key == KEY_CTRL_C and running:

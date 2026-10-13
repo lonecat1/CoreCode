@@ -318,6 +318,39 @@ MUTATIONS = [
         "            self._cursor_hidden = False",
     ),
     (
+        "TUI: 用 isatty 而非真控制台判定（Git Bash 下按键全失效）",
+        TUI_TERMINAL,
+        '        self._use_msvcrt = os.name == "nt" and is_real_windows_console(-10)',
+        '        self._use_msvcrt = os.name == "nt"',
+    ),
+    (
+        "TUI: 半个转义序列被立刻当成 Esc（方向键失效）",
+        TUI_TERMINAL,
+        "        if any(seq.startswith(remaining) for seq in ESCAPE_SEQUENCES):\n"
+        "            return None, 0",
+        "        if False:\n            return None, 0",
+    ),
+    (
+        "TUI: 悬空 Esc 永不触发（按 Esc 没反应）",
+        TUI_TERMINAL,
+        "                    if time.monotonic() >= escape_deadline:\n"
+        "                        self._key_queue.put(KEY_ESCAPE)",
+        "                    if False:\n"
+        "                        self._key_queue.put(KEY_ESCAPE)",
+    ),
+    (
+        "TUI: Windows 扫描码不再翻译（方向键变乱码）",
+        TUI_TERMINAL,
+        "                keys.append(WINDOWS_SCAN_CODES.get(pending[index + 1], KEY_ESCAPE))",
+        "                keys.append(KEY_ESCAPE)",
+    ),
+    (
+        "TUI: 输入通道坏掉时不再提示（用户对着不响应的界面猜）",
+        TUI_TERMINAL,
+        "            if not sys.stdin.isatty():",
+        "            if False:",
+    ),
+    (
         "配置: 环境变量重新压过 settings.json",
         CONFIG,
         "    return str(from_settings or source.get(key) or \"\").strip()",
