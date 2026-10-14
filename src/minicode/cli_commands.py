@@ -99,58 +99,86 @@ def try_handle_local_command(host: "SessionHost", text: str) -> str | None:
 
 def _render_tools(host: "SessionHost") -> str:
     from .tools import create_worker_registry
+    from .ui import render_key_value, render_separator, render_status_line
 
     all_tools = host.tools.list()
     worker = create_worker_registry(host.tools)
     worker_names = {item.name for item in worker.list()}
 
-    lines = [f"共 {len(all_tools)} 个工具："]
+    rows: list[tuple[str, str]] = []
     for tool in all_tools:
-        marker = "（子 Agent 可用）" if tool.name in worker_names else ""
-        lines.append(f"  {tool.name}{marker}")
-        lines.append(f"      {tool.description}")
-    lines.append("")
-    lines.append(
-        f"只读子集 {len(worker_names)} 个：{', '.join(sorted(worker_names)) or '无'}"
+        mark = " 只读" if tool.name in worker_names else ""
+        rows.append((tool.name + mark, tool.description))
+
+    return "\n".join(
+        [
+            render_status_line(
+                label=f"{len(all_tools)} 个工具（子 Agent 可见 {len(worker_names)} 个只读）"
+            ),
+            render_separator(),
+            render_key_value(rows),
+        ]
     )
-    return "\n".join(lines)
 
 
 def _render_status(host: "SessionHost") -> str:
     from .context.tokens import compute_context_stats
+    from .ui import render_key_value, render_separator, render_status_line
 
     model_name = host.runtime_config.model if host.runtime_config else "（离线 mock）"
-    lines = [
-        f"模型    : {model_name}",
-        f"会话    : {host.session_id}",
-        f"工作目录: {host.cwd}",
-        f"消息数  : {len(host.messages)}（已落盘游标 {host.already_saved_count}）",
+    rows: list[tuple[str, str]] = [
+        ("模型", model_name),
+        ("会话", host.session_id),
+        ("目录", host.cwd),
+        ("消息", f"{len(host.messages)} 条（已落盘游标 {host.already_saved_count}）"),
     ]
 
     if host.runtime_config:
         stats = compute_context_stats(host.messages, host.runtime_config.model)
-        lines.extend(
-            [
-                f"上下文  : {stats.total_tokens} / {stats.effective_input} token"
-                f"（{stats.utilization * 100:.1f}%，{stats.warning_level}）",
-                f"计量来源: {stats.accounting.source}"
-                + ("（已失效）" if stats.accounting.stale else ""),
-                f"窗口    : {stats.context_window}（预留 {stats.context_window - stats.effective_input}）",
-            ]
+        rows.append(
+            (
+                "上下文",
+                f"{stats.total_tokens} / {stats.effective_input} token"
+                f"（{stats.utilization * 100:.1f}% · {stats.warning_level}）",
+            )
+        )
+        rows.append(
+            (
+                "计量",
+                stats.accounting.source + ("（已失效）" if stats.accounting.stale else ""),
+            )
+        )
+        rows.append(
+            (
+                "窗口",
+                f"{stats.context_window}"
+                f"（预留 {stats.context_window - stats.effective_input}）",
+            )
         )
     else:
-        lines.append("上下文  : 离线模式，无模型窗口信息")
+        rows.append(("上下文", "离线模式，无模型窗口信息"))
 
-    lines.extend(
-        [
-            f"Goal    : {_goal_state(host)}",
-            f"Loop    : {_loop_state(host)}",
-            f"子 Agent: {host.subagents.running_count}/{host.subagents.max_concurrent} 运行中"
+    rows.append(("Goal", _goal_state(host)))
+    rows.append(("Loop", _loop_state(host)))
+    rows.append(
+        (
+            "子 Agent",
+            f"{host.subagents.running_count}/{host.subagents.max_concurrent} 运行中"
             if host.subagents
-            else "子 Agent: 未启用",
+            else "未启用",
+        )
+    )
+    # 本会话的累计统计（回合数、耗时、工具调用次数）
+    if host.stats.turns:
+        rows.append(("本会话", host.stats.summary_line()))
+
+    return "\n".join(
+        [
+            render_status_line(label="会话状态"),
+            render_separator(),
+            render_key_value(rows),
         ]
     )
-    return "\n".join(lines)
 
 
 def _goal_state(host: "SessionHost") -> str:
@@ -172,9 +200,37 @@ def _loop_state(host: "SessionHost") -> str:
 
 
 def _render_plan(host: "SessionHost") -> str:
-    from .runtime.plan import format_plan
+    """Todo 清单：用状态字形 + 对齐渲染。
 
-    return format_plan(host.plan.get_snapshot())
+    比 `format_plan` 的朴素文本多两层信息：**进度计数**（几条完成 / 共几条）
+    和**统一的状态记号**。用户扫一眼就能知道还剩多少事。
+    """
+    from .ui import render_key_value, render_separator, render_status_line
+
+    snapshot = host.plan.get_snapshot()
+    todos = list(snapshot.todos)
+    if not todos:
+        return render_status_line(label="Todo 清单为空")
+
+    marks = {
+        "completed": "✓",
+        "in_progress": "▸",
+        "pending": "·",
+    }
+    rows: list[tuple[str, str]] = []
+    for item in todos:
+        status = str(getattr(item, "status", "pending"))
+        title = str(getattr(item, "title", ""))
+        rows.append((f"{marks.get(status, '·')} {title}", status))
+
+    done = sum(1 for item in todos if getattr(item, "status", "") == "completed")
+    return "\n".join(
+        [
+            render_status_line(label=f"Todo 清单（{done}/{len(todos)} 完成）"),
+            render_separator(),
+            render_key_value(rows),
+        ]
+    )
 
 
 def _render_memory(host: "SessionHost") -> str:
@@ -184,37 +240,68 @@ def _render_memory(host: "SessionHost") -> str:
 
 
 def _render_skills(host: "SessionHost") -> str:
+    from .ui import render_key_value, render_separator, render_status_line
+
     skills = host.tools.skills()
     if not skills:
         return (
             "没有发现技能。技能来自 `.mini-code/skills/<name>/SKILL.md`"
             "（也兼容 `.claude/skills/`）。"
         )
-    lines = [f"共 {len(skills)} 个技能："]
-    for item in skills:
-        lines.append(f"  {item.get('name')}: {item.get('description')}")
-    return "\n".join(lines)
+    rows = [
+        (str(item.get("name", "")), str(item.get("description", "")))
+        for item in skills
+    ]
+    return "\n".join(
+        [
+            render_status_line(label=f"{len(skills)} 个技能"),
+            render_separator(),
+            render_key_value(rows),
+        ]
+    )
 
 
 def _render_mcp(host: "SessionHost") -> str:
+    from .ui import render_key_value, render_separator, render_status_line
+
     servers = host.tools.mcp_servers()
     if not servers:
         return "没有配置 MCP 服务器（见 ~/.mini-code/mcp.json）。"
-    lines = [f"共 {len(servers)} 个 MCP 服务器："]
+    rows: list[tuple[str, str]] = []
     for server in servers:
         detail = f"tools={server.get('toolCount', 0)}"
         if server.get("error"):
-            detail += f" 错误：{server['error']}"
-        lines.append(f"  {server.get('name')}: {server.get('status')} ({detail})")
-    return "\n".join(lines)
+            detail += f" · 错误：{server['error']}"
+        rows.append((str(server.get("name", "")), f"{server.get('status')}  {detail}"))
+    connected = sum(1 for s in servers if s.get("status") == "connected")
+    return "\n".join(
+        [
+            render_status_line(
+                label=f"MCP 服务器（{connected}/{len(servers)} 已连接）"
+            ),
+            render_separator(),
+            render_key_value(rows),
+        ]
+    )
 
 
 def _render_permissions(host: "SessionHost") -> str:
     from .permissions import PERMISSIONS_PATH
+    from .ui import render_key_value, render_separator, render_status_line
 
-    lines = [f"存储路径: {PERMISSIONS_PATH}", "当前规则:"]
-    lines.extend(f"  {item}" for item in host.permissions.get_summary())
-    return "\n".join(lines)
+    rows: list[tuple[str, str]] = [("存储", str(PERMISSIONS_PATH))]
+    summary = host.permissions.get_summary()
+    if summary:
+        rows.extend((f"规则 {index}", str(item)) for index, item in enumerate(summary, 1))
+    else:
+        rows.append(("规则", "（无）"))
+    return "\n".join(
+        [
+            render_status_line(label="权限"),
+            render_separator(),
+            render_key_value(rows),
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------

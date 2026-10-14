@@ -44,7 +44,7 @@ class BlockingAdapter:
         self.started = threading.Semaphore(0)
         self.calls = 0
 
-    def next(self, messages, *, tools=None, signal=None):  # noqa: ANN001
+    def next(self, messages, *, tools=None, signal=None, on_delta=None):  # noqa: ANN001
         self.calls += 1
         self.started.release()
         if signal is not None:
@@ -58,14 +58,14 @@ class ReportingAdapter:
     def __init__(self, content: str = "调研结论：A 文件第 12 行有问题。") -> None:
         self._content = content
 
-    def next(self, messages, *, tools=None, signal=None):  # noqa: ANN001
+    def next(self, messages, *, tools=None, signal=None, on_delta=None):  # noqa: ANN001
         return AgentStep(type="assistant", content=self._content, kind="final")
 
 
 class FailingAdapter:
     """每次调用都抛异常，用于验证 failed 路径。"""
 
-    def next(self, messages, *, tools=None, signal=None):  # noqa: ANN001
+    def next(self, messages, *, tools=None, signal=None, on_delta=None):  # noqa: ANN001
         raise RuntimeError("模型调用失败")
 
 

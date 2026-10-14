@@ -25,7 +25,7 @@ import random
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from ..abort import throw_if_aborted
 from ..config import RuntimeConfig, resolve_max_output_tokens
@@ -46,6 +46,18 @@ RESPONSE_MARKERS: tuple[tuple[str, str], ...] = (
 #: 进度消息回传给模型时的包裹格式。
 PROGRESS_TAG_OPEN = "<progress>"
 PROGRESS_TAG_CLOSE = "</progress>"
+
+#: 所有收尾标签。
+#:
+#: **必须显式列出，不能从 `RESPONSE_MARKERS` 的类型名推导**——那里的第二个
+#: 元素是 `"final"` / `"progress"` 这样的类型名，拿它去剥会把 `</final>`
+#: 剥成 `</>`（我实际踩过这个坑）。
+CLOSING_TAGS: tuple[str, ...] = (
+    "</final>",
+    "[/FINAL]",
+    "</progress>",
+    "[/PROGRESS]",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -165,23 +177,55 @@ _SNIP_BOUNDARY_TEXT = (
 
 
 def parse_assistant_text(content: str) -> tuple[str, str | None]:
-    """剥掉 `<final>` / `<progress>` 前缀，返回 `(正文, kind)`。"""
+    """剥掉 `<final>` / `<progress>` 前缀，返回 `(正文, kind)`。
+
+    ## 为什么收尾标签要**无条件**剥
+
+    早先的实现只在开头匹配到标记时才去剥收尾标签。于是
+    `"回答内容</final>"`（模型漏写了开头标记，或开头标记被上游吞掉）
+    会把 `</final>` 原样留在正文里——用户看到回答末尾挂着一串协议标签。
+    这是真实发生过的。
+
+    现在无论开头有没有标记，都统一剥掉收尾标签。
+    """
     trimmed = content.strip()
     if not trimmed:
         return "", None
 
-    for prefix, kind in RESPONSE_MARKERS:
-        if trimmed.startswith(prefix):
-            body = trimmed[len(prefix) :].strip()
-            closing = "</progress>" if kind == "progress" else "</final>"
-            # 大小写不敏感地去掉收尾标签。
-            lowered = body.lower()
-            index = lowered.rfind(closing)
-            if index != -1:
-                body = (body[:index] + body[index + len(closing) :]).strip()
-            return body, kind
+    kind: str | None = None
+    body = trimmed
 
-    return trimmed, None
+    for prefix, marker_kind in RESPONSE_MARKERS:
+        if body.startswith(prefix):
+            body = body[len(prefix) :].strip()
+            kind = marker_kind
+            break
+
+    # 无条件剥掉所有收尾标签（不只是与开头匹配的那一个）。
+    body = _strip_closing_tags(body).strip()
+    return body, kind
+
+
+def _strip_closing_tags(text: str) -> str:
+    """剥掉文本中出现的收尾标签。
+
+    ## 这里有一个我刚踩过的坑
+
+    `RESPONSE_MARKERS` 的第二个元素是**类型名**（`"final"` / `"progress"`），
+    **不是**收尾标签。我第一版直接拿它去 `find`，于是 `"</final>"` 里的
+    `final` 被剥掉，只剩下 `"</>"`——正文末尾挂着一串残渣。
+
+    收尾标签必须显式定义（见 `CLOSING_TAGS`），不能从类型名推。
+    """
+    cleaned = text
+    for closing in CLOSING_TAGS:
+        while True:
+            lowered = cleaned.lower()
+            index = lowered.find(closing.lower())
+            if index == -1:
+                break
+            cleaned = cleaned[:index] + cleaned[index + len(closing) :]
+    return cleaned
 
 
 def normalize_usage(usage: dict[str, Any] | None) -> Any:
@@ -281,6 +325,7 @@ class AnthropicModelAdapter:
         *,
         tools: list[Any] | None = None,
         signal: Any | None = None,
+        on_delta: Callable[[str], None] | None = None,
     ) -> Any:
         throw_if_aborted(signal)
         config = self._config_provider()
@@ -305,7 +350,19 @@ class AnthropicModelAdapter:
         if thinking is not None:
             body["thinking"] = thinking
 
-        payload = self._post_with_retry(config, body, signal)
+        # 流式优先，失败退回非流式。
+        #
+        # **流式是体验增强，不是功能前提**：某些服务商/代理不支持 SSE，
+        # 或中途连接中断。此时静默退回一次性请求——用户看不到逐字效果，
+        # 但功能完全不受影响。这与动画、与 MCP 的处理取向一致。
+        payload: dict[str, Any] | None = None
+        if on_delta is not None:
+            try:
+                payload = self._post_streaming(config, body, signal, on_delta)
+            except Exception:  # noqa: BLE001 - 退回非流式
+                payload = None
+        if payload is None:
+            payload = self._post_with_retry(config, body, signal)
 
         # -- 解析响应 ---------------------------------------------------------
         tool_calls: list[ToolCall] = []
@@ -363,6 +420,187 @@ class AnthropicModelAdapter:
 
     # -- HTTP ---------------------------------------------------------------
 
+    def _post_streaming(
+        self,
+        config: RuntimeConfig,
+        body: dict[str, Any],
+        signal: Any | None,
+        on_delta: Callable[[str], None],
+    ) -> dict[str, Any] | None:
+        """用 SSE 流式请求，边收边回调，最后拼出与非流式等价的 payload。
+
+        返回 `None` 表示「这次流式不可用」——调用方会退回非流式。**不抛异常**，
+        因为流式失败不该让整个回合失败。
+
+        ## 为什么最后还要拼出完整 payload
+
+        `next()` 的解析逻辑（工具调用、思考块、用量统计）是针对**完整响应**
+        写的。与其维护两套解析，不如把 SSE 增量重建成同样的结构，然后走同一条
+        解析路径。这样「流式」与「非流式」的行为差异被压到最小。
+        """
+        request_body = {**body, "stream": True}
+        encoded = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            config.messages_endpoint(),
+            data=encoded,
+            headers={**config.headers(), "accept": "text/event-stream"},
+            method="POST",
+        )
+
+        try:
+            with self._opener.open(request, timeout=600) as response:
+                content_type = (response.headers.get("content-type") or "").lower()
+                if "text/event-stream" not in content_type:
+                    # 服务端忽略了 stream 参数，直接返回完整 JSON。
+                    # 这不是错误——当成非流式结果用即可。
+                    raw = response.read().decode("utf-8")
+                    parsed = json.loads(raw)
+                    return parsed if isinstance(parsed, dict) else None
+                return self._consume_sse(response, signal, on_delta)
+        except Exception:  # noqa: BLE001 - 流式不可用时静默退回
+            return None
+
+    def _consume_sse(
+        self,
+        response: Any,
+        signal: Any | None,
+        on_delta: Callable[[str], None],
+    ) -> dict[str, Any] | None:
+        """解析 SSE 事件流，重建完整响应，并逐段回调正文。
+
+        Anthropic 的事件类型里，只有 `content_block_delta` 的 `text_delta`
+        是**正文**。`thinking_delta` 是思考过程，**不能**当正文回调——
+        否则用户会看到模型的内心独白被当成回答打出来。
+        """
+        text_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        thinking_blocks: list[dict[str, Any]] = []
+        stop_reason: str | None = None
+        usage: dict[str, Any] | None = None
+        model_name: str | None = None
+        message_id: str | None = None
+        #: 工具调用的 input 是**分片**到达的 JSON 字符串，需要按 index 累积。
+        tool_buffers: dict[int, dict[str, Any]] = {}
+        #: 思考块的文本同样分片到达。
+        thinking_buffers: dict[int, list[str]] = {}
+
+        for event in _iter_sse_events(response):
+            throw_if_aborted(signal)
+            kind = event.get("type")
+
+            if kind == "message_start":
+                message = event.get("message") or {}
+                model_name = message.get("model")
+                message_id = message.get("id")
+                if isinstance(message.get("usage"), dict):
+                    usage = dict(message["usage"])
+                continue
+
+            if kind == "content_block_start":
+                block = event.get("content_block") or {}
+                index = int(event.get("index", 0))
+                block_type = block.get("type")
+                if block_type == "tool_use":
+                    tool_buffers[index] = {
+                        "type": "tool_use",
+                        "id": block.get("id"),
+                        "name": block.get("name"),
+                        "json": "",
+                    }
+                elif block_type == "thinking":
+                    thinking_buffers[index] = []
+                    thinking_blocks.append(
+                        {"type": "thinking", "thinking": "", "signature": None}
+                    )
+                elif block_type == "redacted_thinking":
+                    thinking_blocks.append(
+                        {"type": "redacted_thinking", "data": block.get("data", "")}
+                    )
+                continue
+
+            if kind == "content_block_delta":
+                index = int(event.get("index", 0))
+                delta = event.get("delta") or {}
+                delta_type = delta.get("type")
+
+                if delta_type == "text_delta":
+                    piece = delta.get("text") or ""
+                    if piece:
+                        text_parts.append(piece)
+                        on_delta(piece)
+                elif delta_type == "input_json_delta":
+                    buffer = tool_buffers.get(index)
+                    if buffer is not None:
+                        buffer["json"] += delta.get("partial_json") or ""
+                elif delta_type == "thinking_delta":
+                    # 思考过程**不回调**给界面——那不是给用户看的正文。
+                    buffer = thinking_buffers.get(index)
+                    if buffer is not None:
+                        buffer.append(delta.get("thinking") or "")
+                elif delta_type == "signature_delta":
+                    for block in thinking_blocks:
+                        if block.get("type") == "thinking" and block.get("signature") is None:
+                            block["signature"] = delta.get("signature")
+                            break
+                continue
+
+            if kind == "message_delta":
+                delta = event.get("delta") or {}
+                if delta.get("stop_reason"):
+                    stop_reason = str(delta["stop_reason"])
+                if isinstance(event.get("usage"), dict):
+                    # message_delta 里的 usage 是**增量**（主要是 output_tokens），
+                    # 与 message_start 的合并而不是覆盖。
+                    usage = {**(usage or {}), **event["usage"]}
+                continue
+
+            if kind == "error":
+                # 流中途报错：放弃这次流式，让调用方退回非流式重试。
+                return None
+
+        # 把分片的工具参数拼成对象
+        for index in sorted(tool_buffers):
+            buffer = tool_buffers[index]
+            raw_json = buffer.pop("json", "")
+            parsed_input: Any = {}
+            if raw_json.strip():
+                try:
+                    parsed_input = json.loads(raw_json)
+                except json.JSONDecodeError:
+                    parsed_input = {}
+            tool_calls.append(
+                {
+                    "type": "tool_use",
+                    "id": buffer.get("id"),
+                    "name": buffer.get("name"),
+                    "input": parsed_input,
+                }
+            )
+
+        # 把分片的思考文本拼回去
+        for index, pieces in thinking_buffers.items():
+            text = "".join(pieces)
+            for block in thinking_blocks:
+                if block.get("type") == "thinking" and not block.get("thinking"):
+                    block["thinking"] = text
+                    break
+
+        # 重建与非流式等价的响应结构，交给同一条解析路径。
+        content: list[dict[str, Any]] = []
+        if text_parts:
+            content.append({"type": "text", "text": "".join(text_parts)})
+        content.extend(thinking_blocks)
+        content.extend(tool_calls)
+
+        return {
+            "id": message_id,
+            "model": model_name,
+            "role": "assistant",
+            "content": content,
+            "stop_reason": stop_reason,
+            "usage": usage,
+        }
+
     def _post_with_retry(
         self, config: RuntimeConfig, body: dict[str, Any], signal: Any | None
     ) -> dict[str, Any]:
@@ -395,6 +633,75 @@ class AnthropicModelAdapter:
             _sleep_interruptible(delay, signal)
 
         raise last_error or RuntimeError("请求失败且没有记录到错误")
+
+
+def _iter_sse_events(response: Any) -> Iterator[dict[str, Any]]:
+    """把 SSE 响应流解析成一个个 JSON 事件。
+
+    这是**纯解析逻辑**，因此可以脱离网络单独测试——流式最容易出错的地方
+    就是分帧（一条事件可能跨多次 read 到达，也可能一次到达多条）。
+
+    SSE 格式：:
+
+        event: content_block_delta
+        data: {"type":"content_block_delta",...}
+
+        （空行分隔事件）
+
+    实现上只关心 `data:` 行：Anthropic 的 `event:` 字段与 data 里的 `type`
+    重复，因此以 data 为准即可。`[DONE]` 是 OpenAI 风格的结束标记，
+    这里也顺带容忍，避免遇到兼容端点时把 `[DONE]` 当 JSON 解析而报错。
+    """
+    buffer = ""
+    for raw_chunk in response:
+        if not raw_chunk:
+            continue
+        buffer += raw_chunk.decode("utf-8", errors="replace")
+
+        # 事件以空行分隔。兼容 \r\n 与 \n。
+        while True:
+            separator = _find_event_separator(buffer)
+            if separator is None:
+                break
+            block, buffer = buffer[: separator[0]], buffer[separator[1] :]
+            event = _parse_sse_block(block)
+            if event is not None:
+                yield event
+
+    # 流结束时可能还有一段没有以空行收尾的事件
+    tail = _parse_sse_block(buffer)
+    if tail is not None:
+        yield tail
+
+
+def _find_event_separator(buffer: str) -> tuple[int, int] | None:
+    """找到事件分隔符，返回 `(事件结束位置, 下一事件起始位置)`。"""
+    for marker in ("\r\n\r\n", "\n\n", "\r\r"):
+        index = buffer.find(marker)
+        if index != -1:
+            return index, index + len(marker)
+    return None
+
+
+def _parse_sse_block(block: str) -> dict[str, Any] | None:
+    """解析一个 SSE 事件块。只取 `data:` 行并解析成 JSON。"""
+    payload_lines: list[str] = []
+    for line in block.splitlines():
+        if not line or line.startswith(":"):
+            continue  # 空行与注释（SSE 用心跳）
+        if line.startswith("data:"):
+            payload_lines.append(line[len("data:") :].lstrip())
+
+    if not payload_lines:
+        return None
+    raw = "\n".join(payload_lines).strip()
+    if not raw or raw == "[DONE]":
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _read_error_body(error: urllib.error.HTTPError) -> str:

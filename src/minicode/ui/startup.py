@@ -28,6 +28,7 @@ Claude Code 启动时有一段简短的像素动画。本实现的做法是**用
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from .animate import BlockAnimator, hint_line
@@ -113,16 +114,32 @@ def _glyph_frames(
 
 @dataclass
 class StartupAnimation:
-    """启动动画。播放失败或环境不支持时静默跳过。"""
+    """启动动画。播放失败或环境不支持时静默跳过。
+
+    ## 时间预算
+
+    默认约 **1.6 秒**，分布如下：
+
+        逐帧点亮   6 帧 × 0.11s ≈ 0.66s
+        全亮停留   0.9s          ← 让用户看清字样
+        擦除       —             ← 收尾，让后续输出从干净的一行开始
+
+    「停留」是刻意的：早先的版本点亮完就立刻擦掉，视觉上**一闪而过**，
+    用户根本来不及看清画的是什么。动画的价值在于被看到，不在于播完。
+
+    `max_seconds` 仍是硬上限，用户一开始输入就立刻中断（`should_abort`）。
+    """
 
     width: int = 80
     height: int = 5
     enabled: bool = True
     stream: object | None = None
     #: 总时长上限（秒）。启动动画不该拖慢启动。
-    max_seconds: float = 0.6
-    #: 每帧间隔。
-    interval: float = 0.07
+    max_seconds: float = 1.8
+    #: 逐帧点亮的间隔。
+    interval: float = 0.11
+    #: 全亮后的停留时间（秒）。这是「不闪而过」的关键。
+    hold_seconds: float = 0.9
 
     def frames(self) -> list[list[str]]:
         """动画帧序列（每帧固定 `height` 行）。
@@ -133,7 +150,8 @@ class StartupAnimation:
         natural = max((len(row) for row in _GLYPH), default=0)
         if natural == 0 or natural > self.width:
             return []
-        raw = _glyph_frames(_GLYPH, steps=4, hold=1)
+        # 6 步点亮比 4 步更细腻（每步点亮的格子更少，看起来更像「生长」）。
+        raw = _glyph_frames(_GLYPH, steps=6, hold=0)
         return [self._pad(frame) for frame in raw]
 
     def _pad(self, frame: list[str]) -> list[str]:
@@ -146,16 +164,27 @@ class StartupAnimation:
         """播放。非终端环境下什么都不做。"""
         if not self.enabled:
             return
+        frames = self.frames()
+        if not frames:
+            return
+
         animator = BlockAnimator(
             height=self.height, width=self.width, stream=self.stream, enabled=True
         )
+        abort = should_abort  # type: ignore[assignment]
         animator.play(
-            self.frames(),
+            frames,
             interval=self.interval,
             color=BRIGHT_CYAN,
             max_seconds=self.max_seconds,
-            should_abort=should_abort,  # type: ignore[arg-type]
+            should_abort=abort,
         )
+        # 全亮后**停留**再擦除。这一步是「不闪而过」的关键：少了它，
+        # 动画在点亮的瞬间就被清掉，用户只看到一团闪烁。
+        if self.hold_seconds > 0 and not (callable(abort) and abort()):
+            remaining = max(0.0, self.max_seconds - len(frames) * self.interval)
+            time.sleep(min(self.hold_seconds, remaining))
+        animator.clear()
 
 
 def banner_title_lines(width: int = 80) -> list[str]:

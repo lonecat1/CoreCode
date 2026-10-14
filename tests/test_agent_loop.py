@@ -35,12 +35,20 @@ class ScriptedAdapter:
     def __init__(self, steps: list[AgentStep]) -> None:
         self._steps = list(steps)
         self.seen_calls: list[list[dict]] = []
+        #: 每次调用收到的 on_delta 回调（用于验证流式接线）。
+        self.seen_deltas: list[object] = []
 
-    def next(self, messages, *, tools=None, signal=None):  # noqa: ANN001
+    def next(self, messages, *, tools=None, signal=None, on_delta=None):  # noqa: ANN001
         self.seen_calls.append(list(messages))
+        self.seen_deltas.append(on_delta)
         if not self._steps:
             return AgentStep(type="assistant", content="（脚本耗尽）", kind="final")
-        return self._steps.pop(0)
+        step = self._steps.pop(0)
+        # 模拟流式：有正文且宿主提供了回调时逐段回调。
+        if on_delta is not None and step.type == "assistant" and step.content:
+            for index in range(0, len(step.content), 4):
+                on_delta(step.content[index : index + 4])
+        return step
 
 
 def _explode_tool() -> ToolDefinition:

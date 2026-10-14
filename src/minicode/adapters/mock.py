@@ -3,14 +3,20 @@
 用途有三个：跑测试、无网络时演示、以及**在没有 API key 的情况下验证整条循环**。
 它按用户输入里的斜杠命令决定调用哪个工具，因此可以完整走通
 `model -> tool -> model` 的多步路径。
+
+它也**模拟流式**：把最终答复切成小块逐段回调 `on_delta`。这样离线环境下
+也能验证流式路径与界面渲染，而不必依赖真实网络。
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable
 
 from ..types import AgentStep, ChatMessage, ToolCall
+
+#: 模拟流式时每块的字符数。取小值让效果明显，又不至于慢得影响测试。
+_STREAM_CHUNK = 4
 
 
 class MockModelAdapter:
@@ -24,7 +30,17 @@ class MockModelAdapter:
         *,
         tools: list[Any] | None = None,
         signal: Any | None = None,
+        on_delta: Callable[[str], None] | None = None,
     ) -> AgentStep:
+        step = self._decide(messages)
+        # 只有最终答复才流式回调。工具调用没有正文可显示，进度消息则由
+        # 界面单独处理——把它们也流式化只会让输出混乱。
+        if on_delta is not None and step.type == "assistant" and step.content:
+            for index in range(0, len(step.content), _STREAM_CHUNK):
+                on_delta(step.content[index : index + _STREAM_CHUNK])
+        return step
+
+    def _decide(self, messages: list[ChatMessage]) -> AgentStep:
         # 优先级 1：如果上一轮刚有工具结果，把它转成最终答复。
         # 这个顺序很重要——否则「继续」类输入会被误当成新指令。
         last_call_name = self._last_tool_call_name(messages)

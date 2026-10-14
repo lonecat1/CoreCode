@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 # ---------------------------------------------------------------------------
 # 消息
@@ -174,6 +174,12 @@ class ModelAdapter(Protocol):
 
     `signal` 是可选的取消信号。适配器应当在发起 I/O 前与等待过程中检查它，
     这样一次取消能同时打断网络请求与退避等待。
+
+    `on_delta` 是**可选**的流式回调。支持流式的适配器应当在收到正文增量时
+    调用它，让界面能逐字显示。不支持流式的适配器忽略这个参数即可——
+    界面会退化为「等完整回答再一次性显示」，功能不受影响。
+
+    这是刻意的设计：**流式是体验增强，不是功能前提**。与动画同理。
     """
 
     def next(
@@ -182,6 +188,7 @@ class ModelAdapter(Protocol):
         *,
         tools: list[Any] | None = None,
         signal: Any | None = None,
+        on_delta: "Callable[[str], None] | None" = None,
     ) -> AgentStep: ...
 
 

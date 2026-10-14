@@ -112,6 +112,9 @@ class TurnHooks:
     on_progress_message: Callable[[str], None] | None = None
     on_context_stats: Callable[[Any], None] | None = None
     on_compaction: Callable[[Any], None] | None = None
+    #: 流式正文增量。设置后适配器会尽量逐字回调；不设置则等完整回答。
+    #: 这是**体验增强**：适配器不支持流式时该回调不会被调用，功能不受影响。
+    on_assistant_delta: Callable[[str], None] | None = None
 
     def tool_start(self, name: str, data: Any) -> None:
         if self.on_tool_start:
@@ -124,6 +127,10 @@ class TurnHooks:
     def assistant(self, content: str, is_final: bool = True) -> None:
         if self.on_assistant_message:
             self.on_assistant_message(content, is_final)
+
+    def delta(self, text: str) -> None:
+        if self.on_assistant_delta:
+            self.on_assistant_delta(text)
 
     def progress(self, content: str) -> None:
         if self.on_progress_message:
@@ -154,6 +161,9 @@ class TurnHooks:
             ),
             on_context_stats=pick(self.on_context_stats, other.on_context_stats),
             on_compaction=pick(self.on_compaction, other.on_compaction),
+            on_assistant_delta=pick(
+                self.on_assistant_delta, other.on_assistant_delta
+            ),
         )
 
 
@@ -263,7 +273,15 @@ def run_agent_turn(
                 model_messages = runtime_context(model_messages)
 
             # --- 2. 请求模型 -------------------------------------------------
-            next_step = model.next(model_messages, tools=tools.model_tools(), signal=signal)
+            #
+            # `on_delta` 只在宿主提供了流式回调时才传。适配器据此决定是否走
+            # SSE；不支持流式的适配器忽略它，行为与从前完全一致。
+            next_step = model.next(
+                model_messages,
+                tools=tools.model_tools(),
+                signal=signal,
+                on_delta=hooks.on_assistant_delta,
+            )
             throw_if_aborted(signal)
             step += 1
 

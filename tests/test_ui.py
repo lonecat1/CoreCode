@@ -905,6 +905,54 @@ class StartupAnimationTests(unittest.TestCase):
         ).play()
         self.assertIn(ERASE_TO_END, stream.getvalue())
 
+    def test_animation_holds_before_clearing(self) -> None:
+        """**「不闪而过」的核心**：全亮后要停留，不能点亮完立刻擦。
+
+        这条用**时间**来断言：播放总耗时必须明显大于「帧数 × 帧间隔」，
+        多出来的部分就是停留。只断言「擦除发生了」是没用的——那在
+        「不停留」的实现里同样成立（变异检查抓到过这一点）。
+        """
+        from minicode.ui.startup import StartupAnimation
+
+        stream = io.StringIO()
+        animation = StartupAnimation(
+            width=40,
+            height=3,
+            enabled=True,
+            stream=stream,
+            interval=0.01,
+            hold_seconds=0.25,
+            max_seconds=5.0,
+        )
+        frame_count = len(animation.frames())
+        started = time.monotonic()
+        animation.play()
+        elapsed = time.monotonic() - started
+
+        minimum_hold = animation.hold_seconds * 0.6  # 留一点调度余量
+        self.assertGreaterEqual(
+            elapsed,
+            frame_count * animation.interval + minimum_hold,
+            f"播放耗时 {elapsed:.3f}s 太短，说明全亮后没有停留",
+        )
+
+    def test_hold_can_be_disabled(self) -> None:
+        """`hold_seconds=0` 时不该多等——留给不需要停留的场景。"""
+        from minicode.ui.startup import StartupAnimation
+
+        animation = StartupAnimation(
+            width=40,
+            height=3,
+            enabled=True,
+            stream=io.StringIO(),
+            interval=0.001,
+            hold_seconds=0.0,
+            max_seconds=5.0,
+        )
+        started = time.monotonic()
+        animation.play()
+        self.assertLess(time.monotonic() - started, 0.5)
+
     def test_static_title_is_available_without_animation(self) -> None:
         """动画只是开场；跳过时用户仍要能看到完整信息。"""
         from minicode.ui.startup import banner_title_lines, startup_hint
@@ -975,6 +1023,245 @@ class AnimatedConsoleTests(ColorEnvMixin):
         self.assertNotIn("\r", output, "不该有回车")
         self.assertNotIn("\x1b[2K", output, "不该有擦行")
         self.assertNotIn("\x1b[", output, "不该有光标移动")
+
+
+class StreamingTests(ColorEnvMixin):
+    """流式输出。
+
+    流式引入了一类**非显然后果**：同一段文本会被两条路径看到——流式回调
+    （`model.next` 内部）与 `hooks.progress()` / `hooks.assistant()`
+    （循环里）。若不显式去重，用户会看到内容重复。这几条测试钉住去重。
+    """
+
+    def _ui(self, *, animate: bool = False) -> tuple[ConsoleUI, io.StringIO]:
+        stream = io.StringIO()
+        return ConsoleUI(stream=stream, width=60, animate=animate), stream
+
+    def test_delta_is_written_immediately(self) -> None:
+        """增量必须**立刻**写出，不能攒到换行。
+
+        攒着就失去了流式的意义——那和等完整回答没区别。
+        """
+        ui, stream = self._ui()
+        ui.assistant_delta("你好")
+        self.assertIn("你好", stream.getvalue())
+
+    def test_short_answer_is_flushed_at_turn_end(self) -> None:
+        """**关键**：卡在探测缓冲里的内容，回合结束必须吐出来。
+
+        必须用**真正的标记前缀**（如 `<fi` 是 `<final>` 的前缀）才会进入
+        缓冲。普通短文本、乃至 `<ok` 这种「以 `<` 开头但不是任何标记前缀」
+        的内容都会被立刻放行——那是正确行为，但也意味着那样的测试覆盖不到
+        这条路径。变异检查正是这样抓出我的测试形同虚设。
+        """
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("<fi")  # `<final>` 的前缀，会进入缓冲
+        self.assertEqual(stream.getvalue(), "", "应仍在探测缓冲里")
+        ui.end_turn()
+        self.assertIn("<fi", stream.getvalue(), "回合结束必须吐出缓冲内容")
+
+    def test_plain_short_answer_streams_immediately(self) -> None:
+        """普通短文本不该被缓冲——立刻显示才是流式的意义。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("短")
+        self.assertIn("短", stream.getvalue(), "不可能是标记时应立刻放行")
+
+    def test_non_marker_angle_bracket_is_released(self) -> None:
+        """以 `<` 开头但不是标记前缀的内容，不该被卡住。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("<ok")
+        self.assertIn("<ok", stream.getvalue(), "不是标记前缀应立刻放行")
+
+    def test_incomplete_marker_is_released_at_turn_end(self) -> None:
+        """标记永远没收完时，回合结束也要把内容吐出来，不能丢。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("<prog")  # `<progress>` 的前缀，但永远没收完
+        ui.end_turn()
+        self.assertIn("<prog", stream.getvalue())
+
+    def test_split_closing_tag_is_not_leaked(self) -> None:
+        """**收尾标签会被流式切成两半**——半个标签绝不能漏到界面上。
+
+        SSE 增量边界是任意的：`</final>` 可能分成 `</fi` 和 `nal>` 到达。
+        若不做处理，第一段会被当正文打出去，界面上就残留 `</final>`
+        这种碎片。我实际在真实模型输出里见到过。
+
+        做法是把末尾可能是半个收尾标签的部分**扣住**，等后续增量到齐
+        再一起判断。
+        """
+        ui, stream = self._ui()
+        ui.begin_turn()
+        for chunk in ("<final>这是回答", "</fi", "nal>"):
+            ui.assistant_delta(chunk)
+        ui.end_turn()
+        output = stream.getvalue()
+        self.assertIn("这是回答", output)
+        self.assertNotIn("</final>", output)
+        self.assertNotIn("</fi", output)
+
+    def test_tail_hold_is_released_when_not_a_tag(self) -> None:
+        """扣住的内容若最终不是标签，必须原样吐出来，不能吞掉。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("内容以 < 结尾<")
+        ui.end_turn()
+        self.assertIn("内容以 < 结尾<", stream.getvalue())
+
+    def test_tail_hold_resets_between_turns(self) -> None:
+        """扣留缓冲必须逐回合重置，否则会污染下一回合。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("第一回合<")
+        ui.end_turn()
+
+        stream.seek(0)
+        stream.truncate(0)
+        ui.begin_turn()
+        ui.assistant_delta("第二回合")
+        ui.end_turn()
+        self.assertEqual(stream.getvalue().strip(), "第二回合")
+
+    def test_protocol_markers_are_stripped(self) -> None:
+        """`<final>` / `<progress>` 是给程序看的协议标记，不该显示给用户。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("<final>这是回答</final>")
+        ui.end_turn()
+        output = stream.getvalue()
+        self.assertIn("这是回答", output)
+        self.assertNotIn("<final>", output)
+        self.assertNotIn("</final>", output)
+
+    def test_progress_marker_is_stripped(self) -> None:
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("<progress>正在分析代码结构</progress>")
+        ui.end_turn()
+        output = stream.getvalue()
+        self.assertIn("正在分析代码结构", output)
+        self.assertNotIn("<progress>", output)
+
+    def test_long_answer_streams_without_marker_leak(self) -> None:
+        """长回答会越过探测阈值，标记必须在那一刻就被剥掉。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("<final>这是一段足够长的回答内容用于越过探测阈值</final>")
+        ui.end_turn()
+        output = stream.getvalue()
+        self.assertNotIn("<final>", output)
+        self.assertIn("这是一段足够长的回答内容", output)
+
+    def test_assistant_is_ignored_after_streaming(self) -> None:
+        """**去重**：流式已经打过的内容，`assistant()` 不能再打一遍。
+
+        内容必须**含换行**：`StreamPrinter.feed()` 只在遇到换行时才返回
+        内容，若用没有换行的文本，变异后的 `assistant()` 也会返回空串、
+        输出毫无变化——那样的测试杀不死变异（变异检查抓到过这一点）。
+        """
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("<final>只应出现一次的内容\n</final>")
+        ui.assistant("只应出现一次的内容\n", is_final=True)
+        ui.end_turn()
+        self.assertEqual(
+            stream.getvalue().count("只应出现一次的内容"),
+            1,
+            "流式与非流式路径重复输出了同一段内容",
+        )
+
+    def test_progress_is_ignored_after_streaming(self) -> None:
+        """**去重**：进度文本也走流式，`progress()` 不该重复显示。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("<progress>正在分析</progress>")
+        ui.progress("正在分析")
+        ui.end_turn()
+        self.assertEqual(stream.getvalue().count("正在分析"), 1, "进度消息重复了")
+
+    def test_non_streaming_path_still_works(self) -> None:
+        """适配器不支持流式时，功能必须完全不受影响。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant("完整回答\n", is_final=True)
+        ui.end_turn()
+        self.assertIn("完整回答", stream.getvalue())
+
+    def test_probe_state_resets_between_turns(self) -> None:
+        """探测状态必须逐回合重置，否则第二回合会吞掉开头。"""
+        ui, stream = self._ui()
+        ui.begin_turn()
+        ui.assistant_delta("<final>第一回合</final>")
+        ui.end_turn()
+
+        stream.seek(0)
+        stream.truncate(0)
+        ui.begin_turn()
+        ui.assistant_delta("第二回合")
+        ui.end_turn()
+        self.assertIn("第二回合", stream.getvalue())
+
+    def test_delta_stops_spinner_first(self) -> None:
+        """转圈占着当前行，直接写字会叠在一起。"""
+        ui, stream = self._ui(animate=True)
+        ui.begin_turn()
+        stream.seek(0)
+        stream.truncate(0)
+        ui.assistant_delta("内容")
+        self.assertIn(ERASE_LINE, stream.getvalue(), "应先擦掉转圈")
+
+    def test_empty_delta_is_ignored(self) -> None:
+        ui, stream = self._ui()
+        ui.assistant_delta("")
+        self.assertEqual(stream.getvalue(), "")
+
+
+class TurnStatsDisplayTests(ColorEnvMixin):
+    def _ui(self) -> tuple[ConsoleUI, io.StringIO]:
+        stream = io.StringIO()
+        return ConsoleUI(stream=stream, width=60, animate=False), stream
+
+    def test_stats_line_is_shown(self) -> None:
+        from minicode.stats import SessionStats, TurnStats
+
+        stats = SessionStats()
+        stats.record(TurnStats(duration_seconds=3.2, tool_calls=4))
+        ui, stream = self._ui()
+        ui.turn_stats(stats)
+        output = stream.getvalue()
+        self.assertIn("3.2s", output)
+        self.assertIn("4 次工具调用", output)
+
+    def test_stats_are_not_duplicated_by_callbacks(self) -> None:
+        """统计**不该**挂在宿主回调上——那会与显式显示重复。
+
+        我实际踩过：统计打了两遍。
+        """
+        ui, _stream = self._ui()
+        self.assertNotIn(
+            "on_turn_stats",
+            ui.callbacks(),
+            "统计应由调用方在 end_turn 之后显式显示，不挂回调",
+        )
+
+    def test_stats_without_turns_is_silent(self) -> None:
+        from minicode.stats import SessionStats
+
+        ui, stream = self._ui()
+        ui.turn_stats(SessionStats())
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_stats_omits_tool_count_when_zero(self) -> None:
+        from minicode.stats import SessionStats, TurnStats
+
+        stats = SessionStats()
+        stats.record(TurnStats(duration_seconds=1.5, tool_calls=0))
+        ui, stream = self._ui()
+        ui.turn_stats(stats)
+        self.assertNotIn("工具调用", stream.getvalue())
 
 
 if __name__ == "__main__":

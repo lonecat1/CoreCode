@@ -96,9 +96,35 @@ class CliWiringTests(IntegrationTestCase):
                     "收到指令", output, f"{command} 不该被发给模型"
                 )
 
-    def test_unknown_slash_command_exits_nonzero(self) -> None:
-        code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/nope"])
+    def test_half_typed_command_is_reported(self) -> None:
+        """打了一半的命令应当提示，而不是发给模型。
+
+        `/he` 是 `/help` 的前缀，用户显然在打命令。
+        """
+        code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/he"])
         self.assertEqual(code, 1)
+        self.assertIn("未知命令", output)
+
+    def test_unrecognised_slash_input_goes_to_the_model(self) -> None:
+        """**看起来不像命令的斜杠输入要交给模型，不能拦。**
+
+        斜杠开头的输入有两个来源：用户想打命令，以及模型侧的工具快捷方式
+        （`/ls`、`/read a.py`）。早先的实现用 `startswith("/")` 一刀切，
+        把快捷方式全拦掉了——真实的功能回归。
+
+        判据因此是保守的：只有「是某个已知命令的前缀」才认定用户在打命令。
+        代价是 `/nope` 会走模型、由模型回一句「不明白」。
+        **漏判（交给模型）比误判（拦掉合法输入）代价小得多。**
+        """
+        code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/nope"])
+        self.assertEqual(code, 0, "不该当成未知命令而失败")
+        self.assertIn("收到指令", output, "应当交给模型处理")
+
+    def test_mock_tool_shortcut_reaches_the_model(self) -> None:
+        """`/ls` 这类快捷方式必须能走通——这是回归的直接护栏。"""
+        code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/ls"])
+        self.assertEqual(code, 0)
+        self.assertIn("list_files", output, "应当触发工具调用")
 
     def test_goal_command_starts_a_goal(self) -> None:
         code, output = self._run_cli(
@@ -502,14 +528,35 @@ class SessionLifecycleTests(IntegrationTestCase):
 
     def test_plan_command_reflects_updates(self) -> None:
         host = self._host()
-        host.plan.update(
-            [{"title": "第一步", "status": "in_progress"}]
-        )
+        host.plan.update([{"title": "第一步", "status": "in_progress"}])
         from minicode.cli_commands import try_handle_local_command
 
         output = try_handle_local_command(host, "/plan") or ""
         self.assertIn("第一步", output)
-        self.assertIn("[>]", output)
+        # 状态用字形表达：✓ 完成 / ▸ 进行中 / · 待办
+        self.assertIn("▸", output)
+        self.assertIn("0/1 完成", output, "应给出进度计数")
+
+    def test_plan_command_shows_progress_count(self) -> None:
+        host = self._host()
+        host.plan.update(
+            [
+                {"title": "已完成的事", "status": "completed"},
+                {"title": "待办的事", "status": "pending"},
+            ]
+        )
+        from minicode.cli_commands import try_handle_local_command
+
+        output = try_handle_local_command(host, "/plan") or ""
+        self.assertIn("✓", output)
+        self.assertIn("1/2 完成", output)
+
+    def test_plan_command_when_empty(self) -> None:
+        host = self._host()
+        from minicode.cli_commands import try_handle_local_command
+
+        output = try_handle_local_command(host, "/plan") or ""
+        self.assertIn("空", output)
 
 
 class SubAgentIntegrationTests(IntegrationTestCase):

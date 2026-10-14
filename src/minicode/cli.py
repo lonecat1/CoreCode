@@ -405,13 +405,14 @@ def _run_once(host: SessionHost, prompt: str) -> int:
             ui.write(local)
             return 0
 
-        if prompt.startswith("/"):
+        if _looks_like_unknown_command(prompt):
             ui.error(f"未知命令：{prompt}。输入 /help 查看可用命令。")
             return 1
 
         ui.begin_turn()
         result = host.runtime.submit(prompt)
         ui.end_turn()
+        ui.turn_stats(host.stats)
         if result.outcome in ("failed", "aborted"):
             ui.error(f"回合结束：{result.outcome} {result.error or ''}")
             return 1
@@ -469,10 +470,13 @@ def _attach_ui_callbacks(host: SessionHost, ui: "ConsoleUI") -> None:
     """
     callbacks = ui.callbacks()
     host.callbacks.on_assistant = callbacks["on_assistant"]
+    host.callbacks.on_assistant_delta = callbacks["on_assistant_delta"]
     host.callbacks.on_progress = callbacks["on_progress"]
     host.callbacks.on_tool_start = callbacks["on_tool_start"]
     host.callbacks.on_tool_result = callbacks["on_tool_result"]
     host.callbacks.on_notice = callbacks["on_notice"]
+    # 统计**不**挂到回调上：它在 `end_turn()` 之后由调用方显式显示，
+    # 这样元信息才能干净地单独占一行（见 `ConsoleUI.callbacks` 的说明）。
 
 
 def _print_banner(host: SessionHost, ui: "ConsoleUI") -> None:
@@ -506,6 +510,51 @@ def _print_banner(host: SessionHost, ui: "ConsoleUI") -> None:
     ui.blank()
 
 
+def _looks_like_unknown_command(line: str) -> bool:
+    """判断一个斜杠输入是否「像是把命令打错了」。
+
+    ## 这个判据为什么必须谨慎
+
+    斜杠开头的输入有两种完全不同的来源：
+
+      - **用户想打命令**：`/status`、`/he`（打了一半）
+      - **模型侧的工具快捷方式**：`/ls`、`/read a.py`、`/write x::y`
+        （mock 适配器用这套；真实模型也可能约定类似的写法）
+
+    早先的实现用 `line.startswith("/")` 一刀切，把 `/ls` 这类快捷方式
+    全部拦掉——那是真实的功能回归，而且很隐蔽（界面看起来正常，只是
+    快捷方式不работа了）。
+
+    现在的判据是**保守的**：只有「单 token **且是某个已知命令的前缀**」
+    才提示打错。这样：
+
+      - `/he` → 是 `/help` 的前缀 → 提示（用户确实在打命令）
+      - `/status` → 是完整命令 → 提示（其实上面已处理，这里兜底）
+      - `/ls` → 不是任何命令的前缀 → **交给模型**
+      - `/nope` → 不是任何命令的前缀 → 交给模型
+
+    代价是 `/nope` 这种彻底打错的名字会走模型、由模型回一句「我不明白」。
+    这是可接受的：**漏判（交给模型）比误判（拦掉合法输入）代价小得多**。
+    """
+    stripped = line.strip()
+    if not stripped.startswith("/"):
+        return False
+    # 带空格 → 有参数 → 更可能是快捷方式，交给模型
+    if " " in stripped:
+        return False
+    # 单 token：只有当它是某个已知命令的前缀时，才认定用户在打命令。
+    return any(usage.startswith(stripped) for usage, _ in _COMMAND_USAGES)
+
+
+def _command_usages() -> list[tuple[str, str]]:
+    from .cli_commands import SLASH_COMMANDS
+
+    return [(item.usage, item.description) for item in SLASH_COMMANDS]
+
+
+_COMMAND_USAGES = _command_usages()
+
+
 def _dispatch(host: SessionHost, line: str, ui: "ConsoleUI") -> None:
     """一条输入的分派顺序：运行时命令 → 本地命令 → 普通回合。"""
     reply = host.runtime.command(line)
@@ -520,13 +569,16 @@ def _dispatch(host: SessionHost, line: str, ui: "ConsoleUI") -> None:
         ui.blank()
         return
 
-    if line.startswith("/"):
+    if _looks_like_unknown_command(line):
         ui.error(f"未知命令：{line}。输入 /help 查看可用命令。")
         return
 
     ui.begin_turn()
     result = host.runtime.submit(line)
     ui.end_turn()
+    # 统计在 end_turn **之后**显示：那时正文已经收尾、空行也已留出，
+    # 元信息单独占一行，不会与回答挤在一起。
+    ui.turn_stats(host.stats)
     if result.outcome in ("failed", "aborted"):
         ui.error(f"回合结束：{result.outcome} {result.error or ''}")
 

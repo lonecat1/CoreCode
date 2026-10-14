@@ -40,6 +40,7 @@ from .runtime.context import (
 from .runtime.plan import PlanManager, inject_plan_context
 from .runtime.session import SessionRuntime
 from .runtime.turn import TurnRequest
+from .stats import SessionStats, TurnStats, TurnTimer
 from .session import (
     append_compact_boundary,
     append_context_collapse_span,
@@ -58,11 +59,26 @@ class HostCallbacks:
     """宿主向 UI 暴露的观察点。全部可选。"""
 
     on_assistant: Callable[[str, bool], None] | None = None
+    #: 流式正文增量。适配器支持流式时会被逐段调用；否则从不调用。
+    on_assistant_delta: Callable[[str], None] | None = None
     on_progress: Callable[[str], None] | None = None
     on_tool_start: Callable[[str, Any], None] | None = None
     on_tool_result: Callable[[str, str, bool], None] | None = None
     on_context_stats: Callable[[Any], None] | None = None
     on_notice: Callable[[str], None] | None = None
+    #: 回合结束后回调，参数是累计统计（用于显示耗时与工具调用次数）。
+    on_turn_stats: Callable[[Any], None] | None = None
+
+
+@dataclass
+class ToolCallCounter:
+    """回合内的工具调用计数。
+
+    单独成类而不是用 `nonlocal` 变量：计数要跨 `_hooks` 与 `execute` 传递，
+    用一个可变对象比闭包捕获更清楚，也更容易测试。
+    """
+
+    count: int = 0
 
 
 class SessionHost:
@@ -91,6 +107,8 @@ class SessionHost:
         self.session_id = session_id
         self.callbacks = callbacks or HostCallbacks()
         self.subagents = subagents
+        #: 会话累计统计（回合数 / 总耗时 / 工具调用次数）。
+        self.stats = SessionStats()
 
         self.messages: list[ChatMessage] = list(messages or [])
         self.already_saved_count = 0
@@ -154,9 +172,15 @@ class SessionHost:
     # -- 一个回合 -----------------------------------------------------------
 
     def execute(self, request: TurnRequest) -> AgentTurnResult:
-        """跑一个根回合。这是 `SessionRuntime` 唯一调用的方法。"""
+        """跑一个根回合。这是 `SessionRuntime` 唯一调用的方法。
+
+        计时覆盖整个回合（模型调用 + 工具执行 + 压缩），**不包含**用户思考
+        的时间——那两者混在一起得出的数字没有意义。
+        """
         with self._lock:
             self.is_busy = True
+        timer = TurnTimer().start()
+        counter = ToolCallCounter()
         try:
             signal = request.signal
             self.permissions.begin_turn(signal)
@@ -173,7 +197,7 @@ class SessionHost:
                     signal=signal,
                     max_steps=50 if request.mode else None,
                     model_name=(self.runtime_config.model if self.runtime_config else ""),
-                    hooks=self._hooks(),
+                    hooks=self._hooks(counter),
                     context_pipeline=self.pipeline,
                     content_replacement_state=self.content_replacement_state,
                     plan_context=lambda msgs: inject_plan_context(
@@ -190,6 +214,19 @@ class SessionHost:
                 with self._lock:
                     self.messages = list(result.messages)
                 self._persist()
+
+                # 统计只记**根回合**的调用。`AgentTurnResult.tool_calls` 由
+                # agent loop 自己累计，比在这里重新数一遍更准确——它知道
+                # 哪些调用真的执行了。`counter` 作为兜底（适配器可能没填）。
+                self.stats.record(
+                    TurnStats(
+                        duration_seconds=timer.stop(),
+                        tool_calls=max(counter.count, int(result.tool_calls or 0)),
+                        outcome=str(result.outcome),
+                    )
+                )
+                if self.callbacks.on_turn_stats:
+                    self.callbacks.on_turn_stats(self.stats)
                 return result
             finally:
                 self.permissions.end_turn()
@@ -198,13 +235,23 @@ class SessionHost:
             with self._lock:
                 self.is_busy = False
 
-    def _hooks(self) -> TurnHooks:
+    def _hooks(self, counter: "ToolCallCounter | None" = None) -> TurnHooks:
         callbacks = self.callbacks
+
+        def on_tool_start(name: str, data: Any) -> None:
+            if counter is not None:
+                counter.count += 1
+            if callbacks.on_tool_start:
+                callbacks.on_tool_start(name, data)
+
         return TurnHooks(
-            on_tool_start=callbacks.on_tool_start,
+            on_tool_start=on_tool_start,
             on_tool_result=callbacks.on_tool_result,
             on_assistant_message=callbacks.on_assistant,
             on_progress_message=callbacks.on_progress,
+            # 流式回调直接透传。适配器不支持流式时它不会被调用，
+            # 界面也就自动退化为「等完整回答」——功能不受影响。
+            on_assistant_delta=callbacks.on_assistant_delta,
         )
 
     def _runtime_context(self, mode: str | None) -> str:

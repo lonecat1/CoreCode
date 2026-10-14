@@ -34,6 +34,7 @@ UI_CONSOLE = os.path.join(REPO, "src", "minicode", "ui", "console.py")
 UI_CAPS = os.path.join(REPO, "src", "minicode", "ui", "caps.py")
 UI_ANIMATE = os.path.join(REPO, "src", "minicode", "ui", "animate.py")
 UI_STARTUP = os.path.join(REPO, "src", "minicode", "ui", "startup.py")
+CLI = os.path.join(REPO, "src", "minicode", "cli.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -310,13 +311,8 @@ MUTATIONS = [
     (
         "UI: 回合结束不冲流式缓冲",
         UI_CONSOLE,
-        "    def end_turn(self) -> None:\n"
-        '        """回合结束：擦掉转圈、冲掉流式尾巴，并留一个空行。"""\n'
-        "        self.stop_spinner()\n"
-        "        self.flush_assistant()",
-        "    def end_turn(self) -> None:\n"
-        '        """回合结束：擦掉转圈、冲掉流式尾巴，并留一个空行。"""\n'
-        "        self.stop_spinner()",
+        "        if not self._streamed_this_turn:\n            self.flush_assistant()",
+        "        if False:\n            self.flush_assistant()",
     ),
     (
         "动画: 非终端也做动画（\\r 污染重定向文件）",
@@ -369,6 +365,76 @@ MUTATIONS = [
         "            if max_seconds is not None and time.monotonic() - started > max_seconds:\n"
         "                break",
         "            if False:\n                break",
+    ),
+    (
+        "启动动画: 全亮后不停留（一闪而过）",
+        UI_STARTUP,
+        "        if self.hold_seconds > 0 and not (callable(abort) and abort()):",
+        "        if False:",
+    ),
+    (
+        "流式: 不剥协议标记（<final> 显示给用户）",
+        UI_CONSOLE,
+        "    for opening, closing in _RESPONSE_MARKERS:\n"
+        "        stripped = cleaned.lstrip()",
+        "    for opening, closing in ():\n"
+        "        stripped = cleaned.lstrip()",
+    ),
+    (
+        "流式: 短回答不冲探测缓冲（一个字都不显示）",
+        UI_CONSOLE,
+        "        if not self._stream_probe_done and self._stream_probe:\n"
+        "            text = self._release_stream_probe()\n"
+        "            if text:\n"
+        "                self._emit(text)",
+        "        if False:\n"
+        "            text = self._release_stream_probe()\n"
+        "            if text:\n"
+        "                self._emit(text)",
+    ),
+    (
+        "流式: 不扣留末尾半个收尾标签（界面残留 </final>）",
+        UI_CONSOLE,
+        "        combined = self._tail_hold + text\n"
+        "        keep = _longest_closing_prefix(combined)",
+        "        combined = self._tail_hold + text\n"
+        "        keep = 0",
+    ),
+    (
+        "流式: 不检查是否可能是标记前缀（短增量被攒住、卡顿）",
+        UI_CONSOLE,
+        "            if not _could_be_marker_prefix(self._stream_probe):\n"
+        "                text = self._release_stream_probe()",
+        "            if False:\n"
+        "                text = self._release_stream_probe()",
+    ),
+    (
+        "流式: 流式后不忽略 assistant（内容重复）",
+        UI_CONSOLE,
+        "        if self._streamed_this_turn:\n            return\n"
+        "        printer = self._ensure_printer()",
+        "        if False:\n            return\n"
+        "        printer = self._ensure_printer()",
+    ),
+    (
+        "流式: 流式后不忽略 progress（进度重复）",
+        UI_CONSOLE,
+        "        if self._streamed_this_turn:\n            return\n"
+        "        self.write(render_progress(text, self.width))",
+        "        if False:\n            return\n"
+        "        self.write(render_progress(text, self.width))",
+    ),
+    (
+        "统计: 无回合记录也显示（凭空多一行）",
+        UI_CONSOLE,
+        '        if not getattr(stats, "turns", 0):\n            return',
+        "        if False:\n            return",
+    ),
+    (
+        "分派: 斜杠快捷方式被当成未知命令拦掉（功能回归）",
+        CLI,
+        "    return any(usage.startswith(stripped) for usage, _ in _COMMAND_USAGES)",
+        "    return True",
     ),
 ]
 
