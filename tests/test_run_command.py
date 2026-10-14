@@ -229,6 +229,38 @@ class ShellResolutionTests(unittest.TestCase):
                 _is_wsl_shim(shell), f"解析到了 WSL 转发器：{shell}"
             )
 
+    def test_wsl_shim_is_rejected_when_it_is_the_only_candidate(self) -> None:
+        """**WSL 转发器必须被拒绝。**
+
+        本机装了 Git for Windows，所以 `_resolve_shell` 总是先命中 Git Bash，
+        转发器那条分支走不到。要覆盖它必须把「Git Bash 不存在」这个前提构造
+        出来：让候选列表为空、并让 PATH 只找到转发器。
+        """
+        from unittest.mock import patch
+
+        from minicode.tools import run_command as module
+
+        if os.name != "nt":
+            self.skipTest("WSL 转发器只在 Windows 上存在")
+
+        with patch.object(module, "_windows_bash_candidates", return_value=[]):
+            with patch.object(module.shutil, "which", return_value=module._wsl_shim_path()):
+                self.assertIsNone(
+                    module._resolve_shell(),
+                    "只剩 WSL 转发器时必须返回 None，而不是拿它去执行",
+                )
+
+    def test_real_bash_is_used_when_available(self) -> None:
+        """有真 bash 时必须用它。"""
+        from unittest.mock import patch
+
+        from minicode.tools import run_command as module
+
+        fake = r"C:\Program Files\Git\bin\bash.exe"
+        with patch.object(module, "_windows_bash_candidates", return_value=[fake]):
+            with patch.object(module.os.path, "isfile", return_value=True):
+                self.assertEqual(module._resolve_shell(), fake)
+
     def test_resolved_shell_can_actually_run(self) -> None:
         """解析出来的 shell 必须真的能执行片段。"""
         shell = _resolve_shell()

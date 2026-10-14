@@ -527,8 +527,8 @@ MUTATIONS = [
     (
         "run_command: 后台任务不登记（UI 无法观测）",
         RUN_COMMAND,
-        "        task = register_background_shell_task(",
-        "        task = _FakeTask(",
+        "            background_task=task,",
+        "            background_task=None,",
     ),
     (
         "background: 已结束的任务仍被重新探测（PID 复用会错标回 running）",
