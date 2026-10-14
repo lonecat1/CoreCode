@@ -35,6 +35,8 @@ UI_CAPS = os.path.join(REPO, "src", "minicode", "ui", "caps.py")
 UI_ANIMATE = os.path.join(REPO, "src", "minicode", "ui", "animate.py")
 UI_STARTUP = os.path.join(REPO, "src", "minicode", "ui", "startup.py")
 CLI = os.path.join(REPO, "src", "minicode", "cli.py")
+RUN_COMMAND = os.path.join(REPO, "src", "minicode", "tools", "run_command.py")
+BACKGROUND_TASKS = os.path.join(REPO, "src", "minicode", "background_tasks.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -435,6 +437,110 @@ MUTATIONS = [
         CLI,
         "    return any(usage.startswith(stripped) for usage, _ in _COMMAND_USAGES)",
         "    return True",
+    ),
+    (
+        "run_command: 开发命令被当成只读（危险命令绕过审批）",
+        RUN_COMMAND,
+        '    """命令名是否是纯观察类。只有这一类**免审批**。"""\n'
+        "    return command in READONLY_COMMANDS",
+        '    """命令名是否是纯观察类。只有这一类**免审批**。"""\n'
+        "    return True",
+    ),
+    (
+        "run_command: 管道/重定向不再交给 shell（片段被静态拆分）",
+        RUN_COMMAND,
+        "    if args:\n        return False\n"
+        "    return any(char in SHELL_METACHARACTERS for char in command)",
+        "    if args:\n        return False\n    return False",
+    ),
+    (
+        "run_command: 给了 args 仍去拆分 command（Windows 路径被破坏）",
+        RUN_COMMAND,
+        "    if args:\n        return command.strip(), list(args)",
+        "    if False:\n        return command.strip(), list(args)",
+    ),
+    (
+        "run_command: 有 args 时仍当 shell 片段（| 变成真管道）",
+        RUN_COMMAND,
+        "    if args:\n        return False\n"
+        "    return any(char in SHELL_METACHARACTERS for char in command)",
+        "    return any(char in SHELL_METACHARACTERS for char in command)",
+    ),
+    (
+        "run_command: && 被当成后台执行（顺序执行被误判）",
+        RUN_COMMAND,
+        '    return trimmed.endswith("&") and not trimmed.endswith("&&")',
+        '    return trimmed.endswith("&")',
+    ),
+    (
+        "run_command: 后台片段的结尾 & 没去掉",
+        RUN_COMMAND,
+        '    return command.strip().removesuffix("&").strip()',
+        "    return command.strip()",
+    ),
+    (
+        "run_command: 非零退出不算失败（agent 无法察觉命令失败）",
+        RUN_COMMAND,
+        "    if returncode != 0:",
+        "    if False:",
+    ),
+    (
+        "run_command: 非零退出不标记 fatal（与原版语义不符）",
+        RUN_COMMAND,
+        '            fatal=True,\n        )\n\n    return ToolResult.success(body or "(no output)")',
+        '            fatal=False,\n        )\n\n    return ToolResult.success(body or "(no output)")',
+    ),
+    (
+        "run_command: 空命令不再拒绝",
+        RUN_COMMAND,
+        "    if not command:\n"
+        '        return ToolResult.failure("Command not allowed: empty command")',
+        "    if False:\n"
+        '        return ToolResult.failure("Command not allowed: empty command")',
+    ),
+    (
+        "run_command: 不排除 WSL 转发器（Windows 上报错看不懂）",
+        RUN_COMMAND,
+        "    if found and not _is_wsl_shim(found):\n        return found",
+        "    if found:\n        return found",
+    ),
+    (
+        "run_command: shell 权限判定用绝对路径（分类器认不出 bash，绕过审批）",
+        RUN_COMMAND,
+        "        permission_command = SHELL_EXECUTABLE",
+        "        permission_command = executable",
+    ),
+    (
+        "run_command: cwd 参数被忽略（无法切换目录）",
+        RUN_COMMAND,
+        "    effective_cwd = (\n"
+        '        resolve_tool_path(context, str(raw_cwd), "list") if raw_cwd else context.cwd\n'
+        "    )",
+        "    effective_cwd = context.cwd",
+    ),
+    (
+        "run_command: 输出超限不截断",
+        RUN_COMMAND,
+        "    if len(stdout) + len(stderr) > MAX_OUTPUT_BYTES:",
+        "    if False:",
+    ),
+    (
+        "run_command: 后台任务不登记（UI 无法观测）",
+        RUN_COMMAND,
+        "        task = register_background_shell_task(",
+        "        task = _FakeTask(",
+    ),
+    (
+        "background: 已结束的任务仍被重新探测（PID 复用会错标回 running）",
+        BACKGROUND_TASKS,
+        '    if record.status != "running":\n        return record',
+        "    if False:\n        return record",
+    ),
+    (
+        "background: 进程不存在仍报 running（任务永远不结束）",
+        BACKGROUND_TASKS,
+        '    return replace(record, status="running" if alive else "completed")',
+        '    return replace(record, status="running")',
     ),
 ]
 

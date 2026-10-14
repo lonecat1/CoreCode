@@ -42,6 +42,10 @@ class BackgroundTaskResult:
     pid: int
     status: str  # running | completed | failed
     started_at: float
+    #: 任务种类。目前只有 `local_bash` 一个取值；保留是为了与原版逐字段对齐。
+    type: str = "local_bash"
+    #: 命令在哪个目录里执行。
+    cwd: str = ""
 
 
 @dataclass(slots=True)

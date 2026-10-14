@@ -20,6 +20,7 @@ from ..types import ChatMessage
 from .ask_user import ask_user_tool
 from .files import list_files_tool, read_file_tool, write_file_tool
 from .grep_files import grep_files_tool
+from .run_command import run_command_tool
 from .web import web_fetch_tool, web_search_tool
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "grep_files_tool",
     "list_files_tool",
     "read_file_tool",
+    "run_command_tool",
     "subagent_registry",
     "web_fetch_tool",
     "web_search_tool",
@@ -60,6 +62,7 @@ def create_default_registry(cwd: str | None = None) -> ToolRegistry:
         grep_files_tool,
         read_file_tool,
         write_file_tool,
+        run_command_tool,
         web_fetch_tool,
         web_search_tool,
         create_load_skill_tool(cwd or os.getcwd()),

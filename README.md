@@ -246,7 +246,7 @@ for step in range(max_steps):
 | 写前审查 `file_review` | ✅ 完成 |
 | 路径围栏 `workspace` | ✅ 完成 |
 | 权限管理器 `permissions` | ✅ 完成（三入口 + 四级授权 + 持久化） |
-| 内置工具 | ✅ 文件读写 · grep（rg + 回退）· web_fetch / web_search · ask_user |
+| 内置工具 | ⚠️ **9 / 13**。已有：文件读写 · grep · web_fetch / web_search · ask_user · load_skill · `run_command` · plan/goal · 子 Agent。**缺失：`edit_file`、`modify_file`、`patch_file`**（见 [`docs/parity.md`](docs/parity.md)） |
 | 离线 mock + Anthropic 适配器 | ✅ 完成（含 thinking 块原样回传） |
 | 上下文工程 `context/` | ✅ 完成（四级压缩 + 计量 + 大结果落盘） |
 | 会话持久化 `session/` | ✅ 完成（JSONL 树 + 边界 + fork/resume） |
@@ -256,7 +256,23 @@ for step in range(max_steps):
 | CLI 入口 `cli` | ✅ 完成（行模式 REPL + 单次提问 + 本地命令） |
 | Skills `skills` | ✅ 完成（四层发现 + `load_skill` + 安装管理） |
 | MCP `mcp/` | ✅ 完成（stdio 双分帧协商 + HTTP + 工具桥接） |
-| 差分帧渲染 TUI `tui/` | ⚠️ 可用，但**非 `tty-app.ts` 的逐行移植**（见下节） |
+| 后台任务 `background_tasks` | ✅ 完成（注册表 + PID 存活探测） |
+| 差分帧渲染 TUI `tui/` | 🔶 **已移除**——用户明确放弃全屏 TUI，改为行模式（见下节） |
+
+**尚未对等的部分**（完整清单与修复顺序见 [`docs/parity.md`](docs/parity.md)）：
+
+| 缺口 | 状态 |
+|---|---|
+| `edit_file` / `patch_file` / `modify_file` | ❌ 完全缺失 |
+| `local-tool-shortcuts.ts`（`/ls` `/grep` `/read` `/write` `/modify` `/edit` `/patch` `/cmd`） | ❌ 完全缺失 |
+| `/model` · `/config-paths` · `/init` | ❌ 完全缺失 |
+| `history.ts`（REPL 输入历史） | ❌ 只有常量，无实现（死代码） |
+| `mcp-status.ts`（MCP 汇总） | ❌ 完全缺失 |
+| `init.ts`（仓库初始化，生成 MINI.md） | ❌ 完全缺失 |
+| `utils/web.ts` 的搜狗源 · `allowed_domains`/`blocked_domains` · 重试 | ⚠️ 能力缩水 |
+
+> 早先这张表把工具层写成「✅ 完成」而在括号里省略了缺失项，是**表述误导**。
+> 现在的写法是：缺什么就写什么，不用省略代替缺失。
 
 > **测试隔离**：`tests/__init__.py` 在任何 `minicode` 导入之前把家目录钉在仓库内
 > （`tests/_tmp/mini-home`），并做一次 fail-closed 断言。运行时的路径解析走
