@@ -12,12 +12,14 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from ..agents.manager import SubAgentManager
 from ..agents.types import SUBAGENT_TOOL_NAMES as _AGENT_TOOL_NAMES
 from ..tooling import ToolRegistry
 from ..types import ChatMessage
 from .ask_user import ask_user_tool
+from .edit import edit_file_tool, modify_file_tool, patch_file_tool
 from .files import list_files_tool, read_file_tool, write_file_tool
 from .grep_files import grep_files_tool
 from .run_command import run_command_tool
@@ -29,8 +31,11 @@ __all__ = [
     "create_default_registry",
     "create_root_registry",
     "create_worker_registry",
+    "edit_file_tool",
     "grep_files_tool",
     "list_files_tool",
+    "modify_file_tool",
+    "patch_file_tool",
     "read_file_tool",
     "run_command_tool",
     "subagent_registry",
@@ -43,7 +48,9 @@ __all__ = [
 SUBAGENT_TOOL_NAMES = _AGENT_TOOL_NAMES
 
 
-def create_default_registry(cwd: str | None = None) -> ToolRegistry:
+def create_default_registry(
+    cwd: str | None = None, plan: Any | None = None
+) -> ToolRegistry:
     """不含子 Agent 管理能力的根工具集。
 
     保留它是为了测试与「单 Agent 模式」——此时模型看不到 `spawn_agent`，
@@ -53,7 +60,20 @@ def create_default_registry(cwd: str | None = None) -> ToolRegistry:
     里有 `load_skill`，而白名单是在注册表层裁剪的——工具不在表里，worker 就会
     拿到「Unknown tool」。工具的存在性不该依赖调用方是否传了 cwd。
     `cwd` 只影响**技能发现**（枚举出哪些技能）与 `load_skill` 的查找目录。
+
+    ## `plan` 参数为什么是必需的
+
+    `update_plan` 是模型更新 Todo 清单的**唯一**入口，而系统提示每个回合都在
+    告诉模型「用 update_plan 跟踪多步工作」。但早先的实现虽然定义了
+    `create_update_plan_tool`，却**从来没有调用它**——工具没注册，模型一调
+    就得到「Unknown tool: update_plan」。也就是说 Plan 功能实际不可用，
+    而提示词还在不断诱导模型去用一个不存在的工具。
+
+    这与 `permissions.ensure_command` 是同一类问题：**基础设施写好了，但没接线**。
+    对照原版 `tools/index.ts:63`，`update_plan` 属于**默认注册表**，
+    因此**所有模式**都可用（不只是 goal 模式）。
     """
+    from .goal import create_update_plan_tool
     from .load_skill import create_load_skill_tool
 
     tools = [
@@ -62,11 +82,18 @@ def create_default_registry(cwd: str | None = None) -> ToolRegistry:
         grep_files_tool,
         read_file_tool,
         write_file_tool,
+        edit_file_tool,
+        patch_file_tool,
+        modify_file_tool,
         run_command_tool,
         web_fetch_tool,
         web_search_tool,
         create_load_skill_tool(cwd or os.getcwd()),
     ]
+    # 原版只在确实给了 plan 时才注册（`...(args.plan ? [...] : [])`）。
+    # 不传 plan 的场景（如只读探测、子集裁剪）不该凭空多出一个写工具。
+    if plan is not None:
+        tools.append(create_update_plan_tool(plan))
 
     skills: list[dict[str, object]] = []
     if cwd is not None:
@@ -91,14 +118,18 @@ def create_default_registry(cwd: str | None = None) -> ToolRegistry:
 
 
 def create_root_registry(
-    subagents: SubAgentManager | None = None, cwd: str | None = None
+    subagents: SubAgentManager | None = None,
+    cwd: str | None = None,
+    plan: Any | None = None,
 ) -> ToolRegistry:
     """根 Agent 的完整工具集。
 
     传入 `subagents` 时额外叠加四个管理工具；不传则退化为 `create_default_registry()`
     的行为。这样「有没有子 Agent 能力」是构造期决定的，不需要运行时开关。
+
+    `plan` 用来注册 `update_plan` —— 见 `create_default_registry` 的说明。
     """
-    registry = create_default_registry(cwd)
+    registry = create_default_registry(cwd, plan)
     if subagents is not None:
         from .subagents import create_subagent_tools
 

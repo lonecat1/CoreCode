@@ -37,6 +37,9 @@ UI_STARTUP = os.path.join(REPO, "src", "minicode", "ui", "startup.py")
 CLI = os.path.join(REPO, "src", "minicode", "cli.py")
 RUN_COMMAND = os.path.join(REPO, "src", "minicode", "tools", "run_command.py")
 BACKGROUND_TASKS = os.path.join(REPO, "src", "minicode", "background_tasks.py")
+EDIT_TOOLS = os.path.join(REPO, "src", "minicode", "tools", "edit.py")
+TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
+FILE_REVIEW = os.path.join(REPO, "src", "minicode", "file_review.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -541,6 +544,74 @@ MUTATIONS = [
         BACKGROUND_TASKS,
         '    return replace(record, status="running" if alive else "completed")',
         '    return replace(record, status="running")',
+    ),
+    (
+        "edit: replaceAll 被忽略（批量替换只改一处）",
+        EDIT_TOOLS,
+        "    if replace_all:\n        return content.replace(search, replace)\n"
+        "    return content.replace(search, replace, 1)",
+        "    if False:\n        return content.replace(search, replace)\n"
+        "    return content.replace(search, replace, 1)",
+    ),
+    (
+        "edit: 默认替换全部（与原版「只替换第一处」不符）",
+        EDIT_TOOLS,
+        "    return content.replace(search, replace, 1)",
+        "    return content.replace(search, replace)",
+    ),
+    (
+        "edit: search 找不到也继续（写坏文件）",
+        EDIT_TOOLS,
+        '        return ToolResult.failure(f"Text not found in {path}")',
+        "        pass",
+    ),
+    (
+        "edit: patch 任一替换失败仍写盘（留下半成品文件）",
+        EDIT_TOOLS,
+        '            return ToolResult.failure(f"Replacement {index} not found in {path}")',
+        "            continue",
+    ),
+    (
+        "edit: patch 的 replaceAll 标签恒为 replaceOnce（输出信息失真）",
+        EDIT_TOOLS,
+        "        applied.append(f\"#{index} {'replaceAll' if replace_all else 'replaceOnce'}\")",
+        '        applied.append(f"#{index} replaceOnce")',
+    ),
+    (
+        "edit: 文件不存在不报错（模型以为改成功了）",
+        EDIT_TOOLS,
+        '    except FileNotFoundError:\n        return None, ToolResult.failure(f"文件不存在：{display_path}")',
+        "    except FileNotFoundError:\n        return \"\", None",
+    ),
+    (
+        "edit: 读文件时归一化换行（CRLF 文件被改写）",
+        EDIT_TOOLS,
+        '        with open(target, encoding="utf-8", newline="") as handle:',
+        '        with open(target, encoding="utf-8") as handle:',
+    ),
+    (
+        "file_review: 写文件时转换换行（LF 文件被改成 CRLF）",
+        FILE_REVIEW,
+        '    with open(target_path, "w", encoding="utf-8", newline="") as handle:',
+        '    with open(target_path, "w", encoding="utf-8") as handle:',
+    ),
+    (
+        "file_review: 读文件时归一化换行（内容与磁盘不一致）",
+        FILE_REVIEW,
+        '        with open(target_path, encoding="utf-8", newline="") as handle:',
+        '        with open(target_path, encoding="utf-8") as handle:',
+    ),
+    (
+        "注册表: 不给 update_plan 接线（模型提示里让它用，实际不存在）",
+        TOOLS_INIT,
+        "    if plan is not None:\n        tools.append(create_update_plan_tool(plan))",
+        "    if False:\n        tools.append(create_update_plan_tool(plan))",
+    ),
+    (
+        "注册表: 撤销 update_plan 条件（没给 plan 也注册写工具）",
+        TOOLS_INIT,
+        "    if plan is not None:\n        tools.append(create_update_plan_tool(plan))",
+        "    if True:\n        tools.append(create_update_plan_tool(plan))",
     ),
 ]
 

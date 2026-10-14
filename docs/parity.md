@@ -33,7 +33,7 @@
 
 ## A · 工具层（`src/tools/`）
 
-TS 版默认注册表有 **13 个**工具，Python 版有 **9 个**。
+TS 版默认注册表有 **13 个**工具，Python 版有 **13 个**。
 
 | 工具 | TS 文件 | 行数 | Python | 状态 |
 |---|---|---|---|---|
@@ -42,16 +42,48 @@ TS 版默认注册表有 **13 个**工具，Python 版有 **9 个**。
 | `read_file` | `read-file.ts` | 53 | `tools/files.py` | ✅ |
 | `write_file` | `write-file.ts` | 28 | `tools/files.py` | ✅ |
 | `grep_files` | `grep-files.ts` | 42 | `tools/grep_files.py` | ✅ |
-| `run_command` | `run-command.ts` | 211 | `tools/run_command.py` | ✅ **已补齐**（见下） |
+| `run_command` | `run-command.ts` | 211 | `tools/run_command.py` | ✅ **已补齐** |
+| `edit_file` | `edit-file.ts` | 45 | `tools/edit.py` | ✅ **已补齐** |
+| `patch_file` | `patch-file.ts` | 76 | `tools/edit.py` | ✅ **已补齐** |
+| `modify_file` | `modify-file.ts` | 28 | `tools/edit.py` | ✅ **已补齐** |
+| `update_plan` | `plan.ts` | 41 | `tools/goal.py` | ✅ **已接线**（见下） |
 | `web_fetch` | `web-fetch.ts` | 58 | `tools/web.py` | ⚠️ 缺重试 |
 | `web_search` | `web-search.ts` | 87 | `tools/web.py` | ⚠️ 缺域名过滤、搜狗源 |
 | `load_skill` | `load-skill.ts` | 42 | `tools/load_skill.py` | ✅ |
-| `update_plan` | `plan.ts` | 41 | `tools/goal.py` | ✅ |
 | `update_goal` / `get_goal` | `goal.ts` | 33 | `tools/goal.py` | ✅ |
 | `spawn_agent` 等 4 个 | `sub-agents.ts` | 122 | `tools/subagents.py` | ✅ |
-| **`patch_file`** | `patch-file.ts` | **76** | — | ❌ **完全缺失** |
-| **`edit_file`** | `edit-file.ts` | **45** | — | ❌ **完全缺失** |
-| **`modify_file`** | `modify-file.ts` | **28** | — | ❌ **完全缺失** |
+
+**运行时工具集已完全对等**——逐个集合比对确认：TS 的 13 个默认工具 + runtime 层
+追加的 `get_goal`/`update_goal`，与 Python 侧一一对应，无缺无多。
+
+### 三处「基础设施写好了但没接线」的缺口
+
+这三个缺口的共同点很值得记下来：**实现都在、测试也过，但生产代码从来不调用它。**
+纯函数测试发现不了这类问题——只有把「工具集 / 命令集 / 回调」当成**数据**去核对
+才会暴露。
+
+| 缺口 | 症状 |
+|---|---|
+| `permissions.ensure_command` | 只有测试调用；`run_command` 不存在，权限系统对它形同虚设 |
+| `create_update_plan_tool` | 定义了但从未调用 → **Plan 功能实际不可用**，而系统提示每个回合都在让模型「用 update_plan 跟踪多步工作」，模型一调就是 `Unknown tool` |
+| `history_path()` / `HISTORY_PATH` | 定义了但无人引用 → REPL 输入历史没有实现 |
+
+### 三个编辑工具的对齐细节
+
+实现都在 `tools/edit.py`（三者共享落盘路径与替换语义）。
+
+| 原版行为 | 对应实现 |
+|---|---|
+| 默认**只替换第一处**（JS `String.replace` 字符串模式） | `apply_replacement(..., replace_all=False)` |
+| `replaceAll` 替换全部 | 同 |
+| `search` 非空（zod `.min(1)`） | `_require_text` |
+| `edit_file` 读不到文件 → 抛 ENOENT | 明确失败提示（行为等价，文本更清楚） |
+| `patch_file` 任一替换找不到 → **整体放弃** | 同（不写盘，不留半成品） |
+| `patch_file` 输出 `#1 replaceOnce, #2 replaceAll` | 同格式 |
+| `modify_file` 与 `write_file` **实现完全相同** | 同（只是 description 不同；因此可创建文件） |
+| 替换串里的 `$&`/`$1` 被 JS 特殊展开 | 🔶 **不做展开**，`str.replace` 是字面替换（D33） |
+| `readFile`/`writeFile` 字节级读写 | 🔶 必须显式 `newline=""`，否则 Windows 上翻转换行（D34） |
+
 
 ### `run_command` 的对齐细节
 

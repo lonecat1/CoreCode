@@ -8,6 +8,22 @@
 4. 落盘（顺带补齐父目录）。
 
 把这一步收敛成单个函数，是「模型不能悄悄改文件」这条保证的实现方式。
+
+## 换行必须按字节处理（`newline=""`）
+
+原版用 Node 的 `readFile(path, 'utf8')` 与 `writeFile(path, text, 'utf8')`，
+两者都是**字节级**的：读进来是什么、写出去就是什么，不做任何换行转换。
+
+Python 的文本模式默认**不是**这样：
+
+  - 读：universal newlines 会把 `\\r\\n` 归一成 `\\n`；
+  - 写：Windows 上会把 `\\n` 转成 `\\r\\n`。
+
+后果很严重：在一个 LF 文件上做一次 `edit_file`，**整个文件会被改写成 CRLF**，
+unified diff 显示「每一行都变了」。用户看到的是一个被无端重写的文件。
+
+因此读写都显式传 `newline=""`。这个参数在 Python 里的含义是
+「不做任何换行转换」——正是我们要的字节保真。
 """
 
 from __future__ import annotations
@@ -20,9 +36,15 @@ from .tooling import ToolContext, ToolResult
 
 def load_existing_file(target_path: str) -> str:
     try:
-        with open(target_path, encoding="utf-8") as handle:
+        # `newline=""`：不归一化换行，保持与原版 `readFile` 一致。
+        with open(target_path, encoding="utf-8", newline="") as handle:
             return handle.read()
     except FileNotFoundError:
+        return ""
+    except IsADirectoryError:
+        return ""
+    except UnicodeDecodeError:
+        # 非 UTF-8 文本（二进制）不该让工具崩掉，交给调用方按空处理。
         return ""
 
 
@@ -67,7 +89,9 @@ def apply_reviewed_file_change(
     parent = os.path.dirname(target_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(target_path, "w", encoding="utf-8") as handle:
+    # `newline=""`：**不做换行转换**，与原版 `writeFile` 的字节级写入一致。
+    # 少了它，Windows 上每次编辑都会把 LF 文件改写成 CRLF。
+    with open(target_path, "w", encoding="utf-8", newline="") as handle:
         handle.write(next_content)
 
     return ToolResult.success(f"已应用审查通过的变更到 {file_path}")

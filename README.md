@@ -246,7 +246,7 @@ for step in range(max_steps):
 | 写前审查 `file_review` | ✅ 完成 |
 | 路径围栏 `workspace` | ✅ 完成 |
 | 权限管理器 `permissions` | ✅ 完成（三入口 + 四级授权 + 持久化） |
-| 内置工具 | ⚠️ **9 / 13**。已有：文件读写 · grep · web_fetch / web_search · ask_user · load_skill · `run_command` · plan/goal · 子 Agent。**缺失：`edit_file`、`modify_file`、`patch_file`**（见 [`docs/parity.md`](docs/parity.md)） |
+| 内置工具 | ✅ **13 / 13**。文件读写 · `edit_file` / `patch_file` / `modify_file` · grep · `run_command` · web_fetch / web_search · ask_user · load_skill · plan/goal · 子 Agent（见 [`docs/parity.md`](docs/parity.md)） |
 | 离线 mock + Anthropic 适配器 | ✅ 完成（含 thinking 块原样回传） |
 | 上下文工程 `context/` | ✅ 完成（四级压缩 + 计量 + 大结果落盘） |
 | 会话持久化 `session/` | ✅ 完成（JSONL 树 + 边界 + fork/resume） |
@@ -263,7 +263,6 @@ for step in range(max_steps):
 
 | 缺口 | 状态 |
 |---|---|
-| `edit_file` / `patch_file` / `modify_file` | ❌ 完全缺失 |
 | `local-tool-shortcuts.ts`（`/ls` `/grep` `/read` `/write` `/modify` `/edit` `/patch` `/cmd`） | ❌ 完全缺失 |
 | `/model` · `/config-paths` · `/init` | ❌ 完全缺失 |
 | `history.ts`（REPL 输入历史） | ❌ 只有常量，无实现（死代码） |

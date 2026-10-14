@@ -143,7 +143,10 @@ def build_host(
     )
 
     subagents_holder: dict[str, Any] = {}
-    tools = create_root_registry(cwd=cwd)
+    # **必须把 plan 传进去**：否则 `update_plan` 不会被注册，而系统提示每个
+    # 回合都在让模型用它——模型一调就是「Unknown tool」。见
+    # `create_default_registry` 的说明。
+    tools = create_root_registry(cwd=cwd, plan=plan)
     worker_tools = create_worker_registry(tools)
 
     model = _build_model(runtime, args.mock, subagents_holder)
