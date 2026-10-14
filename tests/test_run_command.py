@@ -173,9 +173,24 @@ class ShellSnippetDetectionTests(unittest.TestCase):
 
         否则 `command="echo"`, `args=["a|b"]` 会被塞进 shell，`|` 变成管道，
         用户拿到的结果与预期完全不同。
+
+        **第二个断言才是杀死变异的关键**：只测 `command="echo"`（无元字符）
+        时，即使去掉 args 判断，函数仍旧返回 False —— 变异存活。必须让
+        `command` 本身含元字符，才能区分「有没有做 args 判断」。
         """
-        self.assertFalse(looks_like_shell_snippet("echo", ["a|b"]))
+        # 元字符出现在参数里
+        self.assertFalse(looks_like_shell_snippet("rg", ["a|b"]))
         self.assertFalse(looks_like_shell_snippet("echo", ["$HOME"]))
+        # 元字符出现在 command 里，但给了 args → 仍不当片段
+        self.assertFalse(
+            looks_like_shell_snippet("echo > out.txt", ["x"]),
+            "给了 args 时 command 应被当作可执行文件名，不解析元字符",
+        )
+
+    def test_snippet_detection_still_works_without_args(self) -> None:
+        """对照组：没给 args 时同样的字符串必须被判定为片段。"""
+        self.assertTrue(looks_like_shell_snippet("echo > out.txt", None))
+        self.assertTrue(looks_like_shell_snippet("rg a|b", None))
 
 
 class BackgroundSnippetDetectionTests(unittest.TestCase):
@@ -184,8 +199,19 @@ class BackgroundSnippetDetectionTests(unittest.TestCase):
 
     def test_double_ampersand_is_not_background(self) -> None:
         """**`&&` 是顺序执行，不是后台。** 混淆这两者会让 agent 以为
-        命令在后台跑，实际上它在等前一条命令结束。"""
-        self.assertFalse(is_background_shell_snippet("make && make test", None))
+        命令在后台跑，实际上它在等前一条命令结束。
+
+        **必须用「以 `&&` 结尾」的输入**：`"make && make test"` 既不结尾于
+        `&`，两种实现都返回 False，测不出区别——变异因此存活。只有
+        `"make &&"` 才能真正区分「有没有做 `&&` 判断」。
+        """
+        self.assertFalse(is_background_shell_snippet("make &&", None))
+        self.assertFalse(is_background_shell_snippet("make && ", None))
+
+    def test_single_trailing_ampersand_is_still_background(self) -> None:
+        """对照组：以单个 `&` 结尾时仍要判定为后台。"""
+        self.assertTrue(is_background_shell_snippet("make &", None))
+        self.assertTrue(is_background_shell_snippet("make && make test &", None))
 
     def test_plain_command_is_not_background(self) -> None:
         self.assertFalse(is_background_shell_snippet("sleep 5", None))
