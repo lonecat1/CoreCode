@@ -40,11 +40,12 @@ def load_existing_file(target_path: str) -> str:
         with open(target_path, encoding="utf-8", newline="") as handle:
             return handle.read()
     except FileNotFoundError:
-        return ""
-    except IsADirectoryError:
-        return ""
-    except UnicodeDecodeError:
-        # 非 UTF-8 文本（二进制）不该让工具崩掉，交给调用方按空处理。
+        # **只吞 ENOENT**，与原版一致（它检查 `isEnoentError` 后返回空串，
+        # 其余错误一律上抛）。
+        #
+        # 这一点很重要：目录、二进制文件、权限不足都**不该**被当成「空文件」——
+        # 那样 `modify_file` 会以为自己在「创建新文件」，实际上是在覆盖一个
+        # 已存在但读不出来的东西。宁可让工具失败，也不要静默替换。
         return ""
 
 
