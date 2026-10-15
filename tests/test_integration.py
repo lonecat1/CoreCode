@@ -70,6 +70,64 @@ class IntegrationTestCase(unittest.TestCase):
 class CliWiringTests(IntegrationTestCase):
     """命令行装配本身。"""
 
+    def _dispatch(self, line: str):
+        """直接调 `_dispatch`，返回输出。
+
+        为什么要绕过子进程跑 CLI：`_run_cli` 走的是 `_run_once`（`-p` 模式），
+        它和 REPL 的 `_dispatch` 是**两条路径**。只测其中一条时，另一条被改坏
+        不会被发现——我就这样漏过一次。这里直接调 REPL 那条。
+
+        **必须把 UI 回调挂到 host 上**：否则模型输出的正文走的是 host 自己的
+        回调（默认是空的），我只会在自己的 StringIO 里看到统计行。
+        第一版就漏了这一步，表现为「普通回合没有任何输出」。
+        """
+        from minicode.cli import _attach_ui_callbacks, _dispatch
+        from minicode.ui.console import ConsoleUI
+
+        stream = io.StringIO()
+        ui = ConsoleUI(stream=stream, width=80, animate=False)
+        host = self._host()
+        _attach_ui_callbacks(host, ui)
+        try:
+            _dispatch(host, line, ui)
+        finally:
+            host.stop()
+        return stream.getvalue()
+
+    def test_repl_dispatch_runs_tool_shortcuts_locally(self) -> None:
+        """**REPL 路径也必须处理快捷方式。**
+
+        子进程测试覆盖的是 `_run_once`；这条覆盖 `_dispatch`。两条路径都要有，
+        否则其中一条退化成「把 /ls 送给模型」时无人发现。
+        """
+        output = self._dispatch("/ls")
+        self.assertIn("list_files", output, "REPL 应当本地执行快捷方式")
+        self.assertNotIn("收到指令", output, "不该送到模型")
+
+    def test_repl_dispatch_handles_local_commands(self) -> None:
+        output = self._dispatch("/status")
+        self.assertIn("会话", output)
+
+    def test_repl_dispatch_runs_a_normal_turn(self) -> None:
+        output = self._dispatch("你好")
+        self.assertIn("收到指令", output, "普通输入应当交给模型")
+
+    def test_repl_dispatch_reports_half_typed_commands(self) -> None:
+        """打了一半的命令要提示，而不是送给模型。
+
+        用 `/he`（`/help` 的前缀）。注意 `/nope` **不会**被提示——按设计，
+        「不是任何已知命令前缀」的输入交给模型（漏判优于误判，见
+        `_looks_like_unknown_command` 的说明）。
+        """
+        output = self._dispatch("/he")
+        self.assertIn("未知命令", output)
+
+    def test_repl_dispatch_sends_unknown_slash_to_the_model(self) -> None:
+        """`/nope` 交给模型——这是**有意的取舍**，不是漏判。"""
+        output = self._dispatch("/nope")
+        self.assertIn("收到指令", output)
+        self.assertNotIn("未知命令", output)
+
     def test_help_runs_and_lists_commands(self) -> None:
         code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/help"])
         self.assertEqual(code, 0)

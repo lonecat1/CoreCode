@@ -45,6 +45,7 @@ GREP_FILES = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
 MCP_STATUS = os.path.join(REPO, "src", "minicode", "mcp", "status.py")
 CLI_COMMANDS = os.path.join(REPO, "src", "minicode", "cli_commands.py")
 PERMISSIONS = os.path.join(REPO, "src", "minicode", "permissions.py")
+REPO_INIT = os.path.join(REPO, "src", "minicode", "repo_init.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -778,6 +779,66 @@ MUTATIONS = [
         UI_RENDER,
         '    if mcp_summary:\n        rows.append(("MCP", mcp_summary))',
         "    if False:\n        rows.append((\"MCP\", mcp_summary))",
+    ),
+    (
+        "init: MINI.md 用覆盖写（用户的项目说明被模板冲掉）",
+        REPO_INIT,
+        '        with open(file_path, "x", encoding="utf-8", newline="") as handle:\n'
+        "            handle.write(content)\n        return \"created\"\n"
+        "    except FileExistsError:\n        return \"skipped\"",
+        '        with open(file_path, "w", encoding="utf-8", newline="") as handle:\n'
+        "            handle.write(content)\n        return \"created\"\n"
+        "    except FileExistsError:\n        return \"skipped\"",
+    ),
+    (
+        "init: .gitignore 被重写（用户已有规则丢失）",
+        REPO_INIT,
+        "    current = [line.rstrip() for line in existing.split(\"\\n\")]\n"
+        "    changed = False",
+        "    current = []\n    changed = True",
+    ),
+    (
+        "init: .mini-code 已存在为文件时不报错（静默覆盖）",
+        REPO_INIT,
+        "        if not os.path.isdir(dir_path):\n"
+        "            raise NotADirectoryError(\n"
+        '                f"Cannot initialize: {dir_path} exists and is not a directory"\n'
+        "            )",
+        "        if False:\n            pass",
+    ),
+    (
+        "init: TypeScript 与 JavaScript 同时列出（语言层重复）",
+        REPO_INIT,
+        "    if d.typescript:\n        languages.append(\"TypeScript\")\n"
+        "    elif d.package_json:\n        languages.append(\"JavaScript/Node.js\")",
+        "    if d.typescript:\n        languages.append(\"TypeScript\")\n"
+        "    if d.package_json:\n        languages.append(\"JavaScript/Node.js\")",
+    ),
+    (
+        "init: Next.js 项目里也提 React（噪音）",
+        REPO_INIT,
+        "    if d.react and not d.nextjs:",
+        "    if d.react:",
+    ),
+    (
+        "init: 探测不到也写空标题（看起来像生成失败）",
+        REPO_INIT,
+        "    verify = verification_lines(cwd, detection)\n    if verify:\n"
+        '        sections.append(["## Verification", *verify, ""])',
+        "    verify = verification_lines(cwd, detection)\n"
+        '    sections.append(["## Verification", *verify, ""])',
+    ),
+    (
+        "init: package.json 匹配区分大小写（React 认不出）",
+        REPO_INIT,
+        '    package_json_text = _read_text_or_empty(os.path.join(cwd, "package.json")).lower()',
+        '    package_json_text = _read_text_or_empty(os.path.join(cwd, "package.json"))',
+    ),
+    (
+        "init: 三种状态的报告文字相同（用户分不清发生了什么）",
+        REPO_INIT,
+        '    if status == "updated":\n        return "updated"',
+        '    if status == "updated":\n        return "created"',
     ),
 ]
 

@@ -264,5 +264,90 @@ class ReadSettingsFileTests(ConfigTestCase):
             read_settings_file(self.own)
 
 
+class DynamicPathTests(ConfigTestCase):
+    """**默认参数必须走动态访问器，不能用导入期快照。**
+
+    这些测试刻意**不传 path**，并且先改 `MINICODE_HOME`。如果实现里写的是
+    模块级 `SETTINGS_PATH`（导入期求值），它会读/写到导入时的位置——测试
+    隔离用的临时目录根本不起作用，症状是「配置写了却不生效」。
+
+    之前所有测试都显式传 path，因此这条分支从未被覆盖，变异存活。
+    """
+
+    def test_read_settings_file_uses_current_home(self) -> None:
+        self.write_json(self.home / "settings.json", {"model": "from-current-home"})
+        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+            self.assertEqual(read_settings_file()["model"], "from-current-home")
+
+    def test_save_settings_writes_to_current_home(self) -> None:
+        from minicode.config import save_settings
+
+        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+            written = save_settings({"model": "saved"})
+        self.assertEqual(Path(written), self.home / "settings.json")
+        self.assertTrue((self.home / "settings.json").exists())
+        self.assertEqual(
+            json.loads((self.home / "settings.json").read_text(encoding="utf-8"))[
+                "model"
+            ],
+            "saved",
+        )
+
+    def test_save_settings_follows_a_changed_home(self) -> None:
+        """换一个家目录后必须写到**新的**位置。
+
+        这条直接钉住「不要用导入期快照」：快照在导入时就定死了，
+        换 `MINICODE_HOME` 不会让它改变。
+        """
+        from minicode.config import save_settings
+
+        other = self.root / "another-home"
+        other.mkdir(parents=True, exist_ok=True)
+        with patch.dict(os.environ, {"MINICODE_HOME": str(other)}):
+            written = save_settings({"model": "x"})
+        self.assertEqual(Path(written), other / "settings.json")
+        self.assertFalse(
+            (self.home / "settings.json").exists(), "不该写到旧的家目录"
+        )
+
+    def test_read_permission_store_uses_current_home(self) -> None:
+        from minicode.permissions import read_permission_store
+
+        self.write_json(
+            self.home / "permissions.json",
+            {"allowedCommandPatterns": ["git status"]},
+        )
+        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+            store = read_permission_store()
+        self.assertEqual(store.allowed_command_patterns, ["git status"])
+
+    def test_write_permission_store_uses_current_home(self) -> None:
+        from minicode.permissions import PermissionStore, write_permission_store
+
+        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+            write_permission_store(
+                PermissionStore(allowed_command_patterns=["npm test"])
+            )
+        written = self.home / "permissions.json"
+        self.assertTrue(written.exists())
+        self.assertEqual(
+            json.loads(written.read_text(encoding="utf-8"))[
+                "allowedCommandPatterns"
+            ],
+            ["npm test"],
+        )
+
+    def test_memory_files_follow_a_changed_home(self) -> None:
+        from minicode.memory import discover_memory_files
+
+        (self.home / "MINI.md").write_text("global guidance", encoding="utf-8")
+        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+            found = discover_memory_files(REPO)
+        self.assertTrue(
+            any("global guidance" in item.content for item in found),
+            f"没读到家目录的 MINI.md：{found}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

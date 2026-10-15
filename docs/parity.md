@@ -124,7 +124,13 @@ Python 版连工具都没有，自然做不到。
 
 ## B · 命令层（`cli-commands.ts`）
 
-TS 版 **29 条**用法，Python 版 **26 条**。
+**原版有 37 条用法，但只有 29 个不同的命令**——因为 `/loop`、`/goal`、`/model`
+各有多条用法变体（`/loop`、`/loop stop`、`/goal pause` …）。
+
+因此**「用法条数」不是对等指标**（多一条少一条可能只是措辞不同），
+**不同的命令名**才是。我一开始按用法条数比，得出了错误的结论。
+
+**Python 版 29 / 29，命令层已完全对等。**
 
 | 命令 | Python | 状态 |
 |---|---|---|
@@ -133,17 +139,17 @@ TS 版 **29 条**用法，Python 版 **26 条**。
 | `/goal`（含 `status`/`pause`/`resume`/`clear`） | ✅ | ✅ |
 | `/loop`（含 `stop`） | ✅ | ✅ |
 | `/compact` `/collapse` `/snip` | ✅ | ✅ |
-| `/ls` | ✅ | ✅ **已补齐** |
-| `/grep` | ✅ | ✅ **已补齐** |
-| `/read` | ✅ | ✅ **已补齐** |
-| `/write` | ✅ | ✅ **已补齐** |
-| `/modify` | ✅ | ✅ **已补齐** |
-| `/edit` | ✅ | ✅ **已补齐** |
-| `/patch` | ✅ | ✅ **已补齐** |
-| `/cmd` | ✅ | ✅ **已补齐** |
-| **`/model`** | — | ❌ 查看/切换模型 |
-| **`/config-paths`** | — | ❌ 显示配置文件路径 |
-| **`/init`** | — | ❌ 初始化仓库 |
+| `/ls` `/grep` `/read` `/write` `/modify` `/edit` `/patch` `/cmd` | ✅ | ✅ 本地工具快捷方式 |
+| `/model [model-name]` | ✅ | ✅ |
+| `/config-paths` | ✅ | ✅ |
+| `/init` | ✅ | ✅ **已补齐** |
+
+> 这几条测试把上面的清单变成**可执行的**：
+> `test_no_commands_are_missing` 断言没有缺口，
+> `test_all_29_commands_are_present` 断言数量，
+> `test_no_extra_commands` 断言没有多出原版没有的命令，
+> `test_every_listed_command_has_a_handler_or_is_a_shortcut` 断言每条都能被处理。
+
 
 ### 本地工具快捷方式的实现
 
@@ -177,21 +183,24 @@ TS 版 **29 条**用法，Python 版 **26 条**。
 |---|---|---|---|
 | `local-tool-shortcuts.ts` | 123 | `local_tool_shortcuts.py` | ✅ **已补齐** |
 | `background-tasks.ts` | 62 | `background_tasks.py` | ✅ **已补齐**（注册表 + PID 存活探测） |
-| `init.ts` | 308 | 完全没有 | ❌ |
-| `mcp-status.ts` | 33 | 完全没有 | ❌ |
+| `mcp-status.ts` | 33 | `mcp/status.py` | ✅ **已补齐** |
+| `init.ts` | 308 | `repo_init.py` | ✅ **已补齐** |
 | `history.ts` | 62 | `config.history_path()` 与 `HISTORY_PATH` **定义了但无人引用 = 死代码** | ❌ |
 | `manage-cli.ts` | 260 | `skills.py` 覆盖了技能安装部分 | ⚠️ 需逐条核对 |
 | `install.ts` | 111 | 同上 | ⚠️ 需逐条核对 |
 | `utils/web.ts` | 443 | `utils/web.py`(217) + `tools/web.py`(130) | ⚠️ 缺搜狗源、域名过滤、重试 |
 | `mock-model.ts` | 161 | `adapters/mock.py`(91) | ⚠️ 快捷方式少 |
 | `utils/model-context.ts` | 144 | `context/model_context.py`(101) | ⚠️ 需核对窗口表 |
+| `config.ts` 的 Claude 回退 | — | `load_effective_settings()` | ✅ **已补齐** |
 | `tty-app.ts` + `tui/*` | ~3,500 | 已删除 | 🔶 用户明确放弃全屏 TUI |
 
 ### 顺带修掉的既有缺陷（不在缺口清单里，是核对时发现的）
 
 | 缺陷 | 症状 |
 |---|---|
-| `grep_files` 的 `path` 指向**文件**时永远没有结果 | 回退扫描用 `os.walk(target)`，而它对文件路径静默产出空序列。于是 `/grep <pattern>::<file>`（文档化用法）永远返回 `(no matches)`，看起来像「确实没有匹配」而不是「我根本没搜」。`grep_files` 此前**没有任何专属测试**，所以一直没暴露。 |
+| `grep_files` 的 `path` 指向**文件**时永远没有结果 | 回退扫描用 `os.walk(target)`，而它对文件路径静默产出空序列。于是 `/grep <pattern>::<file>`（文档化用法）永远返回 `(no matches)`，看起来像「确实没有匹配」而不是「我根本没搜」。`grep_files` 此前**没有任何专属测试**。 |
+| **用导入期快照做 I/O**（四处） | `config.SETTINGS_PATH` 这类常量在**导入期**求值。`MINICODE_HOME` 在导入后变化时它们指向错误位置。受影响：`read_settings_file` / `save_settings` / `read_permission_store` / `write_permission_store` / `discover_memory_files`。症状全是**静默的**：`/model` 写到别处、授权规则全部失效、全局指令不生效。README 早就写了这条规则，但只有展示用途的地方遵守了。 |
+| `/config-paths` 的长路径被截断 | 这条命令的全部意义是让用户看到**完整**路径去复制，而 `render_key_value` 默认截断成 `C:\Users\...\se...`，等于白做。 |
 
 ### 已被验证的「已对齐」模块
 

@@ -32,6 +32,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/status", "/status", "显示模型、会话与上下文状态。"),
     SlashCommand("/model", "/model [model-name]", "显示当前模型，或持久化一个模型覆盖。"),
     SlashCommand("/config-paths", "/config-paths", "显示配置文件路径与 Claude 兼容回退路径。"),
+    SlashCommand("/init", "/init", "初始化仓库：生成 MINI.md、.mini-code/ 与 .gitignore 条目。"),
     SlashCommand("/plan", "/plan", "显示当前内存 Plan / Todo 清单。"),
     SlashCommand("/goal", "/goal [status|pause|resume|clear]", "创建、查看或控制 Goal。"),
     SlashCommand("/loop", "/loop [Nm|Nh] <prompt> | /loop stop", "创建、查看或停止 Loop。"),
@@ -85,6 +86,59 @@ def find_matching_slash_commands(prefix: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+#: 会**改动文件系统或会话状态**的命令。
+#:
+#: 暴露出来是给测试用的：想确认「帮助里列的命令都有处理函数」时，不能把
+#: `/init` 这类命令真的跑一遍——那会往仓库里写文件（我踩过：测试在真实仓库
+#: 里创建了 `MINI.md` 并追加了 `.gitignore`）。
+#: 有副作用的命令应当由各自的测试在**临时目录**里覆盖。
+SIDE_EFFECTING_COMMANDS: frozenset[str] = frozenset(
+    {
+        "/init",
+        "/new",
+        "/fork",
+        "/rename",
+        "/resume",
+        "/compact",
+        "/collapse",
+        "/snip",
+        "/model",
+    }
+)
+
+
+def _handler_names() -> frozenset[str]:
+    """本地命令表里有哪些键。
+
+    与 `try_handle_local_command` 共用同一份定义——两处各写一份清单迟早不一致，
+    而那种不一致的症状是「测试说没问题，实际点了没反应」。
+    """
+    return frozenset(_HANDLER_KEYS)
+
+
+#: 本地命令的键。`try_handle_local_command` 按它构造 handler 表。
+_HANDLER_KEYS: tuple[str, ...] = (
+    "/help",
+    "/tools",
+    "/status",
+    "/plan",
+    "/memory",
+    "/skills",
+    "/mcp",
+    "/permissions",
+    "/model",
+    "/config-paths",
+    "/init",
+    "/resume",
+    "/rename",
+    "/fork",
+    "/new",
+    "/compact",
+    "/collapse",
+    "/snip",
+)
+
+
 def try_handle_local_command(host: "SessionHost", text: str) -> str | None:
     """处理一个本地命令。返回 None 表示「不是本地命令」。"""
     stripped = text.strip()
@@ -105,6 +159,7 @@ def try_handle_local_command(host: "SessionHost", text: str) -> str | None:
         "/permissions": lambda: _render_permissions(host),
         "/model": lambda: _do_model(host, argument),
         "/config-paths": lambda: _render_config_paths(),
+        "/init": lambda: _do_init(host),
         "/resume": lambda: _do_resume(host, argument),
         "/rename": lambda: _do_rename(host, argument),
         "/fork": lambda: _do_fork(host),
@@ -397,6 +452,21 @@ def _do_model(host: "SessionHost", argument: str) -> str:
     except OSError as error:
         return f"写入配置失败：{error}"
     return f"saved model={model} to {saved_to or settings_path()}"
+
+
+def _do_init(host: "SessionHost") -> str:
+    """初始化仓库：`.mini-code/` + `.gitignore` 条目 + `MINI.md`。
+
+    对应原版 `cli-commands.ts:285-288`。**幂等**，且绝不覆盖已有文件——
+    重复跑只会得到「全部 skipped」。
+    """
+    from .repo_init import initialize_repo, render_init_report
+
+    try:
+        report = initialize_repo(host.cwd)
+    except OSError as error:
+        return f"初始化失败：{error}"
+    return render_init_report(report)
 
 
 def _do_resume(host: "SessionHost", argument: str) -> str:

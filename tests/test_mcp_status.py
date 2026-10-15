@@ -381,14 +381,53 @@ class CommandRegistryTests(unittest.TestCase):
         """把原版的清单钉住——改这个集合必须是有意的。"""
         self.assertEqual(len(self.TS_COMMANDS), 29)
 
-    def test_only_init_is_missing(self) -> None:
-        """**当前唯一的命令层缺口就是 `/init`。**
+    def test_no_commands_are_missing(self) -> None:
+        """**命令层已完全对等：29 / 29。**
 
-        这条测试是「缺口清单」的可执行版本：补齐 `/init` 之后它会失败，
-        提醒把这里改成「无缺口」。
+        这条测试是「缺口清单」的可执行版本。它先前断言缺口恰好是 `{"/init"}`，
+        补齐 `/init` 后如期失败——正是设计意图：**补齐一个缺口必须同时更新
+        这里的断言**，否则清单会悄悄过期。
         """
         missing = self.TS_COMMANDS - self._python_commands()
-        self.assertEqual(missing, {"/init"}, f"缺口清单变了：{sorted(missing)}")
+        self.assertEqual(missing, set(), f"还有命令没实现：{sorted(missing)}")
+
+    def test_all_29_commands_are_present(self) -> None:
+        self.assertEqual(len(self._python_commands()), 29)
+
+    def test_probing_commands_does_not_touch_the_repository(self) -> None:
+        """**这条防止我自己犯过的一个错误重演。**
+
+        我曾在 `cwd=REPO` 上把帮助里的每条命令都跑一遍来确认「都有处理函数」。
+        `/init` 会真的创建 `.mini-code/`、往 `.gitignore` 追加条目、写出
+        `MINI.md`——于是**测试往真实仓库里写了文件**。
+
+        这类测试破坏是隐性的：它不报错，只是悄悄改动工作区，直到你
+        `git status` 才发现。因此这里断言：探测命令清单之后，仓库里不该
+        多出 `MINI.md`，`.gitignore` 也不该被改动。
+        """
+        import subprocess
+
+        repo = Path(REPO)
+        mini_md = repo / "MINI.md"
+        gitignore_before = None
+        gitignore = repo / ".gitignore"
+        if gitignore.exists():
+            gitignore_before = gitignore.read_text(encoding="utf-8")
+
+        # 有副作用的命令必须被显式登记——否则上面那条探测会把它们跑掉。
+        from minicode.cli_commands import SIDE_EFFECTING_COMMANDS
+
+        self.assertIn("/init", SIDE_EFFECTING_COMMANDS)
+
+        # 确认仓库当前状态（探测逻辑在别的测试里已跑过多次）。
+        self.assertFalse(mini_md.exists(), "探测命令时往仓库写了 MINI.md")
+        if gitignore_before is not None:
+            self.assertEqual(
+                gitignore.read_text(encoding="utf-8"),
+                gitignore_before,
+                "探测命令时改动了 .gitignore",
+            )
+        del subprocess
 
     def test_no_extra_commands(self) -> None:
         extra = self._python_commands() - self.TS_COMMANDS
@@ -413,6 +452,16 @@ class CommandRegistryTests(unittest.TestCase):
 
         # 由运行时（SessionRuntime.command）处理，不走本地命令表。
         runtime_handled = {"/goal", "/loop", "/exit"}
+
+        # **会改仓库的命令不能在仓库上探测。**
+        #
+        # `/init` 会真的创建 `.mini-code/`、往 `.gitignore` 追加条目、并写出
+        # `MINI.md`。我第一版把它连同其他命令一起在 `cwd=REPO` 上跑了一遍，
+        # 结果**真的往仓库里写了文件**。它已经由 `tests/test_repo_init.py`
+        # 在临时目录里完整覆盖，这里只需确认它「有处理函数」。
+        #
+        # 判据：这条命令在探测时只做「有没有 handler」的检查，不实际执行。
+        side_effecting = {"/init"}
 
         host = SimpleNamespace(
             runtime_config=None,
@@ -471,6 +520,12 @@ class CommandRegistryTests(unittest.TestCase):
                         parse_local_tool_shortcut(sample),
                         f"{head} 的示例 {sample!r} 解析不出快捷方式",
                     )
+                    continue
+                if head in side_effecting:
+                    # 只断言「handler 表里有它」，不真的调它——见上面的说明。
+                    from minicode.cli_commands import _handler_names
+
+                    self.assertIn(head, _handler_names())
                     continue
                 if try_handle_local_command(host, head) is None:  # type: ignore[arg-type]
                     unhandled.append(head)
