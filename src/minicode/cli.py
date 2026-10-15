@@ -493,6 +493,7 @@ def _attach_ui_callbacks(host: SessionHost, ui: "ConsoleUI") -> None:
 
 
 def _print_banner(host: SessionHost, ui: "ConsoleUI") -> None:
+    from .mcp.status import summarize_mcp_servers
     from .tools import create_worker_registry
 
     model_name = host.runtime_config.model if host.runtime_config else "离线 mock"
@@ -502,6 +503,13 @@ def _print_banner(host: SessionHost, ui: "ConsoleUI") -> None:
     except Exception:  # noqa: BLE001
         skills = []
 
+    # MCP 计数走统一汇总（对应原版 `index.ts:159` 的 summarizeMcpServers），
+    # 而不是在使用处现算——否则横幅与 `/mcp` 迟早出现两套口径。
+    try:
+        mcp_line = summarize_mcp_servers(host.tools.mcp_servers()).line()
+    except Exception:  # noqa: BLE001 - MCP 汇总失败不该让横幅打不出来
+        mcp_line = ""
+
     ui.write(
         render_banner(
             model=model_name,
@@ -510,6 +518,7 @@ def _print_banner(host: SessionHost, ui: "ConsoleUI") -> None:
             tool_count=len(host.tools.list()),
             readonly_tool_count=len(create_worker_registry(host.tools).list()),
             skill_count=len(skills),
+            mcp_summary=mcp_line,
             width=ui.width,
         )
     )

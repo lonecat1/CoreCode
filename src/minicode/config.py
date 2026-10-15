@@ -80,6 +80,29 @@ def mcp_tokens_path() -> Path:
     return minicode_home() / "mcp-tokens.json"
 
 
+def claude_settings_path() -> Path:
+    """Claude Code 的配置文件路径，作为**最低优先级**的配置来源。
+
+    对应原版 `config.ts:45` 的 `CLAUDE_SETTINGS_PATH`。
+
+    ## 为什么要有它
+
+    原版的 `loadEffectiveSettings()` 会读三处配置并按优先级合并：
+
+        ~/.claude/settings.json     最低（兼容 Claude Code）
+        ~/.mini-code/mcp.json       MCP 服务器
+        ./.mcp.json                 项目级 MCP 服务器
+        ~/.mini-code/settings.json  最高
+
+    少了第一项，从 Claude Code 迁移过来的用户会发现**他已经配好的东西全部
+    失效**——模型名、端点、密钥都得重新写一遍，而程序不会给出任何提示。
+
+    刻意**不跟随 `MINICODE_HOME`**：它是 Claude Code 的目录，不是本项目的
+    家目录。把它重定向到本项目家目录下会读到自己的配置，形成自我引用。
+    """
+    return Path.home() / ".claude" / "settings.json"
+
+
 #: 导入期快照，仅用于展示。
 MINICODE_HOME = _home_dir()
 SETTINGS_PATH = MINICODE_HOME / "settings.json"
@@ -89,6 +112,8 @@ MCP_PATH = MINICODE_HOME / "mcp.json"
 MCP_TOKENS_PATH = MINICODE_HOME / "mcp-tokens.json"
 PROJECTS_DIR = MINICODE_HOME / "projects"
 TOOL_RESULTS_DIR = MINICODE_HOME / "tool-results"
+#: 注意：**不基于** `MINICODE_HOME`，见 `claude_settings_path()`。
+CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 
@@ -183,7 +208,10 @@ class ConfigError(Exception):
 
 
 def read_settings_file(path: Path | None = None) -> dict[str, Any]:
-    target = path or SETTINGS_PATH
+    # 默认走**动态**访问器而不是模块级常量 `SETTINGS_PATH`：
+    # 后者是导入期快照，`MINICODE_HOME` 在导入后变化（测试就会这么做）时
+    # 它会指向错误的位置，于是「读自己的配置」变成「读别人的配置」。
+    target = path or settings_path()
     try:
         raw = target.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -231,8 +259,13 @@ def merge_settings(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
 
 
 def save_settings(updates: dict[str, Any], path: Path | None = None) -> Path:
-    """读-合并-重写。只覆盖本次给出的 key。"""
-    target = path or SETTINGS_PATH
+    """读-合并-重写。只覆盖本次给出的 key。
+
+    默认写向**动态**访问器 `settings_path()`，理由同 `read_settings_file`：
+    用导入期快照会让 `/model` 在 `MINICODE_HOME` 变化后写错文件——
+    那是「看起来成功、其实写到了别处」，比报错更难发现。
+    """
+    target = path or settings_path()
     existing = read_settings_file(target)
     merged = merge_settings(existing, updates)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -261,8 +294,17 @@ def resolve_env_value(
 
 
 def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
-    """装载一次运行所需的全部配置。缺关键项就抛 ConfigError。"""
-    settings = read_settings_file(settings_path)
+    """装载一次运行所需的全部配置。缺关键项就抛 ConfigError。
+
+    配置来源按优先级合并（低 → 高）：
+
+        ~/.claude/settings.json        ← 兼容 Claude Code（此前缺失）
+        <MINICODE_HOME>/mcp.json
+        <MINICODE_HOME>/settings.json
+
+    见 `load_effective_settings()`。
+    """
+    settings = load_effective_settings(settings_path)
 
     def value(key: str) -> str:
         return resolve_env_value(key, settings)
@@ -376,6 +418,34 @@ def load_mcp_servers(
         merged.update(from_settings)
 
     return merged
+
+
+def load_effective_settings(
+    settings_path: Path | None = None,
+    claude_path: Path | None = None,
+) -> dict[str, Any]:
+    """按优先级合并全部配置来源，对应原版 `config.ts:173-188`。
+
+    优先级（低 → 高）：
+
+        ~/.claude/settings.json      兼容 Claude Code
+        <MINICODE_HOME>/mcp.json     用户级 MCP
+        <MINICODE_HOME>/settings.json  本项目的主配置
+
+    原版把「项目级 `.mcp.json`」也并进这里（`PROJECT_MCP_PATH`），但本项目
+    的 `load_mcp_servers(cwd)` 已经按 cwd 处理了项目级来源，重复合并会让
+    「谁胜」取决于调用顺序。因此这里只管**不依赖 cwd** 的三处，
+    项目级仍由 `load_mcp_servers` 负责。
+
+    `claude_path` 只为测试注入而存在——它不该跟随 `MINICODE_HOME`，
+    见 `claude_settings_path()`。
+    """
+    claude = read_settings_file(claude_path or claude_settings_path())
+    global_mcp = read_mcp_config_file(minicode_home() / "mcp.json")
+    own = read_settings_file(settings_path)
+
+    merged = merge_settings(claude, {"mcpServers": global_mcp})
+    return merge_settings(merged, own)
 
 
 def try_load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig | None:

@@ -123,11 +123,16 @@ def render_banner(
     tool_count: int = 0,
     readonly_tool_count: int = 0,
     skill_count: int = 0,
+    mcp_summary: str = "",
     width: int | None = None,
 ) -> str:
     """启动横幅：圆角框 + 关键信息。
 
     只在会话开始时打印一次，之后不再重复——行模式的历史由终端滚动缓冲负责。
+
+    `mcp_summary` 由 `mcp.status.summarize_mcp_servers(...).line()` 产生。
+    原版把 MCP 计数放在横幅的徽章行里（`tui/chrome.ts:286-296`），本实现放在
+    键值行里——行模式没有徽章，但信息量一致。
     """
     limit = width or output_width()
     inner = max(20, limit - 2)
@@ -144,6 +149,8 @@ def render_banner(
         rows.append(("工具", detail))
     if skill_count:
         rows.append(("技能", f"{skill_count} 个"))
+    if mcp_summary:
+        rows.append(("MCP", mcp_summary))
 
     # 行宽 = 边框 2 + 空格 2 + 标签宽度 + 内容
     label_width = max(string_display_width(label) for label, _ in rows)
@@ -343,17 +350,38 @@ def render_help(commands: list[tuple[str, str]], width: int | None = None) -> st
     return "\n".join(lines)
 
 
-def render_key_value(rows: list[tuple[str, str]], width: int | None = None) -> str:
-    """对齐的键值列表（给 /status、/plan 之类复用）。"""
+def render_key_value(
+    rows: list[tuple[str, str]], width: int | None = None, *, wrap_values: bool = False
+) -> str:
+    """对齐的键值列表（给 /status、/plan、/config-paths 之类复用）。
+
+    `wrap_values=False`（默认）把过长的值**截断**——适合 `/status` 那种
+    「值是一句摘要」的场景，截断后仍能看懂。
+
+    `wrap_values=True` 改为**折行**。给路径这类值用：`/config-paths` 的全部
+    意义就是让用户看到完整路径去复制，截断成 `C:\\Users\\...\\se...` 会让这条
+    命令彻底没用。折行的代价是占更多屏幕，但那是值得的。
+    """
     limit = width or output_width()
     if not rows:
         return ""
     key_width = max(string_display_width(key) for key, _ in rows)
+    # 每行前缀：两空格 + 键 + 补齐 + 两空格
+    prefix_width = 2 + key_width + 2
     lines: list[str] = []
     for key, value in rows:
         pad = " " * (key_width - string_display_width(key))
-        line = f"  {paint(key, COLOR_HINT)}{pad}  {value}"
-        lines.append(truncate_plain(line, limit))
+        head = f"  {paint(key, COLOR_HINT)}{pad}  "
+        if not wrap_values:
+            lines.append(truncate_plain(head + value, limit))
+            continue
+        available = max(10, limit - prefix_width)
+        pieces = wrap_plain(value, available) or [""]
+        lines.append(head + pieces[0])
+        # 续行缩进到与首行值对齐，读起来才知道它属于同一个键。
+        continuation = " " * prefix_width
+        for piece in pieces[1:]:
+            lines.append(continuation + piece)
     return "\n".join(lines)
 
 

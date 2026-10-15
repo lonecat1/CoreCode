@@ -42,6 +42,9 @@ TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
 FILE_REVIEW = os.path.join(REPO, "src", "minicode", "file_review.py")
 SHORTCUTS = os.path.join(REPO, "src", "minicode", "local_tool_shortcuts.py")
 GREP_FILES = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
+MCP_STATUS = os.path.join(REPO, "src", "minicode", "mcp", "status.py")
+CLI_COMMANDS = os.path.join(REPO, "src", "minicode", "cli_commands.py")
+PERMISSIONS = os.path.join(REPO, "src", "minicode", "permissions.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -700,6 +703,81 @@ MUTATIONS = [
         "            name for name in subdirectories if name not in SKIP_DIRECTORIES\n"
         "        ]",
         "        pass",
+    ),
+    (
+        "配置: 不再合并 Claude 兼容层（迁移用户配置全部失效）",
+        CONFIG,
+        "    merged = merge_settings(claude, {\"mcpServers\": global_mcp})",
+        "    merged = merge_settings({}, {\"mcpServers\": global_mcp})",
+    ),
+    (
+        "配置: Claude 路径跟随 MINICODE_HOME（自我引用 / 破坏隔离）",
+        CONFIG,
+        '    return Path.home() / ".claude" / "settings.json"\n\n\n#: 导入期快照',
+        '    return minicode_home() / ".claude" / "settings.json"\n\n\n#: 导入期快照',
+    ),
+    (
+        "配置: 读设置回退到导入期快照（MINICODE_HOME 变化后读错文件）",
+        CONFIG,
+        "    target = path or settings_path()\n    try:\n        raw = target.read_text(encoding=\"utf-8\")",
+        "    target = path or SETTINGS_PATH\n    try:\n        raw = target.read_text(encoding=\"utf-8\")",
+    ),
+    (
+        "配置: 写设置回退到导入期快照（/model 写到错误位置）",
+        CONFIG,
+        "    target = path or settings_path()\n    existing = read_settings_file(target)",
+        "    target = path or SETTINGS_PATH\n    existing = read_settings_file(target)",
+    ),
+    (
+        "权限: 存储读写回退到导入期快照（授权规则静默失效）",
+        PERMISSIONS,
+        "    target = path or permissions_path()\n    try:\n        raw = target.read_text(encoding=\"utf-8\")",
+        "    target = path or PERMISSIONS_PATH\n    try:\n        raw = target.read_text(encoding=\"utf-8\")",
+    ),
+    (
+        "MCP: 未知状态被算作 connected（数字看起来正常但是错的）",
+        MCP_STATUS,
+        "        if status == STATUS_CONNECTED:\n            summary.connected += 1",
+        "        if status == STATUS_CONNECTED or status not in (\n"
+        "            STATUS_CONNECTING,\n            STATUS_ERROR,\n        ):\n"
+        "            summary.connected += 1",
+    ),
+    (
+        "MCP: 负的工具数不再钳零（总数被拉小）",
+        MCP_STATUS,
+        "            summary.tool_count += max(0, tool_count)",
+        "            summary.tool_count += tool_count",
+    ),
+    (
+        "MCP: 状态行不显示等待与失败（用户看不出有问题）",
+        MCP_STATUS,
+        "        if self.connecting:\n            text += f\" · {self.connecting} 等待\"\n"
+        "        if self.error:\n            text += f\" · {self.error} 失败\"",
+        "        if False:\n            text += \"\"\n        if False:\n            text += \"\"",
+    ),
+    (
+        "MCP: 没有服务器时仍显示 MCP 行（凭空多一行）",
+        MCP_STATUS,
+        "        if not self.total:\n            return \"\"",
+        "        if False:\n            return \"\"",
+    ),
+    (
+        "配置路径: 不显示 Claude 兼容回退（用户不知道配置从哪来）",
+        CLI_COMMANDS,
+        '        ("compat fallback", str(claude_settings_path())),\n',
+        "",
+    ),
+    (
+        "UI: wrap_values 被忽略（长路径被截断，命令失去意义）",
+        UI_RENDER,
+        "        if not wrap_values:\n            lines.append(truncate_plain(head + value, limit))\n            continue",
+        "        if True:\n            lines.append(truncate_plain(head + value, limit))\n            continue",
+    ),
+    (
+        "UI: 横幅不显示 MCP 行",
+        UI_RENDER,
+        '    if mcp_summary:\n        rows.append(("MCP", mcp_summary))',
+        "    if False:\n        rows.append((\"MCP\", mcp_summary))",
     ),
 ]
 

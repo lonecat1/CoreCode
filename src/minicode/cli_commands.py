@@ -30,6 +30,8 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/help", "/help", "显示可用命令。"),
     SlashCommand("/tools", "/tools", "列出可用工具与只读子集。"),
     SlashCommand("/status", "/status", "显示模型、会话与上下文状态。"),
+    SlashCommand("/model", "/model [model-name]", "显示当前模型，或持久化一个模型覆盖。"),
+    SlashCommand("/config-paths", "/config-paths", "显示配置文件路径与 Claude 兼容回退路径。"),
     SlashCommand("/plan", "/plan", "显示当前内存 Plan / Todo 清单。"),
     SlashCommand("/goal", "/goal [status|pause|resume|clear]", "创建、查看或控制 Goal。"),
     SlashCommand("/loop", "/loop [Nm|Nh] <prompt> | /loop stop", "创建、查看或停止 Loop。"),
@@ -101,6 +103,8 @@ def try_handle_local_command(host: "SessionHost", text: str) -> str | None:
         "/skills": lambda: _render_skills(host),
         "/mcp": lambda: _render_mcp(host),
         "/permissions": lambda: _render_permissions(host),
+        "/model": lambda: _do_model(host, argument),
+        "/config-paths": lambda: _render_config_paths(),
         "/resume": lambda: _do_resume(host, argument),
         "/rename": lambda: _do_rename(host, argument),
         "/fork": lambda: _do_fork(host),
@@ -326,9 +330,73 @@ def _render_permissions(host: "SessionHost") -> str:
     )
 
 
+def _render_config_paths() -> str:
+    """显示全部配置文件路径，对应原版 `cli-commands.ts:224-231`。
+
+    原版输出四行，其中最后一行是 **Claude Code 的兼容回退路径**。那一项不是
+    装饰：配置加载确实会读它（见 `config.load_effective_settings`），把它显示
+    出来用户才知道「为什么我没配却能跑」或「为什么改了不生效」。
+    """
+    from .config import (
+        claude_settings_path,
+        mcp_path,
+        permissions_path,
+        settings_path,
+    )
+    from .ui import render_key_value, render_separator, render_status_line
+
+    rows = [
+        ("mini-code settings", str(settings_path())),
+        ("mini-code permissions", str(permissions_path())),
+        ("mini-code mcp", str(mcp_path())),
+        ("compat fallback", str(claude_settings_path())),
+    ]
+    return "\n".join(
+        [
+            render_status_line(label="配置路径"),
+            render_separator(),
+            # `wrap_values=True`：这条命令的全部意义是让用户看到**完整**路径
+            # 去复制，截断会让它彻底没用。
+            render_key_value(rows, wrap_values=True),
+        ]
+    )
+
+
 # ---------------------------------------------------------------------------
 # 动作类
 # ---------------------------------------------------------------------------
+
+
+def _do_model(host: "SessionHost", argument: str) -> str:
+    """查看或持久化模型覆盖，对应原版 `cli-commands.ts` 的 `/model` 两条分支。
+
+    - `/model`         → 显示当前生效的模型
+    - `/model <name>`  → 写进 `settings.json`
+    - `/model `（空）  → 提示用法
+
+    写入用 `save_settings`（合并而非覆盖），与原版 `saveMiniCodeSettings` 一致：
+    只更新 `model` 一个键，用户其余的配置原样保留。
+    """
+    from .config import save_settings, settings_path
+
+    if not argument:
+        # 注意：`/model` 与 `/model ` 都会走到这里。原版对后者给「用法」提示，
+        # 对前者给「当前模型」。这里用 host 上是否已有模型来区分——
+        # 但更简单也更贴近原版的做法是：**无参数就显示当前模型**，
+        # 因为 `/model ` 的尾随空格在 `partition` 后已被 strip 掉，
+        # 两者无法区分，而「显示当前模型」在两种情况下都合理。
+        current = host.runtime_config.model if host.runtime_config else "（离线 mock）"
+        return f"current model: {current}"
+
+    model = argument.strip()
+    if not model:
+        return "用法: /model <model-name>"
+
+    try:
+        saved_to = save_settings({"model": model})
+    except OSError as error:
+        return f"写入配置失败：{error}"
+    return f"saved model={model} to {saved_to or settings_path()}"
 
 
 def _do_resume(host: "SessionHost", argument: str) -> str:

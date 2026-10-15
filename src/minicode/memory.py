@@ -27,7 +27,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import MINICODE_HOME
+from .config import minicode_home
 
 #: 单文件字符上限。
 MAX_PER_FILE_CHARS = 8_000
@@ -132,8 +132,13 @@ def _rule_files(directory: Path) -> list[Path]:
 
 
 def discover_memory_files(cwd: str, home: Path | None = None) -> list[MemoryFile]:
-    """按「全局 → 全局规则 → 根目录 → cwd」的顺序收集。"""
-    base = home or Path(MINICODE_HOME)
+    """按「全局 → 全局规则 → 根目录 → cwd」的顺序收集。
+
+    `home` 缺省走**动态**访问器 `minicode_home()`，不用模块级 `MINICODE_HOME`
+    （导入期快照）——否则 `MINICODE_HOME` 变化后会读错目录，而症状是
+    「我的全局指令突然不生效了」，很难联想到是路径快照的问题。
+    """
+    base = home or minicode_home()
     found: list[MemoryFile] = []
 
     # 1. 全局：第一个非空的即停止（不叠加，避免两份全局规则打架）。

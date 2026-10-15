@@ -31,8 +31,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .abort import throw_if_aborted
-from .config import MINICODE_HOME
+from .config import MINICODE_HOME, permissions_path
 
+#: 导入期快照，**仅供展示**（如 `/permissions` 显示路径）。
+#: 读写一律走 `permissions_path()`——见 `read_permission_store` 的说明。
 PERMISSIONS_PATH = MINICODE_HOME / "permissions.json"
 
 # ---------------------------------------------------------------------------
@@ -168,7 +170,10 @@ class PermissionStore:
 
 
 def read_permission_store(path: Any | None = None) -> PermissionStore:
-    target = path or PERMISSIONS_PATH
+    # 默认走**动态**访问器，不用模块级 `PERMISSIONS_PATH`（导入期快照）。
+    # 快照在 `MINICODE_HOME` 变化后会指向错误位置，导致「用户的授权规则
+    # 突然全部失效」——而程序不会报错，只是每次都问一遍。
+    target = path or permissions_path()
     try:
         raw = target.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -182,7 +187,7 @@ def read_permission_store(path: Any | None = None) -> PermissionStore:
 
 
 def write_permission_store(store: PermissionStore, path: Any | None = None) -> None:
-    target = path or PERMISSIONS_PATH
+    target = path or permissions_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         json.dumps(store.to_json(), indent=2, ensure_ascii=False) + "\n",
