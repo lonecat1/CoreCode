@@ -437,6 +437,45 @@ class LineEndingFidelityTests(EditToolTestCase):
         self.assertTrue(result.ok, result.output)
         self.assertEqual(self._read_bytes("a.txt"), b"line1\r\nL2\r\n")
 
+    def test_load_existing_file_preserves_crlf(self) -> None:
+        """**读取侧也要保真。**
+
+        上面几条只验证了「写出的字节正确」，那不足以覆盖读取侧的归一化：
+        写出去的内容来自 `edit.py` 的读取，而 `load_existing_file` 的归一化
+        只影响「内容是否相同」的判定与 diff——写入结果照样正确。变异检查
+        因此放过了它。
+
+        这条直接断言读取结果，从读取侧钉住 `newline=""`。
+        """
+        from minicode.file_review import load_existing_file
+
+        self._write_bytes("a.txt", b"one\r\ntwo\r\n")
+        self.assertEqual(
+            load_existing_file(os.path.join(self.root, "a.txt")), "one\r\ntwo\r\n"
+        )
+
+    def test_identical_crlf_content_reports_no_changes(self) -> None:
+        """**读取侧归一化的可观测后果**：相同内容被误判为「有变化」。
+
+        归一化后 previous（LF）≠ next（CRLF），于是工具会**凭空写盘**并报告
+        「已应用变更」，而正确行为是识别出无需修改。
+        """
+        self._write_bytes("a.txt", b"same\r\n")
+        result = modify_file_tool.run(
+            {"path": "a.txt", "content": "same\r\n"}, self.context
+        )
+        self.assertTrue(result.ok, result.output)
+        self.assertIn("无需修改", result.output)
+        self.assertEqual(self._read_bytes("a.txt"), b"same\r\n")
+
+    def test_identical_lf_content_reports_no_changes(self) -> None:
+        self._write_bytes("a.txt", b"same\n")
+        result = modify_file_tool.run(
+            {"path": "a.txt", "content": "same\n"}, self.context
+        )
+        self.assertIn("无需修改", result.output)
+        self.assertEqual(self._read_bytes("a.txt"), b"same\n")
+
 
 # ---------------------------------------------------------------------------
 # 校验与 schema
