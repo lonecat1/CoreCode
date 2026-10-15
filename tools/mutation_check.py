@@ -50,6 +50,7 @@ HISTORY = os.path.join(REPO, "src", "minicode", "history.py")
 WEB_UTILS = os.path.join(REPO, "src", "minicode", "utils", "web.py")
 WEB_TOOLS = os.path.join(REPO, "src", "minicode", "tools", "web.py")
 MANAGE_CLI = os.path.join(REPO, "src", "minicode", "manage_cli.py")
+INSTALL = os.path.join(REPO, "src", "minicode", "install.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -1152,6 +1153,78 @@ MUTATIONS = [
         CLI,
         '        if item in _OWN_VALUE_OPTIONS:\n            index += 2  # 连同它的值一起跳过\n            continue',
         "        if False:\n            index += 2\n            continue",
+    ),
+    (
+        "安装: PATH 判断写死冒号（Windows 上永远判定不在 PATH）",
+        INSTALL,
+        '    entries = (os.environ.get("PATH") or "").split(os.pathsep)',
+        '    entries = (os.environ.get("PATH") or "").split(":")',
+    ),
+    (
+        "安装: 必填项接受空值（写出空 BASE_URL）",
+        INSTALL,
+        "        value = answer or default\n        if value:\n            return value",
+        "        value = answer or default\n        return value",
+    ),
+    (
+        "安装: EOF 时不回退默认值（管道输入拿到空串）",
+        INSTALL,
+        "        if incoming is None:\n            # EOF：不再重问（否则管道输入会死循环）。\n            return default",
+        '        if incoming is None:\n            return ""',
+    ),
+    (
+        "安装: 模型名只写顶层（env.ANTHROPIC_MODEL 缺失）",
+        INSTALL,
+        '                "ANTHROPIC_MODEL": model,',
+        '                "ANTHROPIC_MODEL": "",',
+    ),
+    (
+        "安装: 留空时清掉已保存的 token（用户被迫每次重填）",
+        INSTALL,
+        "    token_input = (incoming or \"\").strip()\n    auth_token = token_input or saved_token",
+        "    token_input = (incoming or \"\").strip()\n    auth_token = token_input",
+    ),
+    (
+        "安装: token 为空时不报错（写出无法使用的配置）",
+        INSTALL,
+        "    if not auth_token:\n        raise ValueError(",
+        "    if False:\n        raise ValueError(",
+    ),
+    (
+        "安装: PATH 提示不按平台区分（Windows 用户拿到 bash 说明）",
+        INSTALL,
+        '    if platform.system() == "Windows":\n        return (\n'
+        '            "可以把下面这行加入 PowerShell 的 $PROFILE，或"\n'
+        '            "在「系统属性 → 环境变量」里追加：\\n"\n'
+        "            f'$env:Path = \"{bin_dir};\" + $env:Path\\n'\n        )",
+        '    if False:\n        return (\n'
+        '            "可以把下面这行加入 PowerShell 的 $PROFILE，或"\n'
+        '            "在「系统属性 → 环境变量」里追加：\\n"\n'
+        "            f'$env:Path = \"{bin_dir};\" + $env:Path\\n'\n        )",
+    ),
+    (
+        "安装: 启动器不指向模块入口（指向不存在的文件）",
+        INSTALL,
+        '    posix = "#!/usr/bin/env sh\\nset -eu\\n" + f\'exec "{sys.executable}" -m minicode.cli "$@"\\n\'',
+        '    posix = "#!/usr/bin/env sh\\nset -eu\\n" + f\'exec "{sys.executable}" "minicode.py" "$@"\\n\'',
+    ),
+    (
+        "安装: .cmd 用 LF（某些 cmd 版本解析异常）",
+        INSTALL,
+        '    cmd = f"@echo off\\r\\n{entry} %*\\r\\n"',
+        '    cmd = f"@echo off\\n{entry} %*\\n"',
+    ),
+    (
+        "安装: 启动器写入非 ASCII 注释（PowerShell 5.1 乱码）",
+        INSTALL,
+        '    ps1 = f"# MiniCode launcher (PowerShell)\\n& {entry} @args\\n"',
+        '    ps1 = f"# MiniCode 启动器\\n& {entry} @args\\n"',
+    ),
+    (
+        "安装: 不创建启动器目录",
+        INSTALL,
+        "        target_bin.mkdir(parents=True, exist_ok=True)",
+        "        pass",
     ),
 ]
 

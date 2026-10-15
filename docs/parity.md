@@ -186,8 +186,8 @@ Python 版连工具都没有，自然做不到。
 | `mcp-status.ts` | 33 | `mcp/status.py` | ✅ **已补齐** |
 | `init.ts` | 308 | `repo_init.py` | ✅ **已补齐** |
 | `history.ts` | 62 | `history.py` | ✅ **已补齐**（JSONL 输入历史；见下） |
-| `manage-cli.ts` | 260 | `skills.py` 覆盖了技能安装部分 | ⚠️ 需逐条核对 |
-| `install.ts` | 111 | 同上 | ⚠️ 需逐条核对 |
+| `manage-cli.ts` | 260 | `manage_cli.py` | ✅ **已补齐**（`minicode mcp` / `minicode skills`） |
+| `install.ts` | 126 | `install.py` | ✅ **已补齐**（`python -m minicode.install`；见 D39） |
 | `utils/web.ts` | 506 | `utils/web.py` | ✅ **已补齐**（见下） |
 | `mock-model.ts` | 161 | `adapters/mock.py`(91) | 🔶 **有意差异**（见下） |
 | `utils/model-context.ts` | 144 | `context/model_context.py`(101) | ✅ **已核对一致**（见下） |
