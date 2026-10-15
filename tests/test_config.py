@@ -136,6 +136,47 @@ class PrecedenceTests(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_runtime_config(path)
 
+    def test_missing_credentials_message_says_where_to_set_them(self) -> None:
+        """**报错必须说明「去哪设置」。**
+
+        只说「未配置凭据」时，用户知道缺什么但不知道该往哪写。原版的信息里
+        带了位置，这里跟上。
+
+        注意设置文件路径来自**动态**访问器：`load_runtime_config` 的参数名
+        `settings_path` 会遮蔽同名的模块级函数，因此内部用的是 `_settings_path`
+        别名。这条顺带钉住那个别名没被漏掉。
+        """
+        path = write_settings({"model": "m"})
+        with patch.dict(
+            os.environ,
+            _env_without("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+            clear=True,
+        ):
+            with self.assertRaises(ConfigError) as caught:
+                load_runtime_config(path)
+        message = str(caught.exception)
+        self.assertIn("settings.json", message)
+        self.assertIn("ANTHROPIC_AUTH_TOKEN", message)
+        self.assertIn("ANTHROPIC_API_KEY", message)
+        self.assertIn("env", message)
+
+    def test_unknown_credential_names_are_not_accepted(self) -> None:
+        """**只认那两个名字。**
+
+        别的常见变量（例如 `DASHSCOPE_API_KEY`）在原版与本实现里都不被识别。
+        真实踩过：settings.json 里放着 `DASHSCOPE_API_KEY`，两边都忽略它——
+        而程序报「未配置凭据」，用户对照自己的配置会一头雾水。
+        这条钉住「不识别」这个事实，避免有人「顺手」加上别名却没同步文档。
+        """
+        path = write_settings({"model": "m", "env": {"DASHSCOPE_API_KEY": "sk-other"}})
+        with patch.dict(
+            os.environ,
+            _env_without("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+            clear=True,
+        ):
+            with self.assertRaises(ConfigError):
+                load_runtime_config(path)
+
     def test_missing_model_raises(self) -> None:
         path = write_settings({"env": {"ANTHROPIC_API_KEY": "sk-x"}})
         with patch.dict(

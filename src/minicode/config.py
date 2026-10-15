@@ -64,6 +64,14 @@ def settings_path() -> Path:
     return minicode_home() / "settings.json"
 
 
+#: `settings_path()` 的别名，供**参数同名**的函数内部使用。
+#:
+#: `load_runtime_config(settings_path=...)` 的参数名与这个函数同名，函数体内
+#: 直接写 `settings_path()` 会得到 `'WindowsPath' object is not callable`
+#: ——参数遮蔽了模块级函数。这个别名让那种地方仍能拿到动态路径。
+_settings_path = settings_path
+
+
 def permissions_path() -> Path:
     return minicode_home() / "permissions.json"
 
@@ -340,8 +348,17 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
         api_key = value("ANTHROPIC_API_KEY") or None
 
     if not auth_token and not api_key:
+        # **必须说明「去哪设置」。** 只说「未配置凭据」时，用户知道缺什么但
+        # 不知道该往哪写——原版的信息里带了位置，这里跟上。
+        #
+        # 注意：只认这两个名字。别的常见变量（例如 `DASHSCOPE_API_KEY`）在原版
+        # 与本实现里都**不被识别**，所以这里不列举它们——列举反而会让人以为
+        # 写上就行。（真实踩过：settings.json 里放着 `DASHSCOPE_API_KEY`，
+        # 两边都忽略它。）
         raise ConfigError(
-            "未配置凭据。请设置 ANTHROPIC_AUTH_TOKEN（或 ANTHROPIC_API_KEY）。"
+            "未配置凭据。请在 "
+            f"{_settings_path()} 的 env 里、或进程环境变量中"
+            "设置 ANTHROPIC_AUTH_TOKEN（或 ANTHROPIC_API_KEY）。"
         )
 
     raw_max = value("MINICODE_MAX_OUTPUT_TOKENS") or settings.get("maxOutputTokens")

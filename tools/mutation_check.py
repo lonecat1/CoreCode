@@ -1226,6 +1226,20 @@ MUTATIONS = [
         "        target_bin.mkdir(parents=True, exist_ok=True)",
         "        pass",
     ),
+    (
+        "配置: 凭据报错不再指明设置位置（用户不知道去哪加）",
+        CONFIG,
+        '            "未配置凭据。请在 "\n'
+        '            f"{_settings_path()} 的 env 里、或进程环境变量中"\n'
+        '            "设置 ANTHROPIC_AUTH_TOKEN（或 ANTHROPIC_API_KEY）。"',
+        '            "未配置凭据。"',
+    ),
+    (
+        "配置: 未配置凭据时不再报错（带着空凭据继续跑）",
+        CONFIG,
+        "    if not auth_token and not api_key:",
+        "    if False:",
+    ),
 ]
 
 
