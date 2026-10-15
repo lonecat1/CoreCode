@@ -7,6 +7,22 @@
 > 3. 对每个 TS 文件，在 Python 版找出对应实现；
 > 4. 对工具与命令，直接读**运行时注册表**与**命令表**，而不是看有没有同名文件。
 
+## 现状（收尾时）
+
+| 维度 | 状态 |
+|---|---|
+| 工具层（默认注册表） | **13 / 13** ✅ |
+| 工具层（含 runtime 追加的 goal 工具） | **15 / 15** ✅ |
+| 命令层 | **29 / 29** ✅ |
+| `src/` 各模块 | **全部覆盖**，或记为有意差异 ✅ |
+| 完全缺失（❌） | **0** |
+| 能力缩水（⚠️） | **0** |
+| 有意差异（🔶） | 38 条，逐条记在 `docs/divergences.md` |
+
+**没有「待核对」的中间态**——每一项要么核对出结论，要么核对出缺口；
+缺口已全部补齐。核对的副产品是修掉了 6 个既有缺陷（见「顺带修掉的既有缺陷」），
+它们的共同特征是**静默**：不报错，只是行为不对。
+
 ## 为什么要有这份文档
 
 早先 `README.md` 用「✅ 完成（文件读写 · grep · web · ask_user）」这样的写法
@@ -256,7 +272,9 @@ Python 用元组。
 
 🔶 **有意差异**：TUI 的上下键导航随 TUI 一并移除（用户明确放弃全屏 TUI）。
 
-### 顺带修掉的既有缺陷（不在缺口清单里，是核对时发现的）| 缺陷 | 症状 |
+### 顺带修掉的既有缺陷（不在缺口清单里，是核对时发现的）
+
+| 缺陷 | 症状 |
 |---|---|
 | `grep_files` 的 `path` 指向**文件**时永远没有结果 | 回退扫描用 `os.walk(target)`，而它对文件路径静默产出空序列。于是 `/grep <pattern>::<file>`（文档化用法）永远返回 `(no matches)`，看起来像「确实没有匹配」而不是「我根本没搜」。`grep_files` 此前**没有任何专属测试**。 |
 | **用导入期快照做 I/O**（四处） | `config.SETTINGS_PATH` 这类常量在**导入期**求值。`MINICODE_HOME` 在导入后变化时它们指向错误位置。受影响：`read_settings_file` / `save_settings` / `read_permission_store` / `write_permission_store` / `discover_memory_files`。症状全是**静默的**：`/model` 写到别处、授权规则全部失效、全局指令不生效。README 早就写了这条规则，但只有展示用途的地方遵守了。 |
@@ -277,19 +295,22 @@ Python 用元组。
 
 ## D · 修复顺序（按用户可见影响排序）
 
-| # | 项目 | 理由 |
-|---|---|---|
-| 1 | `run_command` | 没有它 agent 不能执行任何动作；也是「切换目录」的前提 |
-| 2 | `background-tasks.ts` | 与 `run_command` 的后台执行配套 |
-| 3 | `edit_file` | 改代码的主力工具（搜索替换） |
-| 4 | `patch_file` | 批量替换 |
-| 5 | `modify_file` | 整文件改写（与 `write_file` 差异需对照原版确认） |
-| 6 | `local-tool-shortcuts.ts` + 8 条命令 | 命令层对等 |
-| 7 | `/model` `/config-paths` `/init` | 命令层补全 |
-| 8 | `history.ts` | REPL 输入历史（现在是死代码） |
-| 9 | `mcp-status.ts` | MCP 汇总 |
-| 10 | `utils/web.ts` 补全 | 搜狗源、域名过滤、重试 |
-| 11 | `mock-model.ts` / `model-context.ts` 核对 | 收尾 |
+**全部完成。** 下表保留下来是为了记录**为什么这样排序**——它同时是一份
+「先修什么最值」的判断记录。
+
+| # | 项目 | 理由 | 状态 |
+|---|---|---|---|
+| 1 | `run_command` | 没有它 agent 不能执行任何动作；也是「切换目录」的前提 | ✅ |
+| 2 | `background-tasks.ts` | 与 `run_command` 的后台执行配套 | ✅ |
+| 3 | `edit_file` | 改代码的主力工具（搜索替换） | ✅ |
+| 4 | `patch_file` | 批量替换 | ✅ |
+| 5 | `modify_file` | 整文件改写（与 `write_file` 差异需对照原版确认） | ✅ |
+| 6 | `local-tool-shortcuts.ts` + 8 条命令 | 命令层对等 | ✅ |
+| 7 | `/model` `/config-paths` `/init` | 命令层补全 | ✅ |
+| 8 | `history.ts` | REPL 输入历史（曾是死代码） | ✅ |
+| 9 | `mcp-status.ts` | MCP 汇总 | ✅ |
+| 10 | `utils/web.ts` 补全 | 搜狗源、域名过滤、重试 | ✅ |
+| 11 | `mock-model.ts` / `model-context.ts` 核对 | 收尾 | ✅ 已核对 |
 
 ---
 

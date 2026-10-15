@@ -280,6 +280,29 @@ class InstallFlowTests(InstallTestCase):
         for path in result["launchers"]:
             self.assertTrue(Path(path).exists(), path)
 
+    def test_creates_the_bin_directory_when_missing(self) -> None:
+        """**目录不存在时必须自己建。**
+
+        这条容易漏测：`tempfile.mkdtemp()` 建出来的目录**已经存在**，于是
+        `mkdir` 从不被需要，把那一行删掉测试也照样过。而真实场景里
+        `~/bin` / `~/.local/bin` 常常**根本不存在**——缺了 `mkdir` 会直接
+        FileNotFoundError，安装器在最常见的路径上失败。
+        """
+        missing = self.bin_dir / "does" / "not" / "exist"
+        self.assertFalse(missing.exists())
+
+        stream = io.StringIO()
+        queue = ["m", "https://x", "t"]
+        result = install_local(
+            read_line=lambda: queue.pop(0) if queue else None,
+            stream=stream,
+            bin_dir=missing,
+            repo_root=Path(tempfile.gettempdir()),
+        )
+        self.assertTrue(missing.is_dir())
+        for path in result["launchers"]:
+            self.assertTrue(Path(path).exists(), path)
+
     def test_launcher_is_marked_executable(self) -> None:
         if platform.system() == "Windows":
             self.skipTest("Windows 不靠权限位")
