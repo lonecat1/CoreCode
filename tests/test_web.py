@@ -235,6 +235,18 @@ class FetchRetryTests(unittest.TestCase):
         delays = [call.args[0] for call in sleeper.call_args_list]
         self.assertEqual(delays, [BACKOFF_BASE_MS, BACKOFF_BASE_MS * 2])
 
+    def test_backoff_doubles_for_network_errors_too(self) -> None:
+        """**网络错误路径的退避也必须翻倍。**
+
+        状态码重试与网络错误重试是两段独立代码（`except` 块里一处、
+        `if` 判断后一处）。只测其中一条时，另一条的退避退化成固定间隔
+        不会被发现——变异的锚点恰好也容易只命中一处。
+        """
+        timeout = urllib.error.URLError(socket.timeout("slow"))
+        _, _, sleeper = self._call([timeout, timeout, _fake_response()])
+        delays = [call.args[0] for call in sleeper.call_args_list]
+        self.assertEqual(delays, [BACKOFF_BASE_MS, BACKOFF_BASE_MS * 2])
+
     def test_gives_up_after_max_retries_and_returns_last_response(self) -> None:
         """重试用尽后**返回最后一次响应**，而不是抛异常。
 

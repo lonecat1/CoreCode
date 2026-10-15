@@ -391,6 +391,82 @@ def read_mcp_config_file(path: Path) -> dict[str, Any]:
     return servers if isinstance(servers, dict) else {}
 
 
+def project_mcp_path(cwd: str) -> Path:
+    """项目级 MCP 配置。原版 `PROJECT_MCP_PATH` 是 `cwd/.mcp.json`。
+
+    用 `.mcp.json` 而不是 `.mini-code/mcp.json`：这是 MCP 生态的惯例文件名，
+    别的工具也认它。
+    """
+    return Path(cwd) / ".mcp.json"
+
+
+def get_mcp_config_path(scope: str, cwd: str | None = None) -> Path:
+    """按作用域取 MCP 配置文件路径。原版 `getMcpConfigPath`。"""
+    if scope == "project":
+        return project_mcp_path(cwd or os.getcwd())
+    return mcp_path()
+
+
+def load_scoped_mcp_servers(scope: str, cwd: str | None = None) -> dict[str, Any]:
+    """按作用域读 MCP 服务器。原版 `loadScopedMcpServers`。
+
+    刻意**不合并**另一个作用域：`mcp list` 要能如实显示「这个作用域里到底有什么」，
+    合并后用户无法判断某条是项目级还是用户级，也就没法正确地 `remove`。
+    """
+    return read_mcp_config_file(get_mcp_config_path(scope, cwd))
+
+
+def save_scoped_mcp_servers(
+    scope: str, servers: dict[str, Any], cwd: str | None = None
+) -> Path:
+    """按作用域写 MCP 服务器。返回写入的路径。
+
+    整体写成 `{"mcpServers": {...}}` 并保留 2 空格缩进——原版如此，
+    而且这是人也会直接编辑的文件，缩进影响可读性。
+    """
+    target = get_mcp_config_path(scope, cwd)
+    _write_json_pretty(target, {"mcpServers": servers})
+    return target
+
+
+def read_mcp_tokens_file(path: Path | None = None) -> dict[str, Any]:
+    """读 MCP 的 token 文件。缺失 → `{}`；损坏 → 抛错。
+
+    **与其他配置读取不同，这里损坏时抛错而不是返回空。**
+
+    理由是后果不对称：返回空会让 `login` 之后的 `logout` 静默地什么都没做，
+    用户以为 token 已删除而它还在；抛错则让人立刻知道文件坏了。
+    原版也是这个行为（只吞 ENOENT）。
+    """
+    target = path or mcp_tokens_path()
+    try:
+        raw = target.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        return {}
+    return parsed
+
+
+def save_mcp_tokens_file(tokens: dict[str, Any], path: Path | None = None) -> Path:
+    target = path or mcp_tokens_path()
+    _write_json_pretty(target, tokens)
+    return target
+
+
+def _write_json_pretty(target: Path, payload: Any) -> None:
+    """写 JSON：建父目录、2 空格缩进、结尾换行。
+
+    结尾换行是刻意的——没有它，`git diff` 会显示 `\\ No newline at end of file`，
+    而这个文件通常是要提交的项目配置。
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def load_mcp_servers(
     cwd: str | None = None, settings: dict[str, Any] | None = None
 ) -> dict[str, Any]:

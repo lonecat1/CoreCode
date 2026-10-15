@@ -49,6 +49,7 @@ REPO_INIT = os.path.join(REPO, "src", "minicode", "repo_init.py")
 HISTORY = os.path.join(REPO, "src", "minicode", "history.py")
 WEB_UTILS = os.path.join(REPO, "src", "minicode", "utils", "web.py")
 WEB_TOOLS = os.path.join(REPO, "src", "minicode", "tools", "web.py")
+MANAGE_CLI = os.path.join(REPO, "src", "minicode", "manage_cli.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -141,7 +142,12 @@ MUTATIONS = [
     (
         "子Agent: 关闭不再优先（收尾会覆盖 closed）",
         AGENTS_MANAGER,
+        # 锚点必须**唯一**：这行 `if record.status != STATUS_CLOSED:` 在成功路径
+        # 与异常路径各出现一次。只写这一行的话，`replace(..., 1)` 会命中第一次
+        # 出现的位置，而变异意图对其他路径未必成立。带上上方的注释即可唯一定位。
+        "                # 被关闭过的 worker 状态不再改写——否则 close_agent 会看到「已完成」。\n"
         "                if record.status != STATUS_CLOSED:",
+        "                # 被关闭过的 worker 状态不再改写——否则 close_agent 会看到「已完成」。\n"
         "                if True:",
     ),
     (
@@ -905,10 +911,24 @@ MUTATIONS = [
         "    if False:\n        return True",
     ),
     (
-        "web: 退避不翻倍（固定间隔，限流时雪上加霜）",
+        "web: 状态码重试的退避不翻倍（固定间隔，限流时雪上加霜）",
         WEB_UTILS,
-        "                _sleep_ms(BACKOFF_BASE_MS * (2**attempt))\n                continue",
-        "                _sleep_ms(BACKOFF_BASE_MS)\n                continue",
+        "        if is_retryable_status(snapshot.status) and attempt < max_retries:\n"
+        "            _sleep_ms(BACKOFF_BASE_MS * (2**attempt))\n"
+        "            continue",
+        "        if is_retryable_status(snapshot.status) and attempt < max_retries:\n"
+        "            _sleep_ms(BACKOFF_BASE_MS)\n"
+        "            continue",
+    ),
+    (
+        "web: 网络错误重试的退避不翻倍（固定间隔）",
+        WEB_UTILS,
+        "            if attempt < max_retries and is_retryable_network_error(error):\n"
+        "                _sleep_ms(BACKOFF_BASE_MS * (2**attempt))\n"
+        "                continue",
+        "            if attempt < max_retries and is_retryable_network_error(error):\n"
+        "                _sleep_ms(BACKOFF_BASE_MS)\n"
+        "                continue",
     ),
     (
         "web: HTTP 错误码不再当作响应（正文丢失）",
@@ -1023,6 +1043,116 @@ MUTATIONS = [
         '    lines: list[str] = [f"QUERY: {query}", ""]',
         "    lines: list[str] = []",
     ),
+    (
+        "管理: --project 被忽略（项目配置写进用户目录）",
+        MANAGE_CLI,
+        '    if "--project" in rest:\n        rest.remove("--project")\n        return "project", rest',
+        '    if "--project" in rest:\n        rest.remove("--project")\n        return "user", rest',
+    ),
+    (
+        "管理: take_option 不移除已消费的选项（未知参数检查失效）",
+        MANAGE_CLI,
+        "    value = args[index + 1]\n    del args[index : index + 2]\n    return value",
+        "    value = args[index + 1]\n    return value",
+    ),
+    (
+        "管理: 选项缺值时静默取到下一个参数",
+        MANAGE_CLI,
+        '    if index + 1 >= len(args) or args[index + 1] == "":\n'
+        '        raise ManageError(f"Missing value for {name}")\n'
+        "    value = args[index + 1]",
+        "    if index + 1 >= len(args):\n        raise ManageError(f\"Missing value for {name}\")\n"
+        "    value = args[index + 1]",
+    ),
+    (
+        "管理: KEY=VALUE 按所有等号分割（值被静默截断）",
+        MANAGE_CLI,
+        '        separator = entry.find("=")',
+        '        separator = entry.rfind("=")',
+    ),
+    (
+        "管理: -- 之后的内容仍被当作本命令的选项",
+        MANAGE_CLI,
+        '    if "--" in rest:\n        separator = rest.index("--")\n'
+        "        head = rest[:separator]\n        command_parts = rest[separator + 1 :]",
+        '    if "--" in rest:\n        separator = rest.index("--")\n'
+        "        head = rest[:separator]\n        command_parts = []",
+    ),
+    (
+        "管理: 同时给 --url 与本地命令不再报错（配置无法使用）",
+        MANAGE_CLI,
+        "    if has_url and has_command:\n"
+        '        raise ManageError("Cannot set both --url and local command. Choose one.")',
+        "    if False:\n"
+        '        raise ManageError("Cannot set both --url and local command. Choose one.")',
+    ),
+    (
+        "管理: 没给 --url 也没给命令不再报错（写出空配置）",
+        MANAGE_CLI,
+        '    if not has_url and not has_command:\n        raise ManageError("Missing MCP command or --url.")',
+        "    if False:\n"
+        '        raise ManageError("Missing MCP command or --url.")',
+    ),
+    (
+        "管理: streamable-http 不要求 --url（一定连不上）",
+        MANAGE_CLI,
+        '    if protocol == "streamable-http" and not has_url:',
+        "    if False:",
+    ),
+    (
+        "管理: 未知协议被接受",
+        MANAGE_CLI,
+        "    if protocol is not None and protocol not in VALID_PROTOCOLS:",
+        "    if False:",
+    ),
+    (
+        "管理: 删不存在的服务器被当成错误",
+        MANAGE_CLI,
+        '    if name not in existing:\n'
+        "        # 删一个不存在的**不算错误**：用户的意图（「让它不存在」）已经满足。\n"
+        '        print(f"MCP server {name} not found in {path}")\n        return True',
+        '    if name not in existing:\n        raise ManageError(f"MCP server {name} not found in {path}")',
+    ),
+    (
+        "管理: login 不校验 token 非空",
+        MANAGE_CLI,
+        '    if not token:\n        raise ManageError("Missing --token value.")',
+        "    if False:\n"
+        '        raise ManageError("Missing --token value.")',
+    ),
+    (
+        "管理: 写配置不用缩进（人无法阅读的配置文件）",
+        CONFIG,
+        '        json.dumps(payload, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8"',
+        '        json.dumps(payload, ensure_ascii=False) + "\\n", encoding="utf-8"',
+    ),
+    (
+        "管理: 非管理 argv 也返回 True（正常启动被吞掉）",
+        MANAGE_CLI,
+        '    if category not in ("mcp", "skills"):\n        return False',
+        '    if category not in ("mcp", "skills"):\n        return True',
+    ),
+    (
+        "管理: 子命令错误不再转成退出码（静默成功）",
+        MANAGE_CLI,
+        "    except ManageError as error:\n"
+        '        print(f"error: {error}", file=sys.stderr)\n'
+        "        raise SystemExit(1) from error",
+        "    except ManageError as error:\n"
+        '        print(f"error: {error}", file=sys.stderr)',
+    ),
+    (
+        "CLI: 管理子命令在 argparse 之后才拦截（-- 让 argparse 报错）",
+        CLI,
+        "    if maybe_handle_management_command(_cwd_from_argv(raw), _management_argv(raw)):\n        return 0",
+        "    if False:\n        return 0",
+    ),
+    (
+        "CLI: 不剥掉本程序自己的选项（--cwd 让子命令识别失败）",
+        CLI,
+        '        if item in _OWN_VALUE_OPTIONS:\n            index += 2  # 连同它的值一起跳过\n            continue',
+        "        if False:\n            index += 2\n            continue",
+    ),
 ]
 
 
@@ -1096,10 +1226,47 @@ def run_suite() -> tuple[bool, bool]:
     return proc.returncode == 0, False
 
 
+def audit_anchors() -> list[str]:
+    """检查每条变异的锚点是否**唯一**，返回有问题的描述。
+
+    ## 为什么需要这一步
+
+    `main()` 用 `str.replace(old, new, 1)` **只替换第一处**。如果锚点在文件里
+    出现多次，变异就会落在第一个匹配处——那可能不是这条变异想改的地方。
+
+    真实发生过：`web: 退避不翻倍` 的锚点是
+    `"                _sleep_ms(BACKOFF_BASE_MS * (2**attempt))\\n                continue"`
+    （16 空格缩进）。文件里有**两处**退避调用，一处 16 空格（网络错误路径）、
+    一处 12 空格（状态码路径）。锚点只命中前者，而当时的测试只覆盖后者——
+    变异因此存活，看起来像「测试没覆盖退避翻倍」，实际是**锚点指错了地方**。
+
+    有了这一步，这类问题在开跑前就报出来，而不是等 25 分钟后从存活列表里猜。
+    """
+    problems: list[str] = []
+    for label, path, old, _new in MUTATIONS:
+        try:
+            text = open(path, encoding="utf-8").read()
+        except OSError as error:
+            problems.append(f"{label} [无法读取 {path}: {error}]")
+            continue
+        count = text.count(old)
+        if count > 1:
+            problems.append(f"{label} [锚点出现 {count} 次，替换位置有歧义]")
+    return problems
+
+
 def main() -> int:
     healed = heal_leftovers()
     if healed:
         print(f"已从上次中断中恢复：{', '.join(healed)}")
+
+    # 先审锚点：歧义的锚点会让变异落错位置，得出的结论是错的。
+    ambiguous = audit_anchors()
+    if ambiguous:
+        print(f"变异锚点有歧义（{len(ambiguous)} 条），先修好再跑：")
+        for item in ambiguous:
+            print("  -", item)
+        return 1
 
     baseline, baseline_timeout = run_suite()
     print(f"baseline: {'PASS' if baseline else 'FAIL'}")

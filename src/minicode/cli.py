@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import threading
 from typing import Any
@@ -340,10 +341,85 @@ def _ensure_utf8_output() -> None:
             pass
 
 
+def _cwd_from_argv(raw: list[str]) -> str:
+    """从原始 argv 里取出 `--cwd`，供管理子命令使用。
+
+    **必须在 argparse 之前做**：管理子命令要在解析参数之前就被拦截，而它需要
+    cwd 来决定项目级配置写到哪里。
+
+    注意原版**没有** `--cwd`（它固定用 `process.cwd()`）。这是本项目加的便利
+    选项，因此这里要额外处理它的位置。
+    """
+    for index, item in enumerate(raw):
+        if item == "--cwd" and index + 1 < len(raw):
+            return raw[index + 1]
+        if item.startswith("--cwd="):
+            return item.split("=", 1)[1]
+    return os.getcwd()
+
+
+#: 本 CLI 自己的、需要**带值**的选项。管理子命令的 argv 里要剥掉它们。
+_OWN_VALUE_OPTIONS = ("--cwd", "--session", "--prompt", "--resume", "--fork")
+#: 本 CLI 自己的开关型选项。
+_OWN_FLAGS = frozenset({"--mock", "--yes", "--no-animation", "-p"})
+
+
+def _management_argv(raw: list[str]) -> list[str]:
+    """剥掉本 CLI 自己的选项，留下给管理子命令看的 argv。
+
+    ## 为什么要剥
+
+    `minicode --cwd /x mcp list` 里 `--cwd /x` 属于**主程序**，不属于
+    `mcp` 子命令。不剥掉的话，`maybe_handle_management_command` 看到的第一个
+    词是 `--cwd`，它既不认识、也不知道这是个选项，于是判定「不是我的命令」，
+    子命令就永远走不到。
+
+    原版同样要处理这件事：它在调用管理命令**之前**就把 `--resume` / `--fork`
+    从 argv 里 `splice` 掉了（`index.ts:40-62`）。
+
+    `--` 之后的内容一律保留：那是要启动的 MCP 命令，不能碰。
+    """
+    result: list[str] = []
+    index = 0
+    while index < len(raw):
+        item = raw[index]
+        # `--` 之后原样保留（属于 mcp add 的命令参数）。
+        if item == "--":
+            result.extend(raw[index:])
+            break
+        if item in _OWN_VALUE_OPTIONS:
+            index += 2  # 连同它的值一起跳过
+            continue
+        if item in _OWN_FLAGS:
+            index += 1
+            continue
+        if any(item.startswith(f"{name}=") for name in _OWN_VALUE_OPTIONS):
+            index += 1
+            continue
+        result.append(item)
+        index += 1
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     _ensure_utf8_output()
+    raw = list(argv if argv is not None else sys.argv[1:])
+
+    # **管理子命令要在 argparse 之前拦截。**
+    #
+    # `minicode mcp add fs -- npx -y ...` 里的 `--` 与 `-y` 对 argparse 来说是
+    # 未知参数，会直接报错退出。原版 `index.ts` 也是在启动 REPL 前先调
+    # `maybeHandleManagementCommand`，返回 true 就结束。
+    #
+    # 注意是拿 `_management_argv(raw)` 去判断，但**用原始 `raw` 去 parse_args**：
+    # 剥选项只服务于「识别这是不是管理子命令」，不能影响正常启动路径。
+    from .manage_cli import maybe_handle_management_command
+
+    if maybe_handle_management_command(_cwd_from_argv(raw), _management_argv(raw)):
+        return 0
+
     parser = build_parser()
-    args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+    args = parser.parse_args(raw)
 
     if getattr(args, "no_animation", False):
         set_animation_enabled(False)
