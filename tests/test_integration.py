@@ -120,11 +120,38 @@ class CliWiringTests(IntegrationTestCase):
         self.assertEqual(code, 0, "不该当成未知命令而失败")
         self.assertIn("收到指令", output, "应当交给模型处理")
 
-    def test_mock_tool_shortcut_reaches_the_model(self) -> None:
-        """`/ls` 这类快捷方式必须能走通——这是回归的直接护栏。"""
+    def test_tool_shortcut_runs_locally_without_the_model(self) -> None:
+        """`/ls` 由**本地快捷方式**直接执行，不经过模型。
+
+        这是原版的行为（`tty-app.ts:1385` 在把输入交给模型之前先解析快捷方式）。
+        判据看输出形状：`⏺ list_files` 是工具调用的记号；如果它交给了模型，
+        输出里会是「（mock 模型）收到指令：/ls」。
+        """
         code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/ls"])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 0, output)
         self.assertIn("list_files", output, "应当触发工具调用")
+        self.assertNotIn(
+            "收到指令", output, "快捷方式不该被送到模型——应当本地直接执行"
+        )
+
+    def test_shortcut_output_is_not_a_plain_command_echo(self) -> None:
+        """`/read` 也是快捷方式，应当直接读到文件内容。"""
+        code, output = self._run_cli(
+            ["--mock", "--cwd", WORKDIR, "-p", "/read pyproject.toml"]
+        )
+        self.assertEqual(code, 0, output)
+        self.assertIn("read_file", output)
+        self.assertIn("build-system", output, "应当真的读到了文件内容")
+
+    def test_shortcut_with_bad_format_falls_through_to_unknown_command(self) -> None:
+        """格式不完整的快捷方式应当报「未知命令」，而不是静默交给模型。
+
+        `/edit` 缺少分隔符 → 解析器返回 None → 落到未知命令提示。这样用户
+        立刻知道自己打错了，而不是拿到一段模型的猜测。
+        """
+        code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/edit"])
+        self.assertEqual(code, 1)
+        self.assertIn("未知命令", output)
 
     def test_goal_command_starts_a_goal(self) -> None:
         code, output = self._run_cli(

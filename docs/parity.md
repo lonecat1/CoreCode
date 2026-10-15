@@ -124,7 +124,7 @@ Python 版连工具都没有，自然做不到。
 
 ## B · 命令层（`cli-commands.ts`）
 
-TS 版 **29 条**用法，Python 版 **18 条**。
+TS 版 **29 条**用法，Python 版 **26 条**。
 
 | 命令 | Python | 状态 |
 |---|---|---|
@@ -133,20 +133,41 @@ TS 版 **29 条**用法，Python 版 **18 条**。
 | `/goal`（含 `status`/`pause`/`resume`/`clear`） | ✅ | ✅ |
 | `/loop`（含 `stop`） | ✅ | ✅ |
 | `/compact` `/collapse` `/snip` | ✅ | ✅ |
+| `/ls` | ✅ | ✅ **已补齐** |
+| `/grep` | ✅ | ✅ **已补齐** |
+| `/read` | ✅ | ✅ **已补齐** |
+| `/write` | ✅ | ✅ **已补齐** |
+| `/modify` | ✅ | ✅ **已补齐** |
+| `/edit` | ✅ | ✅ **已补齐** |
+| `/patch` | ✅ | ✅ **已补齐** |
+| `/cmd` | ✅ | ✅ **已补齐** |
 | **`/model`** | — | ❌ 查看/切换模型 |
 | **`/config-paths`** | — | ❌ 显示配置文件路径 |
 | **`/init`** | — | ❌ 初始化仓库 |
-| **`/ls`** | — | ❌ 本地快捷方式 |
-| **`/grep`** | — | ❌ 本地快捷方式 |
-| **`/read`** | — | ❌ 本地快捷方式 |
-| **`/write`** | — | ❌ 本地快捷方式 |
-| **`/modify`** | — | ❌ 本地快捷方式 |
-| **`/edit`** | — | ❌ 本地快捷方式 |
-| **`/patch`** | — | ❌ 本地快捷方式 |
-| **`/cmd`** | — | ❌ 本地快捷方式 |
 
-> 注意：mock 适配器里的 `/ls` `/read` `/write` **不是**这套机制。那只是
-> mock 用来跑测试的便利分支，真实模型走不到，也没有 `/grep` `/edit` `/cmd`。
+### 本地工具快捷方式的实现
+
+`local-tool-shortcuts.ts` → `src/minicode/local_tool_shortcuts.py`。
+
+| 原版行为 | 对应实现 |
+|---|---|
+| 8 个快捷方式的解析 | `parse_local_tool_shortcut` |
+| `/ls` 靠空格避免吃掉 `/lsof` | 同（`text == "/ls" or text.startswith("/ls ")`） |
+| `/cmd [cwd::]<command>` 的 cwd 在 `::` **之前** | 同 |
+| `/cmd` 用朴素空白切分（不解析引号） | 同 |
+| `/write` `/modify` 用 `indexOf('::')` 切一刀 | 同（内容里的 `::` 完整保留） |
+| `/patch` 奇数片段 → 拒绝 | 同 |
+| 只在 TUI 里接（`tty-app.ts:1385`） | 🔶 接在行模式 REPL 的分派链里（TUI 已移除），位置相同 |
+| `/edit` `/grep` 用 `split('::')` 解构，多余片段**被静默丢掉** | 🔶 改为「最后一段收下剩余」（D35） |
+
+分派顺序在两条路径上**必须一致**（`_dispatch` 与 `_run_once`）：
+
+    运行时命令 → 本地命令 → 工具快捷方式 → 未知命令提示 → 普通回合
+
+**快捷方式必须排在「未知命令提示」之前**：`/edit a::b::c` 的头部 `/edit`
+现在是已知命令，若先做未知命令判断就会被拦下，永远走不到解析器。
+我在这条上踩过两次——两次都是只改了一条路径。
+
 
 ---
 
@@ -154,10 +175,10 @@ TS 版 **29 条**用法，Python 版 **18 条**。
 
 | TS 模块 | 行数 | Python 现状 | 状态 |
 |---|---|---|---|
-| `local-tool-shortcuts.ts` | 123 | 完全没有 | ❌ |
+| `local-tool-shortcuts.ts` | 123 | `local_tool_shortcuts.py` | ✅ **已补齐** |
+| `background-tasks.ts` | 62 | `background_tasks.py` | ✅ **已补齐**（注册表 + PID 存活探测） |
 | `init.ts` | 308 | 完全没有 | ❌ |
 | `mcp-status.ts` | 33 | 完全没有 | ❌ |
-| `background-tasks.ts` | 62 | 只有 `BackgroundTaskResult` 类型，无注册表、无 PID 存活检测 | ❌ |
 | `history.ts` | 62 | `config.history_path()` 与 `HISTORY_PATH` **定义了但无人引用 = 死代码** | ❌ |
 | `manage-cli.ts` | 260 | `skills.py` 覆盖了技能安装部分 | ⚠️ 需逐条核对 |
 | `install.ts` | 111 | 同上 | ⚠️ 需逐条核对 |
@@ -165,6 +186,12 @@ TS 版 **29 条**用法，Python 版 **18 条**。
 | `mock-model.ts` | 161 | `adapters/mock.py`(91) | ⚠️ 快捷方式少 |
 | `utils/model-context.ts` | 144 | `context/model_context.py`(101) | ⚠️ 需核对窗口表 |
 | `tty-app.ts` + `tui/*` | ~3,500 | 已删除 | 🔶 用户明确放弃全屏 TUI |
+
+### 顺带修掉的既有缺陷（不在缺口清单里，是核对时发现的）
+
+| 缺陷 | 症状 |
+|---|---|
+| `grep_files` 的 `path` 指向**文件**时永远没有结果 | 回退扫描用 `os.walk(target)`，而它对文件路径静默产出空序列。于是 `/grep <pattern>::<file>`（文档化用法）永远返回 `(no matches)`，看起来像「确实没有匹配」而不是「我根本没搜」。`grep_files` 此前**没有任何专属测试**，所以一直没暴露。 |
 
 ### 已被验证的「已对齐」模块
 

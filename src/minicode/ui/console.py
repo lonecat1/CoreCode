@@ -317,18 +317,35 @@ class ConsoleUI:
     def tool_start(self, name: str, detail: str = "") -> None:
         self.write(render_tool_start(name, detail, self.width))
 
-    def tool_result(self, summary: str, *, ok: bool = True, detail: str = "") -> None:
+    def tool_result(
+        self, summary: str, *, ok: bool = True, detail: str = "", full: bool = False
+    ) -> None:
         """工具结果。
 
-        `detail` 在这里**统一压缩**，而不是指望调用方先处理：
-        工具输出动辄上千字符，原样打出来会刷屏并把对话淹没。放在入口处
-        压缩，就没有任何调用路径能绕过它。
+        `detail` 默认在这里**统一压缩**，而不是指望调用方先处理：工具输出动辄
+        上千字符，原样打出来会刷屏并把对话淹没。放在入口处压缩，就没有任何
+        调用路径能绕过它。
+
+        `full=True` 则**完整展示**输出（首行当摘要，其余作为缩进正文）。
+        这是给**用户主动发起**的调用用的：用户自己敲了 `/read pyproject.toml`，
+        压缩成一行 `PATH: pyproject.toml` 就等于什么都没给他——他打这条命令
+        的目的就是看内容。模型驱动的调用没有这个诉求，因此保持压缩默认值。
 
         `ask_user` 是特例：它不是「执行了某件事」，而是**在向用户提问**。
         混在普通工具结果里会让人看不出需要自己回答——因此单独醒目显示。
         """
         if summary == "ask_user":
             self.question(detail)
+            return
+
+        if full:
+            head, _, rest = detail.strip().partition("\n")
+            # 首行交给渲染层按宽度截断，不在这里再压一次（否则丢信息）。
+            self.write(
+                render_tool_result(
+                    head or summary, ok=ok, detail=rest.strip(), width=self.width
+                )
+            )
             return
 
         # `⏺ read_file` 已经说明了是哪个工具，`⎿` 后面再重复一次工具名

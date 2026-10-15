@@ -44,6 +44,28 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/compact", "/compact", "手动压缩上下文（调用模型生成摘要）。"),
     SlashCommand("/collapse", "/collapse", "把旧的上下文区间投影为摘要（不改真实转录）。"),
     SlashCommand("/snip", "/snip", "删除一段安全的中间历史（不调用模型）。"),
+    # 本地工具快捷方式：直接调用工具，**不经过模型**。
+    # 用法与说明照抄原版 `cli-commands.ts:106-145`——它是用户可见的契约。
+    SlashCommand("/ls", "/ls [path]", "列出目录中的文件。"),
+    SlashCommand("/grep", "/grep <pattern>::[path]", "在文件中搜索文本。"),
+    SlashCommand("/read", "/read <path>", "直接读取一个文件。"),
+    SlashCommand("/write", "/write <path>::<content>", "直接写入一个文件。"),
+    SlashCommand(
+        "/modify",
+        "/modify <path>::<content>",
+        "替换整个文件，落盘前展示可审查的 diff。",
+    ),
+    SlashCommand("/edit", "/edit <path>::<search>::<replace>", "按精确文本替换编辑文件。"),
+    SlashCommand(
+        "/patch",
+        "/patch <path>::<search1>::<replace1>::<search2>::<replace2>...",
+        "一条命令里对同一个文件做多处替换。",
+    ),
+    SlashCommand(
+        "/cmd",
+        "/cmd [cwd::]<command> [args...]",
+        "直接执行允许清单内的开发命令，可指定另一个工作目录。",
+    ),
     SlashCommand("/exit", "/exit", "退出。"),
 )
 

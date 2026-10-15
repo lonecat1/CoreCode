@@ -15,7 +15,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any
+from typing import Any, Iterator
 
 from ..tooling import ToolContext, ToolDefinition, ToolResult
 from ..workspace import resolve_tool_path
@@ -100,6 +100,33 @@ def _search_with_ripgrep(
     return True, raw
 
 
+def _iter_candidate_files(target: str) -> Iterator[str]:
+    """产出待扫描的文件路径。
+
+    ## 为什么不能直接 `os.walk(target)`
+
+    `path` 可以是**文件**也可以是目录（工具描述如此，`/grep <pattern>::<file>`
+    这个文档化用法就是传文件）。而 `os.walk()` 遇到文件路径时**什么都不产出**
+    ——不报错，只是静默返回空。
+
+    结果是「搜一个明确的文件」永远得到 `(no matches)`，即使用户能看到那行
+    文字就在文件里。这个失败方式特别糟：它看起来像「确实没有匹配」，而不是
+    「我根本没搜」。
+
+    因此这里对文件路径单独处理。
+    """
+    if os.path.isfile(target):
+        yield target
+        return
+
+    for directory, subdirectories, files in os.walk(target):
+        subdirectories[:] = [
+            name for name in subdirectories if name not in SKIP_DIRECTORIES
+        ]
+        for name in files:
+            yield os.path.join(directory, name)
+
+
 def _search_with_python(pattern: str, target_root: str, cwd: str) -> str:
     """纯 Python 回退扫描。"""
     try:
@@ -110,41 +137,34 @@ def _search_with_python(pattern: str, target_root: str, cwd: str) -> str:
     matches: list[str] = []
     truncated = False
 
-    for directory, subdirectories, files in os.walk(target_root):
-        subdirectories[:] = [
-            name for name in subdirectories if name not in SKIP_DIRECTORIES
-        ]
-        for name in files:
-            if len(matches) >= MAX_MATCHES:
-                truncated = True
-                break
-
-            full = os.path.join(directory, name)
-            _, suffix = os.path.splitext(name)
-            if suffix.lower() in BINARY_SUFFIXES:
-                continue
-            try:
-                if os.path.getsize(full) > MAX_FILE_BYTES:
-                    continue
-            except OSError:
-                continue
-
-            try:
-                with open(full, encoding="utf-8", errors="strict") as handle:
-                    lines = handle.readlines()
-            except (OSError, UnicodeDecodeError):
-                # 二进制或不可读：跳过即可，不必报错。
-                continue
-
-            relative = os.path.relpath(full, cwd)
-            for number, line in enumerate(lines, start=1):
-                if compiled.search(line):
-                    matches.append(_format_match(relative, number, line))
-                    if len(matches) >= MAX_MATCHES:
-                        truncated = True
-                        break
-        if truncated:
+    for full in _iter_candidate_files(target_root):
+        if len(matches) >= MAX_MATCHES:
+            truncated = True
             break
+
+        _, suffix = os.path.splitext(full)
+        if suffix.lower() in BINARY_SUFFIXES:
+            continue
+        try:
+            if os.path.getsize(full) > MAX_FILE_BYTES:
+                continue
+        except OSError:
+            continue
+
+        try:
+            with open(full, encoding="utf-8", errors="strict") as handle:
+                lines = handle.readlines()
+        except (OSError, UnicodeDecodeError):
+            # 二进制或不可读：跳过即可，不必报错。
+            continue
+
+        relative = os.path.relpath(full, cwd)
+        for number, line in enumerate(lines, start=1):
+            if compiled.search(line):
+                matches.append(_format_match(relative, number, line))
+                if len(matches) >= MAX_MATCHES:
+                    truncated = True
+                    break
 
     if not matches:
         return "(no matches)"

@@ -28,6 +28,7 @@ from .adapters.mock import MockModelAdapter
 from .agents.manager import SubAgentManager
 from .config import ConfigError, RuntimeConfig, load_runtime_config
 from .host import HostCallbacks, SessionHost
+from .local_tool_shortcuts import parse_local_tool_shortcut
 from .permissions import (
     PermissionDenied,
     PermissionManager,
@@ -35,6 +36,7 @@ from .permissions import (
     auto_approve_prompt,
 )
 from .runtime.plan import PlanManager
+from .tooling import ToolContext
 from .tools import create_root_registry, create_worker_registry
 from .types import ModelAdapter
 from .ui import (
@@ -389,8 +391,13 @@ def main(argv: list[str] | None = None) -> int:
 def _run_once(host: SessionHost, prompt: str) -> int:
     """单次提问后退出。这是集成测试与脚本使用的主路径。
 
-    分派顺序必须与 REPL 一致（`_dispatch`）：运行时命令 → 本地命令 → 普通回合。
-    少了中间那一步，`-p /status` 之类的本地命令会被当成对话内容发给模型。
+    分派顺序必须与 REPL 完全一致（`_dispatch`）：
+
+        运行时命令 → 本地命令 → 工具快捷方式 → 未知命令提示 → 普通回合
+
+    少任何一步都会出错。早先漏了「本地命令」那一步，`-p /status` 被当成对话
+    内容发给了模型；后来漏了「工具快捷方式」，`-p /ls` 被当成未知命令而失败
+    ——两次都是同一类错误：**两条路径的分派顺序必须一起改**。
 
     输出走与 REPL 相同的界面层，因此两种模式的外观一致；同时因为界面层
     会在非终端环境下自动关闭颜色，`-p` 的输出可以直接重定向到文件。
@@ -406,6 +413,9 @@ def _run_once(host: SessionHost, prompt: str) -> int:
         local = handle_local_command(host, prompt)
         if local is not None:
             ui.write(local)
+            return 0
+
+        if _run_tool_shortcut(host, prompt, ui):
             return 0
 
         if _looks_like_unknown_command(prompt):
@@ -558,8 +568,45 @@ def _command_usages() -> list[tuple[str, str]]:
 _COMMAND_USAGES = _command_usages()
 
 
+def _run_tool_shortcut(host: SessionHost, line: str, ui: "ConsoleUI") -> bool:
+    """把一行输入当成本地工具快捷方式执行。返回**是否已处理**。
+
+    对应原版 `tty-app.ts:1385` 的 `parseLocalToolShortcut` + `executeToolShortcut`：
+    直接调工具，**不经过模型**。有些操作用户自己立刻就想做（看一眼目录、读一个
+    文件、改一行），让它们绕一整轮对话是浪费。
+
+    权限照常生效——快捷方式只是入口，不绕过 `permissions`。这也是它必须走
+    `ToolRegistry.execute` 而不是直接调工具函数的原因：审批、校验、异常兜底
+    都在那一层。
+    """
+    shortcut = parse_local_tool_shortcut(line)
+    if shortcut is None:
+        return False
+
+    ui.tool_start(shortcut.tool_name)
+    result = host.tools.execute(
+        shortcut.tool_name,
+        shortcut.input,
+        ToolContext(cwd=host.cwd, permissions=host.permissions, signal=None),
+    )
+    # `full=True`：用户主动发起的调用要看**完整输出**。压缩成一行等于什么都没给
+    # ——他敲 `/read pyproject.toml` 的目的就是看内容。
+    ui.tool_result(shortcut.tool_name, ok=result.ok, detail=result.output, full=True)
+    ui.blank()
+    return True
+
+
 def _dispatch(host: SessionHost, line: str, ui: "ConsoleUI") -> None:
-    """一条输入的分派顺序：运行时命令 → 本地命令 → 普通回合。"""
+    """一条输入的分派顺序。
+
+    顺序与原版 `tty-app.ts` 一致，不能调换：
+
+        运行时命令 → 本地命令 → 工具快捷方式 → 未知命令提示 → 普通回合
+
+    **快捷方式必须排在「未知命令提示」之前**：`/edit a::b::c` 的头部 `/edit`
+    不是已知命令，如果先做 `_looks_like_unknown_command` 判断它就会被当成
+    打错的命令拦下，永远走不到解析器。
+    """
     reply = host.runtime.command(line)
     if reply is not None:
         ui.write(reply)
@@ -570,6 +617,9 @@ def _dispatch(host: SessionHost, line: str, ui: "ConsoleUI") -> None:
     if local is not None:
         ui.write(local)
         ui.blank()
+        return
+
+    if _run_tool_shortcut(host, line, ui):
         return
 
     if _looks_like_unknown_command(line):

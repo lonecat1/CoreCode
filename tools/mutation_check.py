@@ -40,6 +40,8 @@ BACKGROUND_TASKS = os.path.join(REPO, "src", "minicode", "background_tasks.py")
 EDIT_TOOLS = os.path.join(REPO, "src", "minicode", "tools", "edit.py")
 TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
 FILE_REVIEW = os.path.join(REPO, "src", "minicode", "file_review.py")
+SHORTCUTS = os.path.join(REPO, "src", "minicode", "local_tool_shortcuts.py")
+GREP_FILES = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -612,6 +614,92 @@ MUTATIONS = [
         TOOLS_INIT,
         "    if plan is not None:\n        tools.append(create_update_plan_tool(plan))",
         "    if True:\n        tools.append(create_update_plan_tool(plan))",
+    ),
+    (
+        "快捷方式: /ls 前缀不再要求空格（/lsof 被当成 /ls）",
+        SHORTCUTS,
+        '    if text == "/ls" or text.startswith("/ls "):',
+        '    if text.startswith("/ls"):',
+    ),
+    (
+        "快捷方式: /read 不拒绝空路径（拿空路径去读文件）",
+        SHORTCUTS,
+        '        path = text[len("/read ") :].strip()\n        if not path:\n            return None',
+        '        path = text[len("/read ") :].strip()',
+    ),
+    (
+        "快捷方式: /write 不拒绝空路径",
+        SHORTCUTS,
+        "            target = payload[:split_at].strip()\n            if not target:\n                return None",
+        "            target = payload[:split_at].strip()",
+    ),
+    (
+        "快捷方式: /edit 用 split 解构（替换内容里的 :: 被丢掉）",
+        SHORTCUTS,
+        '        parts = _split_limited(payload, 3)\n        target = parts[0].strip() if parts else ""',
+        '        parts = payload.split("::")\n        target = parts[0].strip() if parts else ""',
+    ),
+    (
+        "快捷方式: /grep 不拒绝空 pattern",
+        SHORTCUTS,
+        "        pattern = parts[0].strip() if parts else \"\"\n        if not pattern:\n            return None",
+        '        pattern = parts[0].strip() if parts else ""',
+    ),
+    (
+        "快捷方式: /cmd 把 cwd 与命令解反（在错误目录执行）",
+        SHORTCUTS,
+        "            command_cwd = payload[:split_at].strip()\n            command_text = payload[split_at + 2 :].strip()",
+        "            command_cwd = payload[split_at + 2 :].strip()\n            command_text = payload[:split_at].strip()",
+    ),
+    (
+        "快捷方式: /cmd 不给命令时也返回（空命令）",
+        SHORTCUTS,
+        "        pieces = command_text.split()\n        if not pieces:\n            return None",
+        "        pieces = command_text.split()",
+    ),
+    (
+        "快捷方式: /patch 不检查奇数片段（配对错位）",
+        SHORTCUTS,
+        "        if not target or len(ops) < 2 or len(ops) % 2 != 0:",
+        "        if not target or len(ops) < 2:",
+    ),
+    (
+        "分派: REPL 不再尝试快捷方式（/ls 被送给模型）",
+        CLI,
+        "    if _run_tool_shortcut(host, line, ui):\n        return",
+        "    if False:\n        return",
+    ),
+    (
+        "分派: -p 单次模式不再尝试快捷方式",
+        CLI,
+        "        if _run_tool_shortcut(host, prompt, ui):\n            return 0",
+        "        if False:\n            return 0",
+    ),
+    (
+        "快捷方式: 不完整输出（用户 /read 却只看到一行摘要）",
+        CLI,
+        "    ui.tool_result(shortcut.tool_name, ok=result.ok, detail=result.output, full=True)",
+        "    ui.tool_result(shortcut.tool_name, ok=result.ok, detail=result.output, full=False)",
+    ),
+    (
+        "UI: full=True 被忽略（多行输出被压成一行）",
+        UI_CONSOLE,
+        "        if full:\n            head, _, rest = detail.strip().partition(\"\\n\")",
+        "        if False:\n            head, _, rest = detail.strip().partition(\"\\n\")",
+    ),
+    (
+        "grep: 搜单个文件时不处理文件路径（永远没有结果）",
+        GREP_FILES,
+        "    if os.path.isfile(target):\n        yield target\n        return",
+        "    if False:\n        yield target\n        return",
+    ),
+    (
+        "grep: 回退扫描不再跳过 .git/node_modules 等目录",
+        GREP_FILES,
+        "        subdirectories[:] = [\n"
+        "            name for name in subdirectories if name not in SKIP_DIRECTORIES\n"
+        "        ]",
+        "        pass",
     ),
 ]
 
