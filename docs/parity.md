@@ -49,7 +49,17 @@
 
 ## A · 工具层（`src/tools/`）
 
-TS 版默认注册表有 **13 个**工具，Python 版有 **13 个**。
+**口径要先说清楚，否则数字会看起来对不上**（原版 `tools/index.ts` 的实际结构）：
+
+| 注册表 | 数量 | 说明 |
+|---|---|---|
+| 默认注册表（**无** plan） | **12** | |
+| 默认注册表（**有** plan） | **13** | `update_plan` 是条件加入的：`...(args.plan ? [createUpdatePlanTool(args.plan)] : [])` |
+| 根注册表（runtime 再追加 4 个子 Agent 工具） | **17** | 横幅打印的就是这个数 |
+| 子 Agent 可见（`SUB_AGENT_TOOL_NAMES`） | **6** | 只读子集 |
+
+Python 侧四个数字分别是 **12 / 13 / 17 / 6**，与原版逐个集合比对一致
+（实测，不是看文件是否存在）。
 
 | 工具 | TS 文件 | 行数 | Python | 状态 |
 |---|---|---|---|---|
@@ -69,8 +79,7 @@ TS 版默认注册表有 **13 个**工具，Python 版有 **13 个**。
 | `update_goal` / `get_goal` | `goal.ts` | 33 | `tools/goal.py` | ✅ |
 | `spawn_agent` 等 4 个 | `sub-agents.ts` | 122 | `tools/subagents.py` | ✅ |
 
-**运行时工具集已完全对等**——逐个集合比对确认：TS 的 13 个默认工具 + runtime 层
-追加的 `get_goal`/`update_goal`，与 Python 侧一一对应，无缺无多。
+**运行时工具集已完全对等**——逐个集合比对确认，无缺无多。
 
 ### 三处「基础设施写好了但没接线」的缺口
 

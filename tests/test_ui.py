@@ -260,6 +260,58 @@ class RenderTests(ColorEnvMixin):
         for line in rendered.split("\n"):
             self.assertLessEqual(string_display_width(line), 50)
 
+    def test_banner_lines_are_all_the_same_width(self) -> None:
+        """**所有行必须等宽**，否则右边框会错开。
+
+        这条钉住一个真实缺陷：早先内容行的可用宽度算成 `inner - 2 - 标签宽 - 2`，
+        比正确值少 1，于是**内容行宽 75、边框行宽 76**——右边框每一行都错开
+        一列。启动横幅是用户看到的第一样东西，错位很显眼。
+
+        用**显示宽度**而不是 `len()`：横幅里有中文与全角括号，按字符数比会
+        漏掉这类问题（那正是它当初没被发现的原因之一）。
+        """
+        for width in (40, 50, 60, 76, 80, 100, 120):
+            with self.subTest(width=width):
+                rendered = strip_ansi(
+                    render_banner(
+                        model="qwen3.8-27b",
+                        session_id="a1b2c3d4",
+                        cwd=r"D:\CoreCode\minicode-py",
+                        tool_count=17,
+                        readonly_tool_count=6,
+                        skill_count=2,
+                        mcp_summary="mcp 1/3 · 1 等待 · 1 失败",
+                        width=width,
+                    )
+                )
+                widths = {
+                    string_display_width(line)
+                    for line in rendered.split("\n")
+                    if line
+                }
+                self.assertEqual(
+                    len(widths), 1, f"width={width} 时各行宽度不一致：{sorted(widths)}"
+                )
+
+    def test_banner_borders_line_up(self) -> None:
+        """右边框必须在同一列——这是「等宽」的用户可见含义。"""
+        rendered = strip_ansi(
+            render_banner(
+                model="m",
+                session_id="s",
+                cwd="/x",
+                tool_count=3,
+                skill_count=1,
+                width=80,
+            )
+        )
+        columns = {
+            string_display_width(line)
+            for line in rendered.split("\n")
+            if line
+        }
+        self.assertEqual(columns, {80})
+
     def test_status_line_joins_parts(self) -> None:
         rendered = strip_ansi(
             render_status_line(model="m", context_percent=42, mcp_summary="mcp 1/2")

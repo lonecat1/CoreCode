@@ -152,13 +152,20 @@ def render_banner(
     if mcp_summary:
         rows.append(("MCP", mcp_summary))
 
-    # 行宽 = 边框 2 + 空格 2 + 标签宽度 + 内容
+    # **每一行的「框内内容」必须正好占满 `inner` 列。**
+    #
+    # 早先这里按 `inner - 2 - label_width - 2` 算可用宽度，比正确值少 1，
+    # 于是内容行宽 75、边框行宽 76——右边框每一行都错开一列。启动横幅是用户
+    # 看到的第一样东西，错位很显眼。
+    #
+    # 正确的口径：框内 = `" " + 标签 + 补齐 + "  " + 内容 + 填充`，总宽必须
+    # 等于 `inner`。下面用 `_fill()` 统一收口，不再各处手算。
     label_width = max(string_display_width(label) for label, _ in rows)
     body: list[str] = []
     for label, value in rows:
-        available = max(10, inner - 2 - label_width - 2)
+        head = " " + label + " " * (label_width - string_display_width(label)) + "  "
+        available = max(10, inner - string_display_width(head))
         shown = truncate_plain(value, available)
-        pad = " " * max(0, available - string_display_width(shown))
         body.append(
             paint(BOX_VERTICAL, COLOR_STATUS)
             + " "
@@ -166,19 +173,21 @@ def render_banner(
             + " " * (label_width - string_display_width(label))
             + "  "
             + shown
-            + pad
+            + " " * max(0, inner - string_display_width(head) - string_display_width(shown))
             + paint(BOX_VERTICAL, COLOR_STATUS)
         )
 
     title = paint("MiniCode", COLOR_BANNER_TITLE)
     hint = paint("终端编码助手", COLOR_HINT)
+    title_head = " MiniCode  "
+    title_tail = "终端编码助手"
     title_line = (
         paint(BOX_VERTICAL, COLOR_STATUS)
         + " "
         + title
         + "  "
         + hint
-        + " " * max(0, inner - 2 - string_display_width("MiniCode  终端编码助手"))
+        + " " * max(0, inner - string_display_width(title_head + title_tail))
         + paint(BOX_VERTICAL, COLOR_STATUS)
     )
 

@@ -20,14 +20,15 @@ minicode
 ```
 
 ```
-╭──────────────────────────────────────────────────────────────────────────╮
-│ MiniCode  终端编码助手                                                    │
-│ 模型  qwen3.8-27b                                                        │
-│ 会话  a1b2c3d4                                                           │
-│ 目录  D:\CoreCode\minicode-py                                            │
-│ 工具  12 个（子 Agent 可见 6 个只读工具）                                  │
-│ 技能  2 个                                                               │
-╰──────────────────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────────────────────╮
+│ MiniCode  终端编码助手                                                     │
+│ 模型  qwen3.8-27b                                                          │
+│ 会话  a1b2c3d4                                                             │
+│ 目录  D:\CoreCode\minicode-py                                              │
+│ 工具  17 个（子 Agent 可见 6 个只读工具）                                  │
+│ 技能  2 个                                                                 │
+╰────────────────────────────────────────────────────────────────────────────╯
+输入 /help 查看命令 · /exit 退出
 
 > 帮我看看 pyproject.toml 里声明了哪些依赖
 
@@ -191,11 +192,14 @@ for m in r.messages: print(' ', m['role'], '|', str(m.get('content'))[:60])
    │  ├─ context/        四级上下文压缩 + provider-usage 计量  │
    │  ├─ session/        JSONL 会话树与恢复                    │
    │  ├─ runtime/        单飞回合、Goal、Loop 编排             │
-   │  ├─ tui/            无框架 ANSI 界面、差分帧渲染          │
+   │  ├─ ui/             无框架 ANSI 界面（行模式）            │
    │  ├─ tools/          内置工具（文件/搜索/命令/提问）        │
    │  └─ adapters/       模型后端（Anthropic / mock）          │
    └──────────────────────────────────────────────────────────┘
 ```
+
+配套的**命令行层**（不属于循环）：`cli` 行模式 REPL、`cli_commands` 斜杠命令、
+`manage_cli` 子命令（`minicode mcp` / `minicode skills`）、`install` 安装器。
 
 ### 三条不可动摇的边界
 
@@ -259,19 +263,24 @@ for step in range(max_steps):
 | 后台任务 `background_tasks` | ✅ 完成（注册表 + PID 存活探测） |
 | 差分帧渲染 TUI `tui/` | 🔶 **已移除**——用户明确放弃全屏 TUI，改为行模式（见下节） |
 
-**尚未对等的部分**（完整清单与修复顺序见 [`docs/parity.md`](docs/parity.md)）：
+**对等状态**：**没有缺口了**。
 
-| 缺口 | 状态 |
+| 维度 | 状态 |
 |---|---|
-| `local-tool-shortcuts.ts`（`/ls` `/grep` `/read` `/write` `/modify` `/edit` `/patch` `/cmd`） | ❌ 完全缺失 |
-| `/model` · `/config-paths` · `/init` | ❌ 完全缺失 |
-| `history.ts`（REPL 输入历史） | ❌ 只有常量，无实现（死代码） |
-| `mcp-status.ts`（MCP 汇总） | ❌ 完全缺失 |
-| `init.ts`（仓库初始化，生成 MINI.md） | ❌ 完全缺失 |
-| `utils/web.ts` 的搜狗源 · `allowed_domains`/`blocked_domains` · 重试 | ⚠️ 能力缩水 |
+| 工具（默认注册表） | **13 / 13** ✅ |
+| 工具（含 runtime 追加的 goal 工具） | **15 / 15** ✅ |
+| 命令 | **29 / 29** ✅ |
+| `src/` 各模块 | 全部覆盖，或记为有意差异 ✅ |
+| 完全缺失 / 能力缩水 | **0 / 0** |
+
+有意差异共 38 条，逐条记在 [`docs/divergences.md`](docs/divergences.md)
+（每条含原行为 / 本实现 / 理由 / 影响面 / 可回退）。逐项对等清单与核对方法
+见 [`docs/parity.md`](docs/parity.md)。
 
 > 早先这张表把工具层写成「✅ 完成」而在括号里省略了缺失项，是**表述误导**。
-> 现在的写法是：缺什么就写什么，不用省略代替缺失。
+> 后来它又反向漂移了一次：所有项目都已补齐，表里却仍列着一堆 ❌。
+> 两次是同一个病——**文档没有跟着代码走**。现在的做法是：缺口一补齐就改这张表，
+> 并由 `docs/parity.md` 里的可执行断言（命令数量、缺口集合）挡住过期。
 
 > **测试隔离**：`tests/__init__.py` 在任何 `minicode` 导入之前把家目录钉在仓库内
 > （`tests/_tmp/mini-home`），并做一次 fail-closed 断言。运行时的路径解析走
@@ -520,15 +529,42 @@ False**——界面画出来了，按键永远读不到。解决办法：换用 
 ## 目录
 
 ```
-src/minicode/
-  types.py          消息类型、AgentStep、回合结局
-  tooling.py        工具契约、注册表、控制位
-  abort.py          贯穿式取消信号
-  agent_loop.py     model → tool → model 主循环
-  file_review.py    写前 diff 审查
-  workspace.py      路径围栏
-  adapters/         模型后端
-  tools/            内置工具
-docs/               逆向提取的行为规格
-tests/              行为测试
+src/minicode/                     行数    职责
+  __main__.py / __init__.py               包入口
+  cli.py                    759   行模式 REPL、参数解析、单次提问
+  cli_commands.py           625   斜杠命令（29 条）
+  manage_cli.py             421   子命令：minicode mcp / minicode skills
+  install.py                268   交互式本地安装器（python -m minicode.install）
+  repo_init.py              416   /init：探测仓库并生成 MINI.md
+  history.py                223   输入历史（JSONL）
+  host.py                   381   会话宿主：装配模型/工具/权限/计划
+  config.py                 549   配置装载、路径访问、Claude 兼容回退
+  permissions.py            532   权限：只读白名单、审批、持久化
+  memory.py                 279   MINI.md 发现与装载
+  skills.py                 265   技能的发现、装载、安装、移除
+  prompt.py                 125   系统提示
+  types.py                  215   消息类型、AgentStep、回合结局
+  tooling.py                233   工具契约、注册表、控制位
+  abort.py                   85   贯穿式取消信号
+  agent_loop.py             681   model → tool → model 主循环
+  file_review.py             98   写前 diff 审查
+  workspace.py               52   路径围栏
+  stats.py                  150   回合统计（耗时、工具调用次数）
+  background_tasks.py       199   后台 shell 任务注册表
+  local_tool_shortcuts.py   193   /ls /grep /read /write /edit /patch /cmd
+  ui/                       内置行模式界面（渲染、动画、宽度、主题）
+  adapters/                 模型后端（anthropic 736 行 / mock）
+  tools/                    内置工具（13 个）
+  agents/                   子 Agent：隔离上下文 + 受限工具 + ≤3 并发
+  context/                  上下文管线：四级压缩、投影式 collapse、token 估算
+  runtime/                  单飞回合、Goal、Loop、计划（session 编排）
+  session/                  JSONL 会话树存储与恢复
+  mcp/                      MCP：stdio 双分帧协商、HTTP、工具桥接
+  utils/                    网页抓取/搜索、其它辅助
+docs/                       行为规格：对等清单、有意差异
+tests/                      行为测试（1253 项）
+tools/                      开发工具：导入检查、变异检查、自检
 ```
+
+各部分行数刻意列出：**最容易出错的地方往往是最不起眼的那些**
+（`grep_files` 的路径判断、`config.py` 的路径解析），而不是最长的那几个。

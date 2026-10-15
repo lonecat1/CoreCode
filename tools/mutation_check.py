@@ -1240,6 +1240,18 @@ MUTATIONS = [
         "    if not auth_token and not api_key:",
         "    if False:",
     ),
+    (
+        "UI: 横幅内容行少一列（右边框每行错开）",
+        UI_RENDER,
+        '            + " " * max(0, inner - string_display_width(head) - string_display_width(shown))',
+        '            + " " * max(0, inner - 1 - string_display_width(head) - string_display_width(shown))',
+    ),
+    (
+        "UI: 横幅标题行少一列（右边框错开）",
+        UI_RENDER,
+        '        + " " * max(0, inner - string_display_width(title_head + title_tail))',
+        '        + " " * max(0, inner - 1 - string_display_width(title_head + title_tail))',
+    ),
 ]
 
 
