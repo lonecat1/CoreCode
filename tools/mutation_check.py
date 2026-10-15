@@ -47,6 +47,8 @@ CLI_COMMANDS = os.path.join(REPO, "src", "minicode", "cli_commands.py")
 PERMISSIONS = os.path.join(REPO, "src", "minicode", "permissions.py")
 REPO_INIT = os.path.join(REPO, "src", "minicode", "repo_init.py")
 HISTORY = os.path.join(REPO, "src", "minicode", "history.py")
+WEB_UTILS = os.path.join(REPO, "src", "minicode", "utils", "web.py")
+WEB_TOOLS = os.path.join(REPO, "src", "minicode", "tools", "web.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -883,6 +885,143 @@ MUTATIONS = [
         HISTORY,
         "        if not text or text in existing or text in seen:",
         "        if text in existing or text in seen:",
+    ),
+    (
+        "web: 4xx 也被当成可重试（重试不会让 404 变成 200，白等）",
+        WEB_UTILS,
+        "    return status == 429 or 500 <= status < 600",
+        "    return True",
+    ),
+    (
+        "web: 5xx 不再重试（暂时性失败直接暴露给用户）",
+        WEB_UTILS,
+        "    return status == 429 or 500 <= status < 600",
+        "    return status == 429",
+    ),
+    (
+        "web: 超时不再算可重试的网络错误",
+        WEB_UTILS,
+        "    if isinstance(error, (socket.timeout, TimeoutError)):\n        return True",
+        "    if False:\n        return True",
+    ),
+    (
+        "web: 退避不翻倍（固定间隔，限流时雪上加霜）",
+        WEB_UTILS,
+        "                _sleep_ms(BACKOFF_BASE_MS * (2**attempt))\n                continue",
+        "                _sleep_ms(BACKOFF_BASE_MS)\n                continue",
+    ),
+    (
+        "web: HTTP 错误码不再当作响应（正文丢失）",
+        WEB_UTILS,
+        "        except urllib.error.HTTPError as error:",
+        "        except urllib.error.HTTPError as error:\n            raise WebError(str(error)) from error\n        if False:",
+    ),
+    (
+        "web: 域名匹配用朴素后缀（evil-python.org 通过白名单）",
+        WEB_UTILS,
+        '    return host == domain or host.endswith(f".{domain}")',
+        "    return host.endswith(domain)",
+    ),
+    (
+        "web: 黑名单不再优先（允许列表放行了被排除的域）",
+        WEB_UTILS,
+        "    if any(matches_domain(host, domain) for domain in blocked):\n        return False",
+        "    if False:\n        return False",
+    ),
+    (
+        "web: 解析不出主机名的链接被放行（过滤器形同虚设）",
+        WEB_UTILS,
+        "    if not host:\n        return False",
+        "    if not host:\n        return True",
+    ),
+    (
+        "web: 允许列表为空时反而全部拒绝",
+        WEB_UTILS,
+        "    if not allowed:\n        return True",
+        "    if not allowed:\n        return False",
+    ),
+    (
+        "web: 域名归一化不剥通配前缀（*.example.com 匹配不上）",
+        WEB_UTILS,
+        '        without_wildcard = re.sub(r"^\\*\\.", "", re.sub(r"^\\.", "", text))',
+        "        without_wildcard = text",
+    ),
+    (
+        "web: 搜狗链接分支顺序退回原版（协议相对链接被拼坏）",
+        WEB_UTILS,
+        '    if href.startswith("//"):\n        return f"https:{href}"\n'
+        '    if href.startswith("/"):\n        return f"https://www.sogou.com{href}"',
+        '    if href.startswith("/"):\n        return f"https://www.sogou.com{href}"\n'
+        '    if href.startswith("//"):\n        return f"https:{href}"',
+    ),
+    (
+        "web: DDG 解析不再校验 result-link class（抓到无关链接）",
+        WEB_UTILS,
+        '        if not re.search(r"\\bresult-link\\b", class_value, re.IGNORECASE):\n            continue',
+        "        pass",
+    ),
+    (
+        "web: 搜索不退回第二个后端（单一后端挂了就整个不可用）",
+        WEB_UTILS,
+        '            errors.append(f"{provider}: no results")\n        except WebError as error:',
+        '            return [], "fallback-empty"\n        except WebError as error:',
+    ),
+    (
+        "web: 后端返回 200 但没有结果也算成功（不再换源）",
+        WEB_UTILS,
+        "            if organic:\n                return organic, provider",
+        "            return organic, provider",
+    ),
+    (
+        "web: 全部后端失败也不报错（用户以为确实没搜到）",
+        WEB_UTILS,
+        "    if errors:\n"
+        "        # **只要有后端失败就抛。** 原版是 `if (errors.length > 0) throw`。",
+        "    if False:\n"
+        "        # **只要有后端失败就抛。** 原版是 `if (errors.length > 0) throw`。",
+    ),
+    (
+        "web: 默认结果条数从 5 变 8（与原版不符）",
+        WEB_UTILS,
+        "DEFAULT_MAX_RESULTS = 5",
+        "DEFAULT_MAX_RESULTS = 8",
+    ),
+    (
+        "web: 不跟进 HTML 跳转（抓回来是空壳）",
+        WEB_UTILS,
+        "        if redirect_url and redirect_url != final_url:",
+        "        if False:",
+    ),
+    (
+        "web: 正文不截断（超长页面塞爆上下文）",
+        WEB_UTILS,
+        "    if max_chars and len(content) > max_chars:\n        content = content[:max_chars]",
+        "    if False:\n        content = content[:max_chars]",
+    ),
+    (
+        "web 工具: 去掉 allowed/blocked 的互斥校验（语义含糊）",
+        WEB_TOOLS,
+        "    if allowed and blocked:",
+        "    if False:",
+    ),
+    (
+        "web 工具: 域名过滤不传给搜索层（参数被忽略）",
+        WEB_TOOLS,
+        '            allowed_domains=data.get("allowed_domains"),\n'
+        '            blocked_domains=data.get("blocked_domains"),',
+        "            allowed_domains=None,\n            blocked_domains=None,",
+    ),
+    (
+        "web 工具: max_results 不再限制上限",
+        WEB_TOOLS,
+        "        if max_results < 1 or max_results > MAX_MAX_RESULTS:",
+        "        if max_results < 1:",
+    ),
+    (
+        "web 工具: 输出格式退回旧版（丢掉 QUERY 行）",
+        WEB_TOOLS,
+        '    lines: list[str] = [f"QUERY: {query}", ""]',
+        "    lines: list[str] = []",
     ),
 ]
 

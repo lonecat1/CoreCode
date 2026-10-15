@@ -47,8 +47,8 @@ TS 版默认注册表有 **13 个**工具，Python 版有 **13 个**。
 | `patch_file` | `patch-file.ts` | 76 | `tools/edit.py` | ✅ **已补齐** |
 | `modify_file` | `modify-file.ts` | 28 | `tools/edit.py` | ✅ **已补齐** |
 | `update_plan` | `plan.ts` | 41 | `tools/goal.py` | ✅ **已接线**（见下） |
-| `web_fetch` | `web-fetch.ts` | 58 | `tools/web.py` | ⚠️ 缺重试 |
-| `web_search` | `web-search.ts` | 87 | `tools/web.py` | ⚠️ 缺域名过滤、搜狗源 |
+| `web_fetch` | `web-fetch.ts` | 58 | `tools/web.py` | ✅ **已补齐** |
+| `web_search` | `web-search.ts` | 87 | `tools/web.py` | ✅ **已补齐**（含域名过滤） |
 | `load_skill` | `load-skill.ts` | 42 | `tools/load_skill.py` | ✅ |
 | `update_goal` / `get_goal` | `goal.ts` | 33 | `tools/goal.py` | ✅ |
 | `spawn_agent` 等 4 个 | `sub-agents.ts` | 122 | `tools/subagents.py` | ✅ |
@@ -188,7 +188,7 @@ Python 版连工具都没有，自然做不到。
 | `history.ts` | 62 | `history.py` | ✅ **已补齐**（JSONL 输入历史；见下） |
 | `manage-cli.ts` | 260 | `skills.py` 覆盖了技能安装部分 | ⚠️ 需逐条核对 |
 | `install.ts` | 111 | 同上 | ⚠️ 需逐条核对 |
-| `utils/web.ts` | 443 | `utils/web.py`(217) + `tools/web.py`(130) | ⚠️ **缺重试、搜狗源、域名过滤**（见下） |
+| `utils/web.ts` | 506 | `utils/web.py` | ✅ **已补齐**（见下） |
 | `mock-model.ts` | 161 | `adapters/mock.py`(91) | 🔶 **有意差异**（见下） |
 | `utils/model-context.ts` | 144 | `context/model_context.py`(101) | ✅ **已核对一致**（见下） |
 | `config.ts` 的 Claude 回退 | — | `load_effective_settings()` | ✅ **已补齐** |
@@ -219,17 +219,27 @@ Python 用元组。
 往 Python 里加四个死分支、再从 Python 拿走测试依赖的钩子。**没有收益，
 只有风险。** 因此明确记为有意差异，而不是悄悄留着。
 
-**`utils/web.ts` · ⚠️ 真正的能力缺口（下一个模块）**
+**`utils/web.ts` · ✅ 已补齐**
 
 | 原版能力 | 本实现 |
 |---|---|
-| `fetchWithRetry`（429/5xx 与网络错误重试，退避 300ms × 2^n，上限 2 次） | ❌ 缺 |
-| 超时可配（`DEFAULT_TIMEOUT_MS = 12000`） | 部分 |
-| `allowed_domains` / `blocked_domains` 过滤（含子域匹配 `host.endsWith("." + domain)`） | ❌ 缺 |
-| 搜狗搜索源（`parseSogouSearch`） | ❌ 缺 |
-| `formatWebErrorMessage` 结构化错误 | ❌ 缺 |
-| DDG Lite 解析 | ✅ 有 |
-| 正文抽取 | ✅ 有 |
+| `fetchWithRetry`（429/5xx 与网络错误重试，退避 300ms × 2^n，上限 2 次） | ✅ |
+| 超时可配（`DEFAULT_TIMEOUT_MS = 12000`） | ✅ |
+| `allowed_domains` / `blocked_domains` 过滤（子域匹配、黑名单优先、互斥校验） | ✅ |
+| 搜狗搜索源（`parseSogouSearch`） | ✅ |
+| `formatWebErrorMessage` 结构化错误 | ✅ |
+| DuckDuckGo **Lite** 端点（`lite.duckduckgo.com`）与对应解析器 | ✅ |
+| HTML 跳转跟进（`window.location` / meta refresh） | ✅ |
+| DDG 的 `uddg=` 跳转链接还原 | ✅ |
+| 正文抽取 | ✅（D36：保留段落结构） |
+
+三处**有意差异**：D36（正文保留段落，原版压成一行）、D37（修掉搜狗协议相对
+链接的死分支）、D38（「无结果」报成错误——与原版一致，但记下它是可争议的设计）。
+
+一处**端点修正**：原版用 `lite.duckduckgo.com/lite/`，本实现此前用
+`html.duckduckgo.com/html/`。两者页面结构完全不同（`result-link` vs
+`result__a`），**换端点必须同时换解析器**——否则会得到「永远没有结果」，
+而且看起来像「确实没搜到」。现在端点与解析器都对齐到 Lite。
 
 
 ### `history.ts` 的对齐说明
