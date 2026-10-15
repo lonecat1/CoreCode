@@ -46,6 +46,7 @@ MCP_STATUS = os.path.join(REPO, "src", "minicode", "mcp", "status.py")
 CLI_COMMANDS = os.path.join(REPO, "src", "minicode", "cli_commands.py")
 PERMISSIONS = os.path.join(REPO, "src", "minicode", "permissions.py")
 REPO_INIT = os.path.join(REPO, "src", "minicode", "repo_init.py")
+HISTORY = os.path.join(REPO, "src", "minicode", "history.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -839,6 +840,49 @@ MUTATIONS = [
         REPO_INIT,
         '    if status == "updated":\n        return "updated"',
         '    if status == "updated":\n        return "created"',
+    ),
+    (
+        "历史: 没有新条目也重写文件（每次退出都把整份历史再追加一遍）",
+        HISTORY,
+        "    if not new_entries:\n        return 0",
+        "    if False:\n        return 0",
+    ),
+    (
+        "历史: 不去重（同一行反复追加，文件成倍增长）",
+        HISTORY,
+        "        if not text or text in existing or text in seen:\n            continue",
+        "        if not text:\n            continue",
+    ),
+    (
+        "历史: 坏行导致整体读取失败（用户丢掉全部历史）",
+        HISTORY,
+        "        except json.JSONDecodeError:\n            continue",
+        "        except json.JSONDecodeError:\n            return []",
+    ),
+    (
+        "历史: 缺 display 字段的条目也被收下（空条目进历史）",
+        HISTORY,
+        '        display = parsed.get("display")\n'
+        "        if not isinstance(display, str):\n            continue",
+        '        display = parsed.get("display") or ""',
+    ),
+    (
+        "历史: 超限时保留最旧的（丢掉刚敲的）",
+        HISTORY,
+        "        kept = lines[-MAX_ENTRIES:]",
+        "        kept = lines[:MAX_ENTRIES]",
+    ),
+    (
+        "历史: 超限时不截断（文件无限增长）",
+        HISTORY,
+        "    if len(lines) <= MAX_ENTRIES:\n        return",
+        "    if True:\n        return",
+    ),
+    (
+        "历史: 空字符串也写进历史",
+        HISTORY,
+        "        if not text or text in existing or text in seen:",
+        "        if text in existing or text in seen:",
     ),
 ]
 

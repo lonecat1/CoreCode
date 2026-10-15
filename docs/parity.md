@@ -185,7 +185,7 @@ Python 版连工具都没有，自然做不到。
 | `background-tasks.ts` | 62 | `background_tasks.py` | ✅ **已补齐**（注册表 + PID 存活探测） |
 | `mcp-status.ts` | 33 | `mcp/status.py` | ✅ **已补齐** |
 | `init.ts` | 308 | `repo_init.py` | ✅ **已补齐** |
-| `history.ts` | 62 | `config.history_path()` 与 `HISTORY_PATH` **定义了但无人引用 = 死代码** | ❌ |
+| `history.ts` | 62 | `history.py` | ✅ **已补齐**（JSONL 输入历史；见下） |
 | `manage-cli.ts` | 260 | `skills.py` 覆盖了技能安装部分 | ⚠️ 需逐条核对 |
 | `install.ts` | 111 | 同上 | ⚠️ 需逐条核对 |
 | `utils/web.ts` | 443 | `utils/web.py`(217) + `tools/web.py`(130) | ⚠️ 缺搜狗源、域名过滤、重试 |
@@ -194,9 +194,21 @@ Python 版连工具都没有，自然做不到。
 | `config.ts` 的 Claude 回退 | — | `load_effective_settings()` | ✅ **已补齐** |
 | `tty-app.ts` + `tui/*` | ~3,500 | 已删除 | 🔶 用户明确放弃全屏 TUI |
 
-### 顺带修掉的既有缺陷（不在缺口清单里，是核对时发现的）
+### `history.ts` 的对齐说明
 
-| 缺陷 | 症状 |
+原版的输入历史是给 **TUI 的上下键补全**用的（`tty-app.ts` 的 `historyUp` /
+`historyDown`）。行模式 REPL 里，上下键由**终端自己**负责，本模块不参与那个。
+
+它仍然有价值的地方是**跨会话**：终端历史不区分项目（在 A 项目敲的命令，
+在 B 项目的终端里按上键也会冒出来），而这份历史按项目记录，并带时间戳与会话 id。
+
+数据层逐条对齐：JSONL、字段 `display`/`timestamp`/`project`/`sessionId`、
+上限 500 条、**只追加不重复**（没有新条目时完全不碰文件）、超限保留最近的。
+同样的字段名意味着两种实现可以共用同一个历史文件。
+
+🔶 **有意差异**：TUI 的上下键导航随 TUI 一并移除（用户明确放弃全屏 TUI）。
+
+### 顺带修掉的既有缺陷（不在缺口清单里，是核对时发现的）| 缺陷 | 症状 |
 |---|---|
 | `grep_files` 的 `path` 指向**文件**时永远没有结果 | 回退扫描用 `os.walk(target)`，而它对文件路径静默产出空序列。于是 `/grep <pattern>::<file>`（文档化用法）永远返回 `(no matches)`，看起来像「确实没有匹配」而不是「我根本没搜」。`grep_files` 此前**没有任何专属测试**。 |
 | **用导入期快照做 I/O**（四处） | `config.SETTINGS_PATH` 这类常量在**导入期**求值。`MINICODE_HOME` 在导入后变化时它们指向错误位置。受影响：`read_settings_file` / `save_settings` / `read_permission_store` / `write_permission_store` / `discover_memory_files`。症状全是**静默的**：`/model` 写到别处、授权规则全部失效、全局指令不生效。README 早就写了这条规则，但只有展示用途的地方遵守了。 |

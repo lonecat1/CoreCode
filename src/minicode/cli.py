@@ -464,8 +464,10 @@ def _run_repl(host: SessionHost) -> int:
         if not line:
             continue
         if line in _EXIT_WORDS:
+            _record_history(host, line)
             return 0
 
+        _record_history(host, line)
         try:
             _dispatch(host, line, ui)
         except KeyboardInterrupt:
@@ -473,6 +475,25 @@ def _run_repl(host: SessionHost) -> int:
             host.runtime.turns.stop("用户中断")
         except Exception as error:  # noqa: BLE001 - 单条命令失败不该退出 REPL
             ui.error(f"错误：{error}")
+
+
+def _record_history(host: SessionHost, line: str) -> None:
+    """把一行输入记进历史文件。
+
+    对应原版 `tty-app.ts:1353-1355`（提交时 `saveHistoryEntries`）。
+
+    ## 为什么吞掉异常
+
+    写历史失败（磁盘满、家目录只读）**不该让用户的这一条输入丢失**——
+    它已经读进来了，正确行为是继续执行，而不是把输入连同错误一起抛掉。
+    历史是便利设施，不是功能前提。
+    """
+    from .history import append_history
+
+    try:
+        append_history(line, host.cwd, host.session_id)
+    except Exception:  # noqa: BLE001 - 历史写失败不该影响正常使用
+        return
 
 
 def _attach_ui_callbacks(host: SessionHost, ui: "ConsoleUI") -> None:
