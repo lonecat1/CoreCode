@@ -188,11 +188,49 @@ Python 版连工具都没有，自然做不到。
 | `history.ts` | 62 | `history.py` | ✅ **已补齐**（JSONL 输入历史；见下） |
 | `manage-cli.ts` | 260 | `skills.py` 覆盖了技能安装部分 | ⚠️ 需逐条核对 |
 | `install.ts` | 111 | 同上 | ⚠️ 需逐条核对 |
-| `utils/web.ts` | 443 | `utils/web.py`(217) + `tools/web.py`(130) | ⚠️ 缺搜狗源、域名过滤、重试 |
-| `mock-model.ts` | 161 | `adapters/mock.py`(91) | ⚠️ 快捷方式少 |
-| `utils/model-context.ts` | 144 | `context/model_context.py`(101) | ⚠️ 需核对窗口表 |
+| `utils/web.ts` | 443 | `utils/web.py`(217) + `tools/web.py`(130) | ⚠️ **缺重试、搜狗源、域名过滤**（见下） |
+| `mock-model.ts` | 161 | `adapters/mock.py`(91) | 🔶 **有意差异**（见下） |
+| `utils/model-context.ts` | 144 | `context/model_context.py`(101) | ✅ **已核对一致**（见下） |
 | `config.ts` 的 Claude 回退 | — | `load_effective_settings()` | ✅ **已补齐** |
 | `tty-app.ts` + `tui/*` | ~3,500 | 已删除 | 🔶 用户明确放弃全屏 TUI |
+
+### 逐文件核对的结果（三处）
+
+**`utils/model-context.ts` · ✅ 完全一致**
+
+用脚本逐条比对（不是目测）：两侧都是 **22 条规则**，每条的**模式列表、
+上下文窗口、输出预留**以及**顺序**全部相同，未知模型回退也都是
+`128000 / 8000`。行数差异（144 vs 101）纯粹来自格式——TS 用多行对象，
+Python 用元组。
+
+**`mock-model.ts` · 🔶 有意差异（已核对，不打算改）**
+
+两侧的 mock 都有斜杠命令分支，但**这些分支在 CLI 路径下都不可达**——
+本地工具快捷方式解析器先拦截了（`/ls` `/read` `/write` `/edit` `/cmd`
+`/grep` 都在快捷方式表里）。原版也一样（`tty-app.ts` 在把输入交给模型之前
+先解析快捷方式）。
+
+所以差异是：
+- TS 的 mock 多 `/grep` `/cmd` `/edit` `/tools` 四个分支（**不可达**）
+- Python 的 mock 多 `/ask` `/boom` `/empty` `/progress`（**不可达**，
+  但 Python 的测试**直接调适配器**时会用它们来驱动特定路径）
+
+两边都是**测试辅助**，各自被自己的测试套件塑形。强行对齐等于：
+往 Python 里加四个死分支、再从 Python 拿走测试依赖的钩子。**没有收益，
+只有风险。** 因此明确记为有意差异，而不是悄悄留着。
+
+**`utils/web.ts` · ⚠️ 真正的能力缺口（下一个模块）**
+
+| 原版能力 | 本实现 |
+|---|---|
+| `fetchWithRetry`（429/5xx 与网络错误重试，退避 300ms × 2^n，上限 2 次） | ❌ 缺 |
+| 超时可配（`DEFAULT_TIMEOUT_MS = 12000`） | 部分 |
+| `allowed_domains` / `blocked_domains` 过滤（含子域匹配 `host.endsWith("." + domain)`） | ❌ 缺 |
+| 搜狗搜索源（`parseSogouSearch`） | ❌ 缺 |
+| `formatWebErrorMessage` 结构化错误 | ❌ 缺 |
+| DDG Lite 解析 | ✅ 有 |
+| 正文抽取 | ✅ 有 |
+
 
 ### `history.ts` 的对齐说明
 
