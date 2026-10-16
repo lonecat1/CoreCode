@@ -132,7 +132,17 @@ class ContextPipeline:
                 current = auto_result.messages
                 model_messages = current
                 # 真实转录被大幅重写，旧 span 的位置已经失效。
-                self.collapse_state = ContextCollapseState()
+                #
+                # **必须原地清空，不能替换引用。** 调用方（host）持有同一个
+                # state 对象，并把它持久化进会话文件；替换引用会让调用方继续
+                # 拿着过期 span 写盘。原版 `replaceContextCollapseState()` 也是
+                # 在原地同步调用方的对象（`args.contextCollapseState.spans =
+                # [...nextState.spans]`），这里保持一致。
+                #
+                # 症状本来不明显（投影时会过滤掉失效 span），但会话文件里会
+                # 一直累积指向已不存在消息的 span，而代码本处的不变量写着
+                # 「原地更新」——不变量与实际行为不一致，比数据脏更麻烦。
+                self._sync_collapse_state(ContextCollapseState())
                 if self.on_auto_compact:
                     self.on_auto_compact(auto_result)
 

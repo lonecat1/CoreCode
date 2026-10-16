@@ -53,6 +53,7 @@ MANAGE_CLI = os.path.join(REPO, "src", "minicode", "manage_cli.py")
 INSTALL = os.path.join(REPO, "src", "minicode", "install.py")
 MEMORY = os.path.join(REPO, "src", "minicode", "memory.py")
 MCP_HTTP = os.path.join(REPO, "src", "minicode", "mcp", "http_client.py")
+PIPELINE = os.path.join(REPO, "src", "minicode", "context", "pipeline.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -1383,6 +1384,38 @@ MUTATIONS = [
         '        if self.auth_token:\n            request_headers["Authorization"] = f"Bearer {self.auth_token}"',
         "        if False:\n"
         '            request_headers["Authorization"] = f"Bearer {self.auth_token}"',
+    ),
+    (
+        "管线: auto-compact 后替换引用而非原地清空（过期 span 写进会话文件）",
+        PIPELINE,
+        "                self._sync_collapse_state(ContextCollapseState())",
+        "                self.collapse_state = ContextCollapseState()",
+    ),
+    (
+        "管线: collapse 后不同步调用方的 state（共享状态失效）",
+        PIPELINE,
+        "        self._sync_collapse_state(collapse_result.state)",
+        "        self.collapse_state = collapse_result.state",
+    ),
+    (
+        "管线: auto-compact 不再限于 step 0（反复触发）",
+        PIPELINE,
+        "        if step == 0:",
+        "        if True:",
+    ),
+    (
+        "管线: snip 每回合不再限一次（每步都重试）",
+        PIPELINE,
+        "        if not self.snipped_this_turn:",
+        "        if True:",
+    ),
+    (
+        "管线: 没有模型名时仍然尝试压缩（算不出窗口）",
+        PIPELINE,
+        "        if not model_name:\n"
+        "            # 没有模型名就算不出窗口，四级压缩全部跳过。\n"
+        "            return current, current",
+        "        if False:\n            return current, current",
     ),
 ]
 

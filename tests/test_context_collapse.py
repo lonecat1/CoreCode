@@ -407,6 +407,21 @@ class ApplyCollapseTests(unittest.TestCase):
 
 
 class AutoCompactTests(unittest.TestCase):
+    def setUp(self) -> None:
+        """复位 auto-compact 的**进程级熔断器**。
+
+        那是一个模块级可变状态（`compact._state`），一旦某个用例把它跑到
+        `disabled = True`，**同进程内后续所有用例的 auto-compact 都会静默失效**。
+
+        不隔离的后果不是「测试报错」，而是**测试因为错误的原因通过**：
+        本文件下面的 `PipelineTests` 会以为 auto-compact 没触发是因为阈值没到，
+        实际是因为上一个用例把它关了。这条隔离是补测试时才发现的。
+        """
+        reset_auto_compact_state()
+
+    def tearDown(self) -> None:
+        reset_auto_compact_state()
+
     def test_api_round_grouping_keeps_tool_pairs_together(self) -> None:
         messages = [
             user("u1"),
@@ -623,6 +638,13 @@ class BatchBudgetTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        """复位进程级熔断器——理由见 `AutoCompactTests.setUp`。"""
+        reset_auto_compact_state()
+
+    def tearDown(self) -> None:
+        reset_auto_compact_state()
+
     def test_below_all_thresholds_changes_nothing(self) -> None:
         pipeline = ContextPipeline(model_adapter=ScriptedAdapter([]))
         messages = [user("hi", "u1"), assistant("ok", "a1")]
@@ -684,6 +706,195 @@ class PipelineTests(unittest.TestCase):
         self.assertIs(pipeline.collapse_state, shared)
         pipeline.prepare([user("hi")], step=0, model_name=MODEL)
         self.assertIs(pipeline.collapse_state, shared)
+
+    def test_collapse_step_syncs_the_shared_state_in_place(self) -> None:
+        """**collapse 真正跑过之后也要保持同一性。**
+
+        上面那条用 `model_adapter=None`，而 collapse 需要模型生成摘要——
+        它根本不会执行。于是「collapse 之后替换引用」这个变异能存活：
+        用 None 适配器时 `apply_context_collapse_if_needed` 原样返回同一个
+        state 对象，替换与原地更新没有区别。
+
+        这条用一个真会折叠的适配器把那条路径走通。
+        """
+        shared = create_context_collapse_state()
+        adapter = ScriptedAdapter(["<summary>折叠摘要</summary>"])
+        pipeline = ContextPipeline(model_adapter=adapter, collapse_state=shared)
+        # **先跳过 snip。**
+        #
+        # 管线的顺序是 snip（阈值 70%）→ microcompact → collapse（阈值 75%）。
+        # 利用率 100% 时 snip 会先删掉一大段，把它降到 75% 以下，collapse
+        # 于是不再触发——这是**正确的**管线行为，不是缺陷。
+        # 要单独观察 collapse 就必须让它先「本回合已 snip 过」。
+        pipeline.snipped_this_turn = True
+
+        # 造一个够大、够多的历史：collapse 的阈值是 75%，
+        # 且候选区间必须落在「尾部保留窗口」之前——
+        # `CONTEXT_COLLAPSE_KEEP_RECENT_MESSAGES = 12`，所以消息数要多于 12，
+        # 否则 `protectedStart` 算出来是 0，候选直接为空。
+        messages = [
+            {
+                "role": "user" if index % 2 == 0 else "assistant",
+                "content": filler(40_000),
+                "id": f"m{index}",
+            }
+            for index in range(20)
+        ]
+        pipeline.prepare(messages, step=0, model_name=MODEL)
+
+        self.assertIs(pipeline.collapse_state, shared, "collapse 后必须仍是同一个对象")
+        self.assertTrue(shared.spans, "这次折叠真的发生了（否则本条测不到东西）")
+
+    def test_auto_compact_only_runs_on_the_first_step(self) -> None:
+        """**auto-compact 只在 step 0 尝试。**
+
+        它是最重的手段（要调模型），每步都试会让一个回合里反复触发摘要调用。
+        原版写着 `if (step === 0 && modelName)`。
+
+        这条用同一个超限历史分别跑 step=0 与 step=1，断言后者一次都不调模型。
+        """
+        def build():
+            return [
+                {
+                    "role": "user" if index % 2 == 0 else "assistant",
+                    "content": filler(80_000),
+                    "id": f"m{index}",
+                }
+                for index in range(8)
+            ]
+
+        first = ScriptedAdapter(["<summary>摘要</summary>"] * 4)
+        ContextPipeline(model_adapter=first).prepare(build(), step=0, model_name=MODEL)
+        self.assertGreater(first.calls, 0, "step 0 应当尝试 auto-compact")
+
+        later = ScriptedAdapter(["<summary>摘要</summary>"] * 4)
+        ContextPipeline(model_adapter=later).prepare(build(), step=1, model_name=MODEL)
+        self.assertEqual(later.calls, 0, "step > 0 不该尝试 auto-compact")
+
+    def test_snip_runs_at_most_once_per_turn(self) -> None:
+        """**snip 每回合最多成功一次。**
+
+        它是纯本地删除，但会整段改写转录；每步都重试会让一个回合内的历史
+        反复变动，模型看到的上下文前后不一致。
+        """
+        shared_state = create_context_collapse_state()
+        adapter = ScriptedAdapter(["<summary>摘要</summary>"] * 4)
+        pipeline = ContextPipeline(model_adapter=adapter, collapse_state=shared_state)
+
+        snaps: list[bool] = []
+        pipeline.on_snip = lambda result: snaps.append(result.did_snip)
+
+        # 够大、够多，且满足 snip 的「至少删 6 条」。
+        messages = [
+            {
+                "role": "user" if index % 2 == 0 else "assistant",
+                "content": filler(40_000),
+                "id": f"m{index}",
+            }
+            for index in range(20)
+        ]
+
+        pipeline.prepare(messages, step=0, model_name=MODEL)
+        first_round = list(snaps)
+        # 同一个回合内再走几步
+        pipeline.prepare(messages, step=1, model_name=MODEL)
+        pipeline.prepare(messages, step=2, model_name=MODEL)
+
+        self.assertLessEqual(
+            sum(1 for _ in first_round), 1, "一个回合内 snip 至多成功一次"
+        )
+        self.assertLessEqual(sum(1 for _ in snaps), 1, "跨步也不该再次 snip")
+
+    def test_no_model_name_skips_collapse_even_with_a_large_history(self) -> None:
+        """**没有模型名时四级压缩全部跳过。**
+
+        算不出窗口就没有阈值，任何压缩都是盲猜。原版与本实现都在入口处
+        直接返回。
+
+        上面那条 `test_no_model_name_skips_everything` 用的是单条 200k 字符的
+        消息——即使不提前返回，各级也会因为「消息太少」而拒绝，所以它**测不出
+        这个提前返回**。这条用「一定会触发各级阈值」的历史，唯一让它们不动的
+        原因只能是提前返回。
+        """
+        shared = create_context_collapse_state()
+        adapter = ScriptedAdapter(["<summary>摘要</summary>"] * 4)
+        pipeline = ContextPipeline(model_adapter=adapter, collapse_state=shared)
+
+        messages = [
+            {
+                "role": "user" if index % 2 == 0 else "assistant",
+                "content": filler(80_000),
+                "id": f"m{index}",
+            }
+            for index in range(10)
+        ]
+
+        current, projected = pipeline.prepare(messages, step=0, model_name="")
+
+        self.assertIs(current, messages, "真实转录不该被改动")
+        self.assertIs(projected, messages, "投影不该被改动")
+        self.assertEqual(adapter.calls, 0, "不该为了压缩去调模型")
+        self.assertEqual(shared.spans, [], "不该产生折叠 span")
+
+    def test_auto_compact_clears_the_shared_state_in_place(self) -> None:
+        """**auto-compact 之后必须在原地清空，而不是替换引用。**
+
+        上面那条测试用 `model_adapter=None`，因此 `_maybe_auto_compact`
+        直接返回 None——**auto-compact 这条分支从未被走到**，替换引用的
+        缺陷因此逃过。
+
+        症状本来是隐蔽的：投影时会过滤掉失效 span，所以模型看不到错误内容。
+        但 `host` 持有同一个 state 并把**它**写进会话文件，替换引用会让
+        会话文件里一直累积指向已不存在消息的 span；而本文件的不变量写着
+        「原地更新」——不变量与实际行为不一致，比数据脏更麻烦。
+
+        原版 `replaceContextCollapseState()` 同样在原地同步调用方的对象。
+        """
+        shared = create_context_collapse_state()
+        # 造一个已经折叠过一段的 state，并把它交给管线。
+        shared.spans.append(
+            CollapseSpan(
+                id="span-1",
+                start_message_id="m1",
+                end_message_id="m2",
+                message_ids=["m1", "m2"],
+                summary="旧摘要",
+                tokens_before=10_000,
+                tokens_after=1_000,
+                created_at=0,
+            )
+        )
+        shared.consecutive_failures = 2
+
+        pipeline = ContextPipeline(
+            model_adapter=ScriptedAdapter(["<summary>压缩后的摘要</summary>"]),
+            collapse_state=shared,
+        )
+
+        # 造一个足够大的历史，让 warningLevel 达到 blocked（>= 0.95）。
+        #
+        # 两个门槛都要过，否则这条测试会「因为错误的原因通过」：
+        #   ① 利用率要够高（8 × 80000 字符 → util = 1.000）；
+        #   ② `compact_conversation` 要求**非 system 消息多于 6 条**
+        #      （`len(non_system) <= MIN_KEEP_MESSAGES` 时直接返回 None）。
+        # 只满足其中一个时，auto-compact 会被拒，而断言失败看起来像
+        # 「状态没清空」——实际是根本没走到那一步。
+        messages = [
+            {
+                "role": "user" if index % 2 == 0 else "assistant",
+                "content": filler(80_000),
+                "id": f"m{index}",
+            }
+            for index in range(8)
+        ]
+
+        pipeline.prepare(messages, step=0, model_name=MODEL)
+
+        # ① 对象还是同一个（宿主能持久化到它）
+        self.assertIs(pipeline.collapse_state, shared)
+        # ② 数据已被清空（失效 span 不会写进会话文件）
+        self.assertEqual(shared.spans, [])
+        self.assertEqual(shared.consecutive_failures, 0)
 
 
 if __name__ == "__main__":
