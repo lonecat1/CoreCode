@@ -28,17 +28,40 @@
 **做过数据级比对（逐条拉出常量表/集合比对）的模块**：
 `utils/model-context.ts`（22 条规则）、`utils/context.ts`（18 条规则）、
 `tools/index.ts`（4 个注册表集合）、`cli-commands.ts`（29 个命令名）、
-`utils/web.ts`（逐函数 + 端点/解析器配对）。
+`utils/web.ts`（逐函数 + 端点/解析器配对）、
+`compact/constants.ts`（22 个值 + 零引用常量核实）、
+`utils/token-estimator.ts`（warningLevel 阈值 0.95/0.85/0.50 + `CLEAR_MARKER`）、
+`compact/snipCompact.ts`（`PROTECTED_TOOL_NAMES` / `ERROR_MARKERS` /
+子串保护分支 / 边界角色，15 个用例）、
+**全仓 265 个模块级常量**（`tools/check_constants.py`，零孤儿）。
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
-`agent-loop.ts` · `compact/*`（`constants.ts` 的 `LIMITS`/`RETENTION`/
-`THRESHOLDS`、`context-collapse.ts` 的常量）· `permissions.ts` ·
-`mcp.ts` · `session.ts` · `memory.ts` · `skills.ts` · `agents/*` ·
-`goal/*` · `loop/*` · `plan/*` · `runtime/*` · `utils/token-estimator.ts` ·
+`agent-loop.ts` · `compact/context-collapse.ts`（其常量已核对，但算法内部的
+判定阈值未逐条验证）· `permissions.ts` · `mcp.ts` · `session.ts` · `memory.ts` ·
+`skills.ts` · `agents/*` · `goal/*` · `loop/*` · `plan/*` · `runtime/*` ·
 `utils/tool-result-storage.ts` · `prompt.ts` · `types.ts`
 
 这些模块的**行为**经过对照与测试，但它们内部的**常量表与阈值**没有逐条验证过
 ——而 `utils/context.ts` 恰恰就是在这类地方出问题的。
+
+### 三个可复用的核查动作
+
+已经固化成脚本，不是一次性劳动：
+
+| 脚本 | 查什么 | 当前结果 |
+|---|---|---|
+| `tools/check_imports.py` | 相对导入是否存在、名字是否真的定义、有没有从未被导入的模块 | 78 个模块全通过 |
+| `tools/check_constants.py` | 模块级常量的「谁在用」：零引用 / 仅测试引用 / **伪引用**（只在注释里出现） | 265 个常量，零孤儿 |
+| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 181 条，0 歧义 0 无效 |
+
+**「伪引用」那一类是这套检查的主要价值**：常量只在注释或 docstring 里被
+提到时，扫一眼会觉得「有引用」，而实际没有任何代码读它。我自己就被骗过一次
+——把 `MIN_KEEP_TOKENS` 的注释行当成了「有人在用」。
+
+（原版有 4 个零引用常量，本实现删掉 3 个、接线 1 个。另外把整套**导入期路径
+快照**（8 个）也删了——它们的注释写着「仅供展示」，而实际零引用，且那句注释
+会诱导后来者在需要展示路径时选中它们、重新引入「显示了一个并不生效的路径」
+这个 bug。）
 
 核对的副产品是修掉了 7 个既有缺陷（见「顺带修掉的既有缺陷」），
 它们的共同特征是**静默**：不报错，只是行为不对。
@@ -311,6 +334,9 @@ Python 用元组。
 | **启动横幅右边框每行错开一列** | 内容行宽 75、边框行宽 76（可用宽度比正确值少 1）。启动横幅是用户看到的第一样东西，错位很显眼。之前没被发现，一部分原因是核对时按**字符数**看而不是**显示宽度**——横幅里有中文与全角括号。 |
 | **输出 token 上限的规则表是自拟的粗粒度子串** | 原版是 18 条精确模式；本实现是 10 条粗粒度子串。这不是「数字略有出入」而是**静默截断用户配置**：用户设 `maxOutputTokens: 16000`、模型 `deepseek-v4-pro` 时，原版保留 16000，粗粒度 `deepseek` 规则砍成 8192 且不报错。症状是「长回答被莫名截断」，而用户对照自己的配置看不出原因。 |
 | **`load_runtime_config` 的参数遮蔽同名函数** | 参数名 `settings_path` 与模块级 `settings_path()` 同名，函数体内调用它会得到 `'WindowsPath' object is not callable`。它是**修「凭据报错不指明位置」时才暴露的**——原来的报错文案是静态字符串，不调用该函数。 |
+| **整套导入期路径快照零引用（8 个）** | `SETTINGS_PATH` / `HISTORY_PATH` / `PERMISSIONS_PATH` / `MCP_PATH` / `MCP_TOKENS_PATH` / `PROJECTS_DIR` / `TOOL_RESULTS_DIR` / `MINICODE_HOME` 注释写着「仅供展示（如 /status 打印路径）」，实际**没有任何地方展示它们**。错注释比没有注释更糟：它让人在需要展示路径时正好选中这些快照。已整块删除。 |
+| **`/permissions` 与两处报错用快照而非动态访问器** | `/permissions` 显示的存储路径来自导入期快照，`MINICODE_HOME` 变化后指向**并不生效**的位置——用户按它去找自己的授权规则会找不到。`load_runtime_config` 的报错与摘要同样退到快照。三处都改用动态访问器。 |
+| **`GLYPH_OK` / `GLYPH_FAIL` 有定义却被硬编码绕过** | theme.py 写着「哪些颜色被用到是可以被检查的」，而字形常量在 `cli.py` 与 `cli_commands.py` 里被写成字面量 `'✓'`/`'✗'`。已接线并补上导出。顺带清掉来自已移除全屏 TUI 的 8 个零引用色号。 |
 
 ### 关于「已对齐」这份清单的可信度
 
