@@ -46,6 +46,9 @@
 | `mcp.ts` | 初始化探测超时 1200ms / 初始化超时 10000ms |
 | `memory.ts` | 候选清单 6 项与顺序、两个字符上限、`@` 引用语法 |
 | `permissions.ts` | 无内置名单（只读/开发命令表在 `run-command.ts`，已核对） |
+| `runtime/session-runtime.ts` | `submit` 的四级优先级、`command` 的 `/loop` `/goal` 分发、`assertIdle` 的三条检查 |
+| `listener/scheduler.ts`（即 `loop/scheduler.ts`） | 间隔文法两条规则 + 默认/最小/最大间隔 |
+| `agent-loop.ts` | 无模块级常量与数值阈值（纯逻辑）；压缩阶段顺序逐条对照 |
 | **全仓 266 个模块级常量** | `tools/check_constants.py`，零孤儿 |
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
@@ -361,6 +364,9 @@ Python 用元组。
 | **`memory` 的 `@` 引用行只判字面空格** | 原版是 `/^@([^\s]+)\s*$/`，`\s` 涵盖制表符。早先用 `" " in stripped`，于是 `@foo\tbar` 被当成引用，产出 `include skipped: not found`——看起来像「文件不存在」，而实际是「这行根本不是引用」。 |
 | **`memory` 的 `visited` 从不移除** | 原版在递归返回后 `visited.delete(...)`（DFS 栈语义），同一文件可从不同分支各包含一次。本实现从不移除，第二次包含同一个文件会报 `cycle detected`——**原因说错了**，且**内容静默缺失**。 |
 | **`mcp/http_client.py` 完全未覆盖（228 行）** | 全部 66 个生产模块里唯一一个测试从未点名的。已补 52 项测试。 |
+| **`/loop` 的间隔文法自拟** | 原版 `/^(\d+(?:\.\d+)?)(m\|h)$/` 支持小数并拒绝「像数字但格式不对」的前缀；本实现是另一套文法。于是 `/loop 1.5h do it` 从「90 分钟、prompt 是 do it」变成「**10 分钟**、prompt 是 1.5h do it」——用户要 90 分钟得到 10 分钟，不报错。 |
+| **auto-compact 之后替换引用而非原地清空** | 原版 `replaceContextCollapseState()` 会同步调用方持有的对象；本实现只替换内部引用，于是 `host` 继续拿着过期 span 写进会话文件——与同文件「必须原地更新」的不变量矛盾。 |
+| **auto-compact 的进程级熔断器在测试间泄漏** | `compact._state` 是模块级可变状态，`AutoCompactTests` 专测「连续失败熔断」会把它置为 disabled 且**从不复位**（`reset_auto_compact_state` 被导入却从未调用）。后果不是测试报错，而是**测试因为错误的原因通过**。 |
 
 ### 关于「已对齐」这份清单的可信度
 
