@@ -1,11 +1,34 @@
 """上下文工程的阈值常量。
 
-全部阈值集中在这里，是**唯一事实来源**。原 TypeScript 实现把这些值散落在
-`constants.ts` 与 `token-estimator.ts` 两处硬编码重复，本实现收敛为一处。
+## 为什么集中在这里
 
-有一处刻意的差异：原实现定义了 `BLOCKED_UTILIZATION` / `MIN_KEEP_TOKENS` /
-`PTL_MAX_RETRIES` / `SUMMARY_MAX_OUTPUT_TOKENS` 四个常量但**从未引用**。
-本实现不复刻它们——保留零引用的常量只会误导后来者。
+原 TypeScript 实现把这些值散落在 `constants.ts` 与 `token-estimator.ts` 两处
+硬编码重复。本实现收敛为一处——**收敛工作本身也出过纰漏**：
+`SUMMARY_MAX_OUTPUT_TOKENS` 曾在 `constants.py` 与 `compact.py` 各定义一份
+（值相同、互不引用、**两处都没人用**），是核对常量表时发现的。现已删除。
+
+## 关于零引用常量（逐条核实过，不是印象）
+
+原实现有四个常量**只在定义处出现**，从不被引用：
+
+    SUMMARY_MAX_OUTPUT_TOKENS   仅 constants.ts:29
+    PTL_MAX_RETRIES             仅 constants.ts:30
+    MIN_KEEP_TOKENS             仅 constants.ts:23
+    BLOCKED_UTILIZATION         仅 constants.ts:4
+
+（`MAX_KEEP_TOKENS` 不在此列——它在 `compact.ts` 里真被用到。）
+
+本实现的处理，**每一个都经过"删除后跑全量测试"验证**：
+
+    SUMMARY_MAX_OUTPUT_TOKENS  **删除**（原版零引用；本实现的两份也都零引用）
+    PTL_MAX_RETRIES            **不复刻**（零引用）
+    MIN_KEEP_TOKENS            **不复刻**（零引用；它与 MAX_KEEP_TOKENS 的
+                               "成对"关系没有代码依据）
+    BLOCKED_UTILIZATION        **保留并真正接线**——`tokens.py:40,246`
+                               用它算 warningLevel
+
+"保留一个零引用常量"的代价不是几行代码，而是**后来者会以为它生效**。
+核对时常量表要连着"谁在用"一起看，否则删了会坏、留着会骗。
 
 调整这些值会直接影响长会话的行为，改动前请先看 docs/spec-context.md 的护栏说明。
 """
@@ -72,9 +95,10 @@ WARNING_UTILIZATION = MICROCOMPACT_UTILIZATION
 KEEP_RECENT_TOOL_RESULTS = 3
 #: auto-compact 至少保留几条非 system 消息。
 MIN_KEEP_MESSAGES = 6
-#: auto-compact 尾部保留区的 token 下限。
-MIN_KEEP_TOKENS = 10_000
 #: auto-compact 尾部保留区的 token 上限。
+#:
+#: **没有 `MIN_KEEP_TOKENS` 配对常量**：原版定义了它但从未引用（见模块 docstring），
+#: 本实现不复刻。上限本身在 `compact.py` 里被真正使用。
 MAX_KEEP_TOKENS = 40_000
 
 #: microcompact 的替换文本。精确匹配，不要改动（模型见过这个标记）。

@@ -50,8 +50,14 @@ STALE_REASON = "conversation was compacted after this provider usage was recorde
 #: 摘要不需要看到完整输出，截断能显著降低这次额外调用的成本。
 SUMMARY_TOOL_RESULT_LIMIT = 500
 
-#: 摘要请求的最大输出 token。
-SUMMARY_MAX_OUTPUT_TOKENS = 4_096
+# 这里曾有一个 `SUMMARY_MAX_OUTPUT_TOKENS = 4_096`。
+#
+# 它**从未被使用**——摘要请求的 max_tokens 由 `resolve_max_output_tokens`
+# 统一决定（见 config.py），并不读这个常量。原版 `compact/constants.ts:29`
+# 也定义了同名常量且同样零引用，本实现把它连着一起继承了。
+#
+# 核对常量表时删除。零引用常量的代价不是几行代码，而是**后来者会以为它生效**：
+# 改这里的数字不会改变任何行为，而改动者会以为改了。
 
 
 # ---------------------------------------------------------------------------
