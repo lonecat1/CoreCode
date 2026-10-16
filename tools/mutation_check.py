@@ -52,6 +52,7 @@ WEB_TOOLS = os.path.join(REPO, "src", "minicode", "tools", "web.py")
 MANAGE_CLI = os.path.join(REPO, "src", "minicode", "manage_cli.py")
 INSTALL = os.path.join(REPO, "src", "minicode", "install.py")
 MEMORY = os.path.join(REPO, "src", "minicode", "memory.py")
+MCP_HTTP = os.path.join(REPO, "src", "minicode", "mcp", "http_client.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -1323,6 +1324,65 @@ MUTATIONS = [
         MEMORY,
         "        if depth >= MAX_INCLUDE_DEPTH:",
         "        if False:",
+    ),
+    (
+        "MCP-HTTP: accept 声明 SSE（服务器选中我们走不通的路径）",
+        MCP_HTTP,
+        '            "accept": "application/json",',
+        '            "accept": "application/json, text/event-stream",',
+    ),
+    (
+        "MCP-HTTP: 通知也带上 id（不再是 JSON-RPC 通知）",
+        MCP_HTTP,
+        "        if not notify:\n            payload[\"id\"] = self._next_id\n            self._next_id += 1",
+        "        if True:\n            payload[\"id\"] = self._next_id\n            self._next_id += 1",
+    ),
+    (
+        "MCP-HTTP: 已关闭的连接仍然发送（状态失效）",
+        MCP_HTTP,
+        '        if self._closed:\n            raise McpHttpError("连接已关闭。")',
+        "        if False:\n"
+        '            raise McpHttpError("连接已关闭。")',
+    ),
+    (
+        "MCP-HTTP: JSON-RPC error 被当成正常结果（错误静默）",
+        MCP_HTTP,
+        '        rpc_error = parsed.get("error")\n'
+        "        if isinstance(rpc_error, dict):\n"
+        '            raise McpHttpError(str(rpc_error.get("message") or "unknown error"))',
+        '        rpc_error = parsed.get("error")\n        if False:\n'
+        '            raise McpHttpError(str(rpc_error.get("message") or "unknown error"))',
+    ),
+    (
+        "MCP-HTTP: HTTP 错误不再带状态码（无法诊断）",
+        MCP_HTTP,
+        '            raise McpHttpError(" | ".join(parts), status=error.code) from error',
+        '            raise McpHttpError(" | ".join(parts)) from error',
+    ),
+    (
+        "MCP-HTTP: 401 不再附鉴权提示（用户不知道去哪授权）",
+        MCP_HTTP,
+        "            hint = _extract_auth_hint(error.headers)\n"
+        "            parts = [f\"HTTP {error.code} {error.reason}\", f\"服务器 {self.name}\"]\n"
+        "            if hint:\n                parts.append(f\"AUTH: {hint}\")",
+        "            hint = _extract_auth_hint(error.headers)\n"
+        "            parts = [f\"HTTP {error.code} {error.reason}\", f\"服务器 {self.name}\"]\n"
+        "            if False:\n                parts.append(f\"AUTH: {hint}\")",
+    ),
+    (
+        "MCP-HTTP: 非 JSON 响应不再报错（返回空结果）",
+        MCP_HTTP,
+        '        except json.JSONDecodeError as error:\n            raise McpHttpError(\n'
+        '                f"服务器 {self.name} 返回了非 JSON 内容：{raw.strip()[:200]}"\n'
+        "            ) from error",
+        "        except json.JSONDecodeError as error:\n            return {}",
+    ),
+    (
+        "MCP-HTTP: bearer token 不再发送（认证失败）",
+        MCP_HTTP,
+        '        if self.auth_token:\n            request_headers["Authorization"] = f"Bearer {self.auth_token}"',
+        "        if False:\n"
+        '            request_headers["Authorization"] = f"Bearer {self.auth_token}"',
     ),
 ]
 
