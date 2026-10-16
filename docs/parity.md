@@ -26,23 +26,44 @@
 「已验证已对齐」，而它的规则表其实是自拟的，并且因此静默截断用户配置。
 
 **做过数据级比对（逐条拉出常量表/集合比对）的模块**：
-`utils/model-context.ts`（22 条规则）、`utils/context.ts`（18 条规则）、
-`tools/index.ts`（4 个注册表集合）、`cli-commands.ts`（29 个命令名）、
-`utils/web.ts`（逐函数 + 端点/解析器配对）、
-`compact/constants.ts`（22 个值 + 零引用常量核实）、
-`utils/token-estimator.ts`（warningLevel 阈值 0.95/0.85/0.50 + `CLEAR_MARKER`）、
-`compact/snipCompact.ts`（`PROTECTED_TOOL_NAMES` / `ERROR_MARKERS` /
-子串保护分支 / 边界角色，15 个用例）、
-**全仓 265 个模块级常量**（`tools/check_constants.py`，零孤儿）。
+
+| TS 模块 | 比对内容 |
+|---|---|
+| `utils/model-context.ts` | 22 条规则（模式/窗口/预留/顺序） |
+| `utils/context.ts` | 18 条输出上限规则 + 兜底值 |
+| `tools/index.ts` | 4 个注册表集合（12/13/17/6） |
+| `cli-commands.ts` | 29 个命令名 |
+| `utils/web.ts` | 逐函数 + 端点/解析器配对 |
+| `compact/constants.ts` | 22 个值 + 零引用常量核实 |
+| `utils/token-estimator.ts` | warningLevel 阈值 0.95/0.85/0.50 + `CLEAR_MARKER` |
+| `compact/snipCompact.ts` | `PROTECTED_TOOL_NAMES` / `ERROR_MARKERS` / 子串保护分支 / 边界角色（15 个用例） |
+| `compact/context-collapse.ts` | 汇总开销比 0.15 与下限 128 |
+| `utils/tool-result-storage.ts` | 6 个常量 + 预览的「最后一个换行超过 50% 才切」规则 |
+| `session.ts` | 12 个事件类型（JSONL 磁盘契约）+ `MAX_TITLE_LENGTH` |
+| `agents/types.ts` | `MAX_SUB_AGENTS=3` / `MAX_SUB_AGENT_STEPS=20` / 4 个状态 |
+| `goal/manager.ts` | `goalUpdateSchema` 的三支判别联合与各自必填项 |
+| `loop/scheduler.ts` | `DEFAULT_LOOP_INTERVAL=600000` / `MAX_LOOP_INTERVAL=2147483647` |
+| `mcp.ts` | 初始化探测超时 1200ms / 初始化超时 10000ms |
+| `memory.ts` | 候选清单 6 项与顺序、两个字符上限、`@` 引用语法 |
+| `permissions.ts` | 无内置名单（只读/开发命令表在 `run-command.ts`，已核对） |
+| **全仓 266 个模块级常量** | `tools/check_constants.py`，零孤儿 |
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
-`agent-loop.ts` · `compact/context-collapse.ts`（其常量已核对，但算法内部的
-判定阈值未逐条验证）· `permissions.ts` · `mcp.ts` · `session.ts` · `memory.ts` ·
-`skills.ts` · `agents/*` · `goal/*` · `loop/*` · `plan/*` · `runtime/*` ·
-`utils/tool-result-storage.ts` · `prompt.ts` · `types.ts`
+`agent-loop.ts`（681 行，主要逻辑模块）· `prompt.ts` · `types.ts` ·
+`skills.ts` · `runtime/*` 的算法内部阈值 · `agents/manager.ts` 的调度细节 ·
+`mcp/bridge.py` 的状态机
 
 这些模块的**行为**经过对照与测试，但它们内部的**常量表与阈值**没有逐条验证过
 ——而 `utils/context.ts` 恰恰就是在这类地方出问题的。
+
+### 测试覆盖映射
+
+用「模块 → 测试是否点名」扫过全部 66 个生产模块，**唯一完全未覆盖的是
+`mcp/http_client.py`（228 行）**，已补上 52 项测试。
+
+做法值得保留：**没有测试的地方就是差异藏身处**。`memory.py` 就是这样藏了
+两处（`@` 引用行的空白判定、`visited` 的 DFS 语义），而它在补测试之前
+一处都没被发现。
 
 ### 三个可复用的核查动作
 
@@ -337,6 +358,9 @@ Python 用元组。
 | **整套导入期路径快照零引用（8 个）** | `SETTINGS_PATH` / `HISTORY_PATH` / `PERMISSIONS_PATH` / `MCP_PATH` / `MCP_TOKENS_PATH` / `PROJECTS_DIR` / `TOOL_RESULTS_DIR` / `MINICODE_HOME` 注释写着「仅供展示（如 /status 打印路径）」，实际**没有任何地方展示它们**。错注释比没有注释更糟：它让人在需要展示路径时正好选中这些快照。已整块删除。 |
 | **`/permissions` 与两处报错用快照而非动态访问器** | `/permissions` 显示的存储路径来自导入期快照，`MINICODE_HOME` 变化后指向**并不生效**的位置——用户按它去找自己的授权规则会找不到。`load_runtime_config` 的报错与摘要同样退到快照。三处都改用动态访问器。 |
 | **`GLYPH_OK` / `GLYPH_FAIL` 有定义却被硬编码绕过** | theme.py 写着「哪些颜色被用到是可以被检查的」，而字形常量在 `cli.py` 与 `cli_commands.py` 里被写成字面量 `'✓'`/`'✗'`。已接线并补上导出。顺带清掉来自已移除全屏 TUI 的 8 个零引用色号。 |
+| **`memory` 的 `@` 引用行只判字面空格** | 原版是 `/^@([^\s]+)\s*$/`，`\s` 涵盖制表符。早先用 `" " in stripped`，于是 `@foo\tbar` 被当成引用，产出 `include skipped: not found`——看起来像「文件不存在」，而实际是「这行根本不是引用」。 |
+| **`memory` 的 `visited` 从不移除** | 原版在递归返回后 `visited.delete(...)`（DFS 栈语义），同一文件可从不同分支各包含一次。本实现从不移除，第二次包含同一个文件会报 `cycle detected`——**原因说错了**，且**内容静默缺失**。 |
+| **`mcp/http_client.py` 完全未覆盖（228 行）** | 全部 66 个生产模块里唯一一个测试从未点名的。已补 52 项测试。 |
 
 ### 关于「已对齐」这份清单的可信度
 
