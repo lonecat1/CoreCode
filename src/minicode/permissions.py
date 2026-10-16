@@ -31,11 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .abort import throw_if_aborted
-from .config import MINICODE_HOME, permissions_path
-
-#: 导入期快照，**仅供展示**（如 `/permissions` 显示路径）。
-#: 读写一律走 `permissions_path()`——见 `read_permission_store` 的说明。
-PERMISSIONS_PATH = MINICODE_HOME / "permissions.json"
+from .config import permissions_path
 
 # ---------------------------------------------------------------------------
 # 决策与请求

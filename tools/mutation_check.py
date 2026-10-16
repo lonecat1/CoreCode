@@ -724,26 +724,32 @@ MUTATIONS = [
     (
         "配置: Claude 路径跟随 MINICODE_HOME（自我引用 / 破坏隔离）",
         CONFIG,
-        '    return Path.home() / ".claude" / "settings.json"\n\n\n#: 导入期快照',
-        '    return minicode_home() / ".claude" / "settings.json"\n\n\n#: 导入期快照',
+        '    return Path.home() / ".claude" / "settings.json"\n\n\n'
+        "#: Claude Code 的配置文件路径快照。",
+        '    return minicode_home() / ".claude" / "settings.json"\n\n\n'
+        "#: Claude Code 的配置文件路径快照。",
     ),
     (
-        "配置: 读设置回退到导入期快照（MINICODE_HOME 变化后读错文件）",
+        "配置: settings_path 返回固定路径（MINICODE_HOME 变化后失效）",
         CONFIG,
-        "    target = path or settings_path()\n    try:\n        raw = target.read_text(encoding=\"utf-8\")",
-        "    target = path or SETTINGS_PATH\n    try:\n        raw = target.read_text(encoding=\"utf-8\")",
+        'def settings_path() -> Path:\n    return minicode_home() / "settings.json"',
+        'def settings_path() -> Path:\n    return Path.home() / ".mini-code" / "settings.json"',
     ),
     (
-        "配置: 写设置回退到导入期快照（/model 写到错误位置）",
+        "配置: permissions_path 返回固定路径（授权规则静默失效）",
         CONFIG,
-        "    target = path or settings_path()\n    existing = read_settings_file(target)",
-        "    target = path or SETTINGS_PATH\n    existing = read_settings_file(target)",
+        'def permissions_path() -> Path:\n    return minicode_home() / "permissions.json"',
+        'def permissions_path() -> Path:\n    return Path.home() / ".mini-code" / "permissions.json"',
     ),
     (
-        "权限: 存储读写回退到导入期快照（授权规则静默失效）",
-        PERMISSIONS,
-        "    target = path or permissions_path()\n    try:\n        raw = target.read_text(encoding=\"utf-8\")",
-        "    target = path or PERMISSIONS_PATH\n    try:\n        raw = target.read_text(encoding=\"utf-8\")",
+        "配置: minicode_home 忽略 MINICODE_HOME（测试隔离与运行时改配置失效）",
+        CONFIG,
+        "def minicode_home() -> Path:\n"
+        '    """当前生效的家目录。每次调用重新读取环境变量。"""\n'
+        "    return _home_dir()",
+        "def minicode_home() -> Path:\n"
+        '    """当前生效的家目录。每次调用重新读取环境变量。"""\n'
+        "    return Path.home() / \".mini-code\"",
     ),
     (
         "MCP: 未知状态被算作 connected（数字看起来正常但是错的）",

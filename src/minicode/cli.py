@@ -43,6 +43,10 @@ from .types import ModelAdapter
 from .ui import (
     COLOR_HINT,
     COLOR_USER,
+    GLYPH_BULLET,
+    GLYPH_FAIL,
+    GLYPH_OK,
+    GLYPH_TOOL,
     ConsoleUI,
     build_console_ui,
     paint,
@@ -426,10 +430,10 @@ def main(argv: list[str] | None = None) -> int:
 
     callbacks = HostCallbacks(
         on_assistant=lambda text, is_final: print(f"\n{text}\n"),
-        on_progress=lambda text: print(f"  · {text}"),
-        on_tool_start=lambda name, data: print(f"  → {name}"),
+        on_progress=lambda text: print(f"  {GLYPH_BULLET} {text}"),
+        on_tool_start=lambda name, data: print(f"  {GLYPH_TOOL} {name}"),
         on_tool_result=lambda name, output, is_error: print(
-            f"  {'✗' if is_error else '✓'} {name}"
+            f"  {GLYPH_FAIL if is_error else GLYPH_OK} {name}"
         ),
         on_notice=lambda text: print(f"\n{text}\n"),
     )

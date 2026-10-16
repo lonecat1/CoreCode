@@ -26,17 +26,24 @@ import os
 
 # ---------------------------------------------------------------------------
 # 基础 SGR
+#
+# **只保留真正被用到的。** 这里此前还定义着 `ITALIC` / `UNDERLINE`，
+# 以及一批来自已移除的全屏 TUI 的颜色（`BLACK` / `BRIGHT_GREEN` /
+# `SOFT_ORANGE` / `BORDER_FOCUS` …）。它们零引用。
+#
+# 本模块开头写着「哪些颜色被用到是可以被检查的」——那就得真的可检查。
+# 留着一堆没人用的色号会让这句话失效：改动者看到 `BORDER_FOCUS` 会以为
+# 聚焦态有专门的颜色，而实际上没有任何代码读它。
+#
+# `tools/check_constants.py` 现在会报出这类零引用常量，本文件保持 0 个。
 # ---------------------------------------------------------------------------
 
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
 DIM = "\x1b[2m"
-ITALIC = "\x1b[3m"
-UNDERLINE = "\x1b[4m"
 REVERSE = "\x1b[7m"
 
 #: 标准前景色
-BLACK = "\x1b[30m"
 RED = "\x1b[31m"
 GREEN = "\x1b[32m"
 YELLOW = "\x1b[33m"
@@ -47,18 +54,13 @@ WHITE = "\x1b[37m"
 
 #: 亮色前景
 BRIGHT_RED = "\x1b[91m"
-BRIGHT_GREEN = "\x1b[92m"
-BRIGHT_YELLOW = "\x1b[93m"
 BRIGHT_BLUE = "\x1b[94m"
-BRIGHT_MAGENTA = "\x1b[95m"
 BRIGHT_CYAN = "\x1b[96m"
 BRIGHT_WHITE = "\x1b[97m"
 
 #: 256 色：Claude Code 的暖橙强调色与冷灰边框。
 ORANGE = "\x1b[38;5;209m"
-SOFT_ORANGE = "\x1b[38;5;216m"
 BORDER = "\x1b[38;5;240m"      # 中灰边框
-BORDER_FOCUS = "\x1b[38;5;209m"  # 聚焦时边框转暖橙
 MUTED = "\x1b[38;5;245m"       # 次要文字
 SUBTLE = "\x1b[38;5;238m"      # 更淡的提示
 

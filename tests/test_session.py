@@ -20,9 +20,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
 # 家目录隔离由 tests/__init__.py 在任何 minicode 导入之前完成。
 # 这里只是取回已生效的路径，绝不自己设环境变量（那样在 config 已被导入后无效）。
-from minicode.config import MINICODE_HOME  # noqa: E402
+# 用**动态访问器**而不是模块级常量：后者已删除（见 config.py 的说明）——
+# 而且它本来就是这套隔离要防的东西。
+from minicode.config import minicode_home  # noqa: E402
 
-_TMP_HOME = str(MINICODE_HOME)
+_TMP_HOME = str(minicode_home())
 
 from minicode.session import (  # noqa: E402
     MAX_TITLE_LENGTH,

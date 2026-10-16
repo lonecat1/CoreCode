@@ -2,10 +2,14 @@
 
 **这一步必须在任何 `minicode` 子模块被导入之前完成。**
 
-`minicode.config` 在模块加载期就求值了 `MINICODE_HOME` 等路径常量；一旦
-`config` 先被导入，之后再设环境变量就没有任何效果——测试会去读写真实用户目录
-（`~/.mini-code`）。这不是假设，是本项目踩过的真实事故，所以把隔离放在
-`tests/__init__.py` 里：`unittest` 在导入任何测试模块之前一定会先导入本包。
+隔离之所以放在 `tests/__init__.py`，是因为 `unittest` 在导入任何测试模块之前
+一定会先导入本包。测试模块自己写的 `sys.path.insert` / 环境变量设置要到它们
+被导入时才执行——那时可能已经有别的模块先导入了配置。
+
+（早先这里写的是「`minicode.config` 在模块加载期就求值了 `MINICODE_HOME`
+等路径常量」，那是当时的事实。现在那些路径常量已经**全部删掉**，配置只通过
+`minicode_home()` 这类动态访问器求值——见 config.py 的说明。隔离仍然必要：
+动态访问器读的是环境变量，而环境变量必须在第一次调用前设好。）
 
 同时这里做一次 **fail-closed 断言**：如果路径没有落在仓库内，宁可直接报错，
 也不要继续跑下去污染用户目录。
@@ -43,7 +47,9 @@ for _key in (
 # 触发一次路径求值并断言隔离生效。
 from minicode import config as _config  # noqa: E402
 
-_resolved = Path(str(_config.MINICODE_HOME)).resolve()
+# 用**动态访问器**而不是模块级常量：后者已不存在，而且它本来就是这套隔离要
+# 防的东西（导入期快照在环境变量变化后不会跟着变）。
+_resolved = Path(str(_config.minicode_home())).resolve()
 if _TESTS_DIR.resolve() not in _resolved.parents:
     raise RuntimeError(
         "测试隔离失败：MINICODE_HOME 未落在仓库内 "

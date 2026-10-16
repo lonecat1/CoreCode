@@ -34,16 +34,23 @@ def _home_dir() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# 路径解析：动态 vs 导入期
+# 路径解析：**只有动态访问器**
 #
-# 这是一个反复踩到的坑，所以显式分成两套：
+# 这是一个反复踩到的坑。模块级常量在 `import` 时就被固定了，之后再设
+# `MINICODE_HOME` 完全无效——测试隔离与运行时改配置都会**静默失效**。
 #
-#   `minicode_home()` / `projects_dir()` …  **每次调用重新求值**。
-#       运行时代码一律用这些。原因是模块级常量在 import 时就被固定了，
-#       之后再设 `MINICODE_HOME` 完全无效——测试隔离与运行时改配置都会静默失效。
+# 曾经这里还有一套「导入期快照」（`SETTINGS_PATH` / `PROJECTS_DIR` /
+# `MCP_PATH` …），注释说是「仅供展示，如 /status 打印路径」。核对常量表时
+# 发现：**它们零引用**——`/config-paths` 与 `/permissions` 用的都是下面这些
+# 动态函数，没有任何地方展示过快照。
 #
-#   `MINICODE_HOME` / `PROJECTS_DIR` … 导入期快照，**仅供展示**（如 /status 打印路径）。
-#       不要用它去读写文件。
+# 于是整块删掉。理由不只是「死代码」：
+#   - 那句「仅供展示」的注释是**错的**，而错注释比没有注释更糟——它让人
+#     相信这些名字有正当用途，从而在需要展示路径时**正好选中它们**，
+#     重新引入「显示了一个并不生效的路径」这个 bug。
+#   - 删掉之后，「拿导入期快照做 I/O」这类缺陷在结构上不可能再出现。
+#
+# 新增路径时请一律加一个 `xxx_path()` 动态函数。
 # ---------------------------------------------------------------------------
 
 
@@ -111,16 +118,11 @@ def claude_settings_path() -> Path:
     return Path.home() / ".claude" / "settings.json"
 
 
-#: 导入期快照，仅用于展示。
-MINICODE_HOME = _home_dir()
-SETTINGS_PATH = MINICODE_HOME / "settings.json"
-HISTORY_PATH = MINICODE_HOME / "history.jsonl"
-PERMISSIONS_PATH = MINICODE_HOME / "permissions.json"
-MCP_PATH = MINICODE_HOME / "mcp.json"
-MCP_TOKENS_PATH = MINICODE_HOME / "mcp-tokens.json"
-PROJECTS_DIR = MINICODE_HOME / "projects"
-TOOL_RESULTS_DIR = MINICODE_HOME / "tool-results"
-#: 注意：**不基于** `MINICODE_HOME`，见 `claude_settings_path()`。
+#: Claude Code 的配置文件路径快照。
+#:
+#: **这是唯一保留的快照**，因为它与 `MINICODE_HOME` 无关——它恒等于
+#: `Path.home() / ".claude" / "settings.json"`，不会因为环境变量变化而失效。
+#: 测试用它断言 `claude_settings_path()` 没有跟随 `MINICODE_HOME`。
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
@@ -196,14 +198,11 @@ MODEL_MAX_OUTPUT_TOKEN_RULES: tuple[tuple[tuple[str, ...], int, int], ...] = (
     (("deepseek-chat",), 4_000, 8_000),
 )
 
-#: 兼容旧名字。
-MAX_OUTPUT_TOKENS_RULES = tuple(
-    (patterns[0], default, upper)
-    for patterns, default, upper in MODEL_MAX_OUTPUT_TOKEN_RULES
-)
-
-#: 兼容旧名字。
-DEFAULT_MAX_OUTPUT_TOKENS = UNKNOWN_MODEL_MAX_OUTPUT_TOKENS[0]
+# 这里曾有 `MAX_OUTPUT_TOKENS_RULES` 与 `DEFAULT_MAX_OUTPUT_TOKENS` 两个
+# 「兼容旧名字」的别名。核对常量表时发现**没有任何代码或测试引用它们**——
+# 这个项目没有需要兼容的历史调用方，别名只是我自己加出来的噪音。
+#
+# 零引用常量的代价不是那几行代码，而是后来者会以为它生效。
 
 
 def get_model_max_output_tokens(model: str) -> tuple[int, int]:
@@ -387,7 +386,7 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
     if not model:
         raise ConfigError(
             "未配置模型。请设置 MINICODE_MODEL 环境变量，"
-            f"或在 {settings_path or SETTINGS_PATH} 中写入 \"model\"。"
+            f"或在 {settings_path or _settings_path()} 中写入 \"model\"。"
         )
 
     base_url = value("ANTHROPIC_BASE_URL") or DEFAULT_BASE_URL
@@ -447,7 +446,7 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
         max_output_tokens=max_output_tokens,
         mcp_servers=load_mcp_servers(cwd=os.getcwd(), settings=settings),
         thinking=thinking,
-        source_summary=f"settings: {settings_path or SETTINGS_PATH} > process.env",
+        source_summary=f"settings: {settings_path or _settings_path()} > process.env",
     )
 
 

@@ -293,10 +293,18 @@ def _render_plan(host: "SessionHost") -> str:
     if not todos:
         return render_status_line(label="Todo 清单为空")
 
+    # **状态标记是给人看的，用字形常量而不是字面量。**
+    #
+    # 注意这与 `format_plan()` 用的标记**刻意不同**：那个函数产出的是
+    # **注入模型上下文**的文本（经 goal/context 进 system 消息），必须与
+    # 原版逐字一致（`[ ]` / `[>]` / `[x]`）。这里只是终端里的一行展示，
+    # 用更易读的字形。
+    from .ui import GLYPH_BULLET, GLYPH_OK
+
     marks = {
-        "completed": "✓",
+        "completed": GLYPH_OK,
         "in_progress": "▸",
-        "pending": "·",
+        "pending": GLYPH_BULLET,
     }
     rows: list[tuple[str, str]] = []
     for item in todos:
@@ -367,10 +375,19 @@ def _render_mcp(host: "SessionHost") -> str:
 
 
 def _render_permissions(host: "SessionHost") -> str:
-    from .permissions import PERMISSIONS_PATH
+    # **用动态访问器，不用导入期快照。**
+    #
+    # 这里此前用的是 `permissions.PERMISSIONS_PATH`——一个**导入期**求值的
+    # 模块级常量。`MINICODE_HOME` 在导入后变化（测试就会这么做）时它指向错误
+    # 位置，于是 `/permissions` 显示的是一个**并不生效**的路径。
+    #
+    # 与 `/config-paths` 保持一致：那条命令一直用的是动态访问器。
+    # 同一份信息在两处用不同口径取，迟早会给出互相矛盾的结果——而用户会先
+    # 看到路径、再去那个文件里找自己的规则，找不到就以为规则丢了。
+    from .permissions import permissions_path
     from .ui import render_key_value, render_separator, render_status_line
 
-    rows: list[tuple[str, str]] = [("存储", str(PERMISSIONS_PATH))]
+    rows: list[tuple[str, str]] = [("存储", str(permissions_path()))]
     summary = host.permissions.get_summary()
     if summary:
         rows.extend((f"规则 {index}", str(item)) for index, item in enumerate(summary, 1))
