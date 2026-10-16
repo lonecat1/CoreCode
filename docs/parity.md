@@ -11,16 +11,36 @@
 
 | 维度 | 状态 |
 |---|---|
-| 工具层（默认注册表） | **13 / 13** ✅ |
-| 工具层（含 runtime 追加的 goal 工具） | **15 / 15** ✅ |
+| 工具层（默认注册表，无/有 plan） | **12 / 13** ✅ 与原版逐个集合一致 |
+| 工具层（根注册表，含子 Agent 工具） | **17** ✅ |
+| 子 Agent 可见 | **6** ✅ |
 | 命令层 | **29 / 29** ✅ |
-| `src/` 各模块 | **全部覆盖**，或记为有意差异 ✅ |
+| `src/` 各模块 | **全部有对应实现** ✅ |
 | 完全缺失（❌） | **0** |
 | 能力缩水（⚠️） | **0** |
-| 有意差异（🔶） | 38 条，逐条记在 `docs/divergences.md` |
+| 有意差异（🔶） | 39 条，逐条记在 `docs/divergences.md` |
 
-**没有「待核对」的中间态**——每一项要么核对出结论，要么核对出缺口；
-缺口已全部补齐。核对的副产品是修掉了 6 个既有缺陷（见「顺带修掉的既有缺陷」），
+### 但「有实现」不等于「已验证」
+
+这句话必须写清楚，因为**我在这上面犯过一次错**：`utils/context.ts` 曾被列为
+「已验证已对齐」，而它的规则表其实是自拟的，并且因此静默截断用户配置。
+
+**做过数据级比对（逐条拉出常量表/集合比对）的模块**：
+`utils/model-context.ts`（22 条规则）、`utils/context.ts`（18 条规则）、
+`tools/index.ts`（4 个注册表集合）、`cli-commands.ts`（29 个命令名）、
+`utils/web.ts`（逐函数 + 端点/解析器配对）。
+
+**只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
+`agent-loop.ts` · `compact/*`（`constants.ts` 的 `LIMITS`/`RETENTION`/
+`THRESHOLDS`、`context-collapse.ts` 的常量）· `permissions.ts` ·
+`mcp.ts` · `session.ts` · `memory.ts` · `skills.ts` · `agents/*` ·
+`goal/*` · `loop/*` · `plan/*` · `runtime/*` · `utils/token-estimator.ts` ·
+`utils/tool-result-storage.ts` · `prompt.ts` · `types.ts`
+
+这些模块的**行为**经过对照与测试，但它们内部的**常量表与阈值**没有逐条验证过
+——而 `utils/context.ts` 恰恰就是在这类地方出问题的。
+
+核对的副产品是修掉了 7 个既有缺陷（见「顺带修掉的既有缺陷」），
 它们的共同特征是**静默**：不报错，只是行为不对。
 
 ## 为什么要有这份文档
@@ -288,17 +308,36 @@ Python 用元组。
 | `grep_files` 的 `path` 指向**文件**时永远没有结果 | 回退扫描用 `os.walk(target)`，而它对文件路径静默产出空序列。于是 `/grep <pattern>::<file>`（文档化用法）永远返回 `(no matches)`，看起来像「确实没有匹配」而不是「我根本没搜」。`grep_files` 此前**没有任何专属测试**。 |
 | **用导入期快照做 I/O**（四处） | `config.SETTINGS_PATH` 这类常量在**导入期**求值。`MINICODE_HOME` 在导入后变化时它们指向错误位置。受影响：`read_settings_file` / `save_settings` / `read_permission_store` / `write_permission_store` / `discover_memory_files`。症状全是**静默的**：`/model` 写到别处、授权规则全部失效、全局指令不生效。README 早就写了这条规则，但只有展示用途的地方遵守了。 |
 | `/config-paths` 的长路径被截断 | 这条命令的全部意义是让用户看到**完整**路径去复制，而 `render_key_value` 默认截断成 `C:\Users\...\se...`，等于白做。 |
+| **启动横幅右边框每行错开一列** | 内容行宽 75、边框行宽 76（可用宽度比正确值少 1）。启动横幅是用户看到的第一样东西，错位很显眼。之前没被发现，一部分原因是核对时按**字符数**看而不是**显示宽度**——横幅里有中文与全角括号。 |
+| **输出 token 上限的规则表是自拟的粗粒度子串** | 原版是 18 条精确模式；本实现是 10 条粗粒度子串。这不是「数字略有出入」而是**静默截断用户配置**：用户设 `maxOutputTokens: 16000`、模型 `deepseek-v4-pro` 时，原版保留 16000，粗粒度 `deepseek` 规则砍成 8192 且不报错。症状是「长回答被莫名截断」，而用户对照自己的配置看不出原因。 |
+| **`load_runtime_config` 的参数遮蔽同名函数** | 参数名 `settings_path` 与模块级 `settings_path()` 同名，函数体内调用它会得到 `'WindowsPath' object is not callable`。它是**修「凭据报错不指明位置」时才暴露的**——原来的报错文案是静态字符串，不调用该函数。 |
 
-### 已被验证的「已对齐」模块
+### 关于「已对齐」这份清单的可信度
 
-以下模块经逐行对照，行为对齐（差异记在 `docs/divergences.md`）：
+**它出过一次错，值得记下来。**
 
-`agent-loop.ts` · `session.ts` · `compact/*`（四级压缩）· `permissions.ts` ·
-`anthropic-adapter.ts` · `config.ts` · `memory.ts` · `skills.ts` ·
-`agents/*` · `goal/*` · `loop/*` · `plan/*` · `runtime/*` ·
-`utils/token-estimator.ts` · `utils/context.ts` · `utils/tool-result-storage.ts` ·
-`prompt.ts` · `file-review.ts` · `workspace.ts` · `tool.ts` · `types.ts` ·
-`mcp.ts`（拆为 `mcp/` 包）
+`utils/context.ts` 曾列在下面这份清单里，被当作「已验证已对齐」。但后来逐条比对
+它的 `MODEL_MAX_OUTPUT_TOKEN_RULES` 时发现：**规则表整个是自拟的**，与原版的
+18 条精确模式不一致，并且因此静默截断用户配置。
+
+原因是我当初核对时看的是「这个模块**存在**且看起来做了同一件事」，而不是
+「把它的**数据表**逐条拉出来比对」。同一个错误在工具层与命令层也犯过
+（见文档开头「为什么要有这份文档」）。
+
+**因此下面这份清单现在只收录做过「数据级比对」的模块**，且注明比对方式：
+
+| 模块 | 比对方式 |
+|---|---|
+| `utils/model-context.ts` | 脚本逐条比对 22 条规则（模式/窗口/预留/顺序）→ 完全一致 |
+| `utils/context.ts` | 脚本逐条比对 18 条规则（模式/默认值/上限/顺序）+ 兜底值 → 完全一致 |
+| `tools/index.ts` | 实测四个注册表的集合（12 / 13 / 17 / 6）→ 与原版逐个集合一致 |
+| `cli-commands.ts` | 命令名集合（29 个）→ 与原版一致 |
+| `utils/web.ts` | 逐函数核对 + 端点/解析器配对检查 |
+| `manage-cli.ts` / `install.ts` / `init.ts` / `history.ts` / `mcp-status.ts` | 逐行核对并补齐 |
+
+其余模块（`agent-loop.ts`、`compact/*`、`permissions.ts`、`mcp.ts` 等）此前做过
+逐行对照，但**没有做过数据级比对**——它们的规则表/常量表尚未逐条验证。
+这是一项**已知的剩余工作**，不应被读成「已全部验证」。
 
 ---
 
