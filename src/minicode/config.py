@@ -125,44 +125,106 @@ CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 
-#: 未知模型的兜底输出上限。
-DEFAULT_MAX_OUTPUT_TOKENS = 8192
-
 
 # ---------------------------------------------------------------------------
 # 输出 token 上限
 # ---------------------------------------------------------------------------
 
-#: 模型名子串 -> (默认值, 上限)。按顺序匹配，先命中者生效。
-#: 上限用于夹住用户配置值，避免配出一个服务端必然拒绝的数字。
-MAX_OUTPUT_TOKENS_RULES: tuple[tuple[str, int, int], ...] = (
-    ("claude-opus-4", 16_000, 32_000),
-    ("claude-sonnet-4", 16_000, 64_000),
-    ("claude-3-7", 16_000, 64_000),
-    ("claude-3-5", 8_192, 8_192),
-    ("claude-3", 4_096, 8_192),
-    ("gpt-5", 16_000, 128_000),
-    ("gpt-4.1", 16_000, 32_768),
-    ("gpt-4o", 8_192, 16_384),
-    ("deepseek", 8_192, 8_192),
-    # 阿里云百炼的 Qwen 系列：思考与正文共享 max_tokens，
-    # 因此给足预算，避免长回答被截断。
-    ("qwen", 16_000, 32_768),
+#: 未知模型的兜底 `(默认值, 上限)`。
+#: 对应原版 `utils/context.ts:11-14` 的 `UNKNOWN_MODEL_MAX_OUTPUT_TOKENS`。
+UNKNOWN_MODEL_MAX_OUTPUT_TOKENS: tuple[int, int] = (32_000, 64_000)
+
+#: 模型名模式 -> `(默认值, 上限)`。**按顺序匹配，先命中者生效。**
+#:
+#: 逐条对应原版 `utils/context.ts:16-89` 的 `MODEL_MAX_OUTPUT_TOKEN_RULES`（18 条）。
+#: 刻意**保留原版的精确模式**，不用粗粒度子串：
+#:
+#: 粗粒度子串会**静默截断用户配置**。真实例子——用户设
+#: `maxOutputTokens: 16000`、模型 `deepseek-v4-pro`：
+#:
+#:   原版：不匹配任何规则 → 兜底 (32000, 64000) → min(16000, 64000) = **16000**
+#:   粗粒度 `deepseek` 规则 (8192, 8192) → min(16000, 8192) = **8192**
+#:
+#: 后者把用户明确设的预算砍掉一半且不报错，症状是「长回答被莫名截断」。
+#: 上限的作用是**夹住**用户配置（避免配出服务端必然拒绝的数字），不是覆盖它。
+#:
+#: 顺序敏感：更具体的模式必须在前（如 `claude-opus-4-6` 在 `opus-4` 之前）。
+MODEL_MAX_OUTPUT_TOKEN_RULES: tuple[tuple[tuple[str, ...], int, int], ...] = (
+    (("claude-opus-4-6", "claude opus 4.6", "opus-4-6"), 128_000, 128_000),
+    (("claude-sonnet-4-6", "claude sonnet 4.6", "sonnet-4-6"), 64_000, 64_000),
+    (("claude-haiku-4-5", "claude haiku 4.5", "haiku-4-5"), 64_000, 64_000),
+    (
+        (
+            "claude-opus-4-1",
+            "claude opus 4.1",
+            "opus-4-1",
+            "claude-opus-4",
+            "claude opus 4",
+            "opus-4",
+        ),
+        32_000,
+        32_000,
+    ),
+    (("claude-sonnet-4", "claude sonnet 4", "sonnet-4"), 64_000, 64_000),
+    (("claude-3-7-sonnet", "claude 3.7 sonnet", "3-7-sonnet"), 8_192, 8_192),
+    (
+        ("claude-3-5-sonnet", "claude 3.5 sonnet", "3-5-sonnet", "claude-3-sonnet"),
+        8_192,
+        8_192,
+    ),
+    (("claude-3-5-haiku", "claude 3.5 haiku", "3-5-haiku"), 8_192, 8_192),
+    (("claude-3-opus", "claude 3 opus"), 4_096, 4_096),
+    (("claude-3-haiku", "claude 3 haiku"), 4_096, 4_096),
+    (("gpt-5-codex", "gpt-5.4", "gpt-5.2", "gpt-5.1", "gpt-5"), 128_000, 128_000),
+    (("o4-mini", "o3", "o1-pro", "o1"), 100_000, 100_000),
+    (("gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1"), 32_768, 32_768),
+    (("gpt-4o-mini", "gpt-4o"), 16_384, 16_384),
+    (("gpt-4",), 8_192, 8_192),
+    (
+        (
+            "gemini-2.5-pro",
+            "gemini 2.5 pro",
+            "gemini-2.5-flash-lite",
+            "gemini 2.5 flash-lite",
+            "gemini-2.5-flash",
+            "gemini 2.5 flash",
+        ),
+        65_536,
+        65_536,
+    ),
+    (("deepseek-reasoner",), 32_000, 64_000),
+    (("deepseek-chat",), 4_000, 8_000),
 )
+
+#: 兼容旧名字。
+MAX_OUTPUT_TOKENS_RULES = tuple(
+    (patterns[0], default, upper)
+    for patterns, default, upper in MODEL_MAX_OUTPUT_TOKEN_RULES
+)
+
+#: 兼容旧名字。
+DEFAULT_MAX_OUTPUT_TOKENS = UNKNOWN_MODEL_MAX_OUTPUT_TOKENS[0]
+
+
+def get_model_max_output_tokens(model: str) -> tuple[int, int]:
+    """按模型名取 `(默认值, 上限)`。对应原版 `getModelMaxOutputTokens`。"""
+    normalized = model.strip().lower()
+    for patterns, default, upper in MODEL_MAX_OUTPUT_TOKEN_RULES:
+        if any(pattern in normalized for pattern in patterns):
+            return default, upper
+    return UNKNOWN_MODEL_MAX_OUTPUT_TOKENS
 
 
 def resolve_max_output_tokens(model: str, configured: int | None = None) -> int:
-    """决定本次请求的 max_tokens。"""
-    default, upper = DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS
-    lowered = model.lower()
-    for needle, rule_default, rule_upper in MAX_OUTPUT_TOKENS_RULES:
-        if needle in lowered:
-            default, upper = rule_default, rule_upper
-            break
+    """决定本次请求的 max_tokens。对应原版 `resolveMaxOutputTokens`。
 
+    **上限是夹子，不是覆盖。** 用户显式配置时取 `min(配置值, 上限)`；
+    没配才用默认值。反过来会让「我明明设了却没用」变成静默行为。
+    """
+    default, upper = get_model_max_output_tokens(model)
     if configured is None or configured <= 0:
         return default
-    return min(configured, upper)
+    return min(int(configured), upper)
 
 
 # ---------------------------------------------------------------------------

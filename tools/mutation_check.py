@@ -1252,6 +1252,39 @@ MUTATIONS = [
         '        + " " * max(0, inner - string_display_width(title_head + title_tail))',
         '        + " " * max(0, inner - 1 - string_display_width(title_head + title_tail))',
     ),
+    (
+        "配置: 兜底输出上限退回旧值 8192（长回答被截断）",
+        CONFIG,
+        "UNKNOWN_MODEL_MAX_OUTPUT_TOKENS: tuple[int, int] = (32_000, 64_000)",
+        "UNKNOWN_MODEL_MAX_OUTPUT_TOKENS: tuple[int, int] = (8_192, 8_192)",
+    ),
+    (
+        "配置: 规则顺序反转（具体模式被宽泛模式吃掉）",
+        CONFIG,
+        "    normalized = model.strip().lower()\n"
+        "    for patterns, default, upper in MODEL_MAX_OUTPUT_TOKEN_RULES:",
+        "    normalized = model.strip().lower()\n"
+        "    for patterns, default, upper in reversed(MODEL_MAX_OUTPUT_TOKEN_RULES):",
+    ),
+    (
+        "配置: 用默认值覆盖用户配置（我明明设了却没用）",
+        CONFIG,
+        "    if configured is None or configured <= 0:\n        return default\n"
+        "    return min(int(configured), upper)",
+        "    return default",
+    ),
+    (
+        "配置: 模型名匹配区分大小写（Claude-Opus-4-6 认不出）",
+        CONFIG,
+        "    normalized = model.strip().lower()",
+        "    normalized = model.strip()",
+    ),
+    (
+        "配置: 加一条粗粒度 deepseek 规则（静默砍掉用户预算）",
+        CONFIG,
+        '    (("deepseek-reasoner",), 32_000, 64_000),',
+        '    (("deepseek",), 8_192, 8_192),\n    (("deepseek-reasoner",), 32_000, 64_000),',
+    ),
 ]
 
 

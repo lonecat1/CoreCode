@@ -192,12 +192,23 @@ class RetryPolicyTests(unittest.TestCase):
 
 
 class MaxOutputTokensTests(unittest.TestCase):
+    """逐条对应原版 `utils/context.ts` 的 `MODEL_MAX_OUTPUT_TOKEN_RULES`。
+
+    **这组值此前是本实现自己拟的粗粒度规则**（`claude-sonnet-4` → 16000、
+    `deepseek` → 8192、`qwen` → 32768），与原版的 18 条精确模式不一致。
+    差异不只是数字不同——粗粒度子串会**静默截断用户配置**：用户设
+    `maxOutputTokens: 16000`、模型 `deepseek-v4-pro` 时，原版得到 16000，
+    粗粒度 `deepseek` 规则会砍成 8192 且不报错。
+    """
+
     def test_known_models_use_their_defaults(self) -> None:
-        self.assertEqual(resolve_max_output_tokens("claude-sonnet-4-20250514"), 16_000)
+        # 原版 `claude-sonnet-4` 模式 → default 64_000（不是 16_000）
+        self.assertEqual(resolve_max_output_tokens("claude-sonnet-4-20250514"), 64_000)
         self.assertEqual(resolve_max_output_tokens("claude-3-5-haiku"), 8_192)
 
-    def test_unknown_model_falls_back(self) -> None:
-        self.assertEqual(resolve_max_output_tokens("some-new-model"), 8_192)
+    def test_unknown_model_falls_back_to_the_original_default(self) -> None:
+        """原版 `UNKNOWN_MODEL_MAX_OUTPUT_TOKENS` 是 (32000, 64000)。"""
+        self.assertEqual(resolve_max_output_tokens("some-new-model"), 32_000)
 
     def test_configured_value_is_clamped_to_upper_bound(self) -> None:
         self.assertEqual(
@@ -206,6 +217,46 @@ class MaxOutputTokensTests(unittest.TestCase):
 
     def test_configured_value_below_bound_is_kept(self) -> None:
         self.assertEqual(resolve_max_output_tokens("claude-sonnet-4", 1_000), 1_000)
+
+    def test_claude_opus_4_6_default(self) -> None:
+        self.assertEqual(resolve_max_output_tokens("claude-opus-4-6"), 128_000)
+
+    def test_more_specific_pattern_wins(self) -> None:
+        """**顺序敏感**：`claude-opus-4-6` 必须排在 `opus-4` 之前。
+
+        顺序错了会让新模型的预算被旧模型的规则吃掉——数字看起来合理，
+        但比实际能力小得多。
+        """
+        self.assertEqual(resolve_max_output_tokens("claude-opus-4-6"), 128_000)
+        self.assertEqual(resolve_max_output_tokens("claude-opus-4-1"), 32_000)
+        self.assertEqual(resolve_max_output_tokens("opus-4"), 32_000)
+
+    def test_deepseek_v4_uses_the_unknown_fallback(self) -> None:
+        """**这条钉住一个真实踩到的坑。**
+
+        原版只有 `deepseek-reasoner` 与 `deepseek-chat` 两条规则，
+        `deepseek-v4-pro` 不匹配任何规则 → 走兜底 (32000, 64000)。
+
+        于是用户配的 `maxOutputTokens: 16000` 得到 **16000**（保留）。
+        本实现此前有一条粗粒度 `deepseek` 规则 (8192, 8192)，会把 16000
+        夹成 **8192**——用户的预算被静默砍掉一半，症状是「长回答莫名截断」。
+        """
+        self.assertEqual(resolve_max_output_tokens("deepseek-v4-pro", 16_000), 16_000)
+        self.assertEqual(resolve_max_output_tokens("deepseek-v4-pro"), 32_000)
+
+    def test_deepseek_known_models_keep_their_own_limits(self) -> None:
+        """兜底变宽了，但原版明确列出的两个 deepseek 模型仍用各自的上限。"""
+        self.assertEqual(resolve_max_output_tokens("deepseek-chat", 16_000), 8_000)
+        self.assertEqual(resolve_max_output_tokens("deepseek-chat"), 4_000)
+        self.assertEqual(resolve_max_output_tokens("deepseek-reasoner"), 32_000)
+
+    def test_model_name_matching_is_case_insensitive(self) -> None:
+        self.assertEqual(resolve_max_output_tokens("Claude-Opus-4-6"), 128_000)
+
+    def test_gpt_and_gemini_defaults(self) -> None:
+        self.assertEqual(resolve_max_output_tokens("gpt-4o"), 16_384)
+        self.assertEqual(resolve_max_output_tokens("gpt-5"), 128_000)
+        self.assertEqual(resolve_max_output_tokens("gemini-2.5-pro"), 65_536)
 
 
 class SettingsTests(unittest.TestCase):

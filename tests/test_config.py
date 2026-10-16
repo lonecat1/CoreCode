@@ -266,18 +266,32 @@ class ThinkingTests(unittest.TestCase):
         self.assertEqual(config.thinking, "disabled")
 
 
-class QwenTokenBudgetTests(unittest.TestCase):
-    def test_qwen_gets_generous_budget(self) -> None:
+class UnknownModelBudgetTests(unittest.TestCase):
+    """兜底预算与原版一致，且对「思考与正文共享 max_tokens」的模型足够宽。
+
+    此前这里有一条本实现自拟的 `qwen` 规则 (16000, 32768)。对齐到原版后
+    qwen **不匹配任何规则**，走兜底 (32000, 64000)——反而**更宽松**，
+    因此当初加那条规则的动机（百炼的思考 token 会挤占正文预算）被更好地
+    满足了。这条测试保留下来，因为它钉住的正是那个动机。
+    """
+
+    def test_unlisted_models_get_a_generous_budget(self) -> None:
         """Qwen 的思考与正文共享 max_tokens，兜底值不能太小。"""
         self.assertGreaterEqual(resolve_max_output_tokens("qwen3.8-max-0902"), 16_000)
 
-    def test_qwen_configured_value_is_clamped(self) -> None:
-        self.assertEqual(resolve_max_output_tokens("qwen3.8-max-0902", 999_999), 32_768)
+    def test_unlisted_model_configured_value_is_clamped_to_the_unknown_upper(self) -> None:
+        self.assertEqual(resolve_max_output_tokens("qwen3.8-max-0902", 999_999), 64_000)
 
-    def test_claude_rules_unaffected(self) -> None:
-        """新增 qwen 规则不能串到别的模型上。"""
+    def test_unknown_fallback_matches_the_original(self) -> None:
+        """原版 `UNKNOWN_MODEL_MAX_OUTPUT_TOKENS` 是 (32000, 64000)。"""
+        self.assertEqual(resolve_max_output_tokens("unknown-model"), 32_000)
+        self.assertEqual(resolve_max_output_tokens("unknown-model", 999_999), 64_000)
+
+    def test_listed_models_are_unaffected_by_the_wider_fallback(self) -> None:
+        """兜底变宽不能串到明确列出的模型上。"""
         self.assertEqual(resolve_max_output_tokens("claude-3-5-sonnet"), 8_192)
-        self.assertEqual(resolve_max_output_tokens("unknown-model"), 8_192)
+        self.assertEqual(resolve_max_output_tokens("deepseek-chat"), 4_000)
+        self.assertEqual(resolve_max_output_tokens("gpt-4o"), 16_384)
 
 
 if __name__ == "__main__":
