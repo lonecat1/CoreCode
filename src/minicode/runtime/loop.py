@@ -35,7 +35,23 @@ MAX_LOOP_INTERVAL_MS = 2_147_483_647
 STATUS_ACTIVE = "active"
 STATUS_PAUSED = "paused"
 
-_INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?$")
+#: 间隔写法：数字（**含小数**）+ 单位 `m` / `h`。
+#:
+#: 对应原版 `loop/scheduler.ts` 的 `/^(\d+(?:\.\d+)?)(m|h)$/`。
+#: 小数是必须支持的：`/loop 1.5h <prompt>` 表示 90 分钟。
+_INTERVAL_RE = re.compile(r"^(\d+(?:\.\d+)?)(m|h)$")
+
+#: 「看起来像数字但格式不对」的首 token。
+#:
+#: 对应原版的 `/^[+-]?(?:\d|\.\d)|^(?:Infinity|NaN)(?:m|h)?$/i`。
+#:
+#: **这个分支不能省。** 少了它，`/loop 5x hello` 会被当成
+#: 「prompt 是 `5x hello`、间隔用默认 10 分钟」——用户以为设了间隔，
+#: 实际拿到的是默认值，而且 prompt 里混进了一段他没想发出去的文本。
+#: 宁可明确报错。
+_NUMERIC_LIKE_RE = re.compile(
+    r"^[+-]?(?:\d|\.\d)|^(?:Infinity|NaN)(?:m|h)?$", re.IGNORECASE
+)
 
 
 class LoopError(Exception):
@@ -45,30 +61,55 @@ class LoopError(Exception):
 def parse_loop_request(body: str) -> tuple[str, int]:
     """解析 `/loop [Nm|Nh] <prompt>`，返回 `(prompt, interval_ms)`。
 
-    间隔可以省略（用默认值），也可以写成 `30m` / `2h`。
+    逐条对应原版 `parseLoopRequest`（`loop/scheduler.ts:8-26`）：
+
+    - 间隔可省略 → 默认 10 分钟；
+    - 间隔写成 `<数字><m|h>`，**数字可以带小数**（`1.5h` = 90 分钟）；
+    - 首 token「看起来像数字但格式不对」（`5x` / `-5m` / `Infinity` …）
+      → **明确报错**，而不是把它当成 prompt；
+    - 间隔必须在 1 分钟到 2147483647 毫秒之间；
+    - 指定间隔后必须还有 prompt。
+
+    ## 早先的文法不一样，而且**静默给出错误行为**
+
+    之前用的是 `^(?:(\\d+)h)?(?:(\\d+)m)?$` 加 `(hours*60+minutes)*60000`，
+    于是：
+
+        /loop 1.5h do it  原版 → 间隔 90 分钟、prompt 是 "do it"
+                         旧版 → 间隔 **10 分钟**、prompt 是 "1.5h do it"
+        /loop 5x hello    原版 → 报错
+                         旧版 → 间隔 10 分钟、prompt 是 "5x hello"
+
+    用户想要 90 分钟的循环，实际拿到 10 分钟——**不报错，只是不对**。
+    旧版还额外支持原版没有的 `1h30m` 写法（已去掉：它与「数字前缀就报错」
+    这条规则冲突，而且两种写法表达同一件事没有必要）。
     """
     text = body.strip()
     if not text:
-        raise LoopError("Loop 需要一个 prompt。")
+        raise LoopError("用法：/loop [Nm|Nh] <prompt>")
 
     parts = text.split(None, 1)
     first = parts[0]
     match = _INTERVAL_RE.match(first)
-    if match and (match.group(1) or match.group(2)):
-        hours = int(match.group(1) or 0)
-        minutes = int(match.group(2) or 0)
-        interval = (hours * 60 + minutes) * 60_000
-        prompt = parts[1].strip() if len(parts) > 1 else ""
-        if not prompt:
-            raise LoopError("指定间隔后还需要一个 prompt。")
+
+    if match:
+        value = float(match.group(1))
+        unit = match.group(2)
+        interval = int(value * (3_600_000 if unit == "h" else 60_000))
+        prompt = text[len(first) :].strip()
+    elif _NUMERIC_LIKE_RE.match(first):
+        # 见上面：这个分支防止「间隔写错了却被当成 prompt」。
+        raise LoopError("间隔格式不对。用分钟（Nm）或小时（Nh），至少 1 分钟。")
     else:
         interval = DEFAULT_LOOP_INTERVAL_MS
         prompt = text
 
-    if interval < MIN_LOOP_INTERVAL_MS:
-        raise LoopError("Loop 间隔不能小于 1 分钟。")
-    if interval > MAX_LOOP_INTERVAL_MS:
-        raise LoopError("Loop 间隔过大。")
+    if interval < MIN_LOOP_INTERVAL_MS or interval > MAX_LOOP_INTERVAL_MS:
+        raise LoopError(
+            "Loop 间隔必须在 1 分钟到 2147483647 毫秒之间。"
+        )
+    if not prompt:
+        raise LoopError("用法：/loop [Nm|Nh] <prompt>")
     return prompt, interval
 
 

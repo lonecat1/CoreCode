@@ -40,6 +40,7 @@ from minicode.runtime.goal_controller import (
 )
 from minicode.runtime.loop import (
     DEFAULT_LOOP_INTERVAL_MS,
+    MAX_LOOP_INTERVAL_MS,
     LoopClock,
     LoopError,
     LoopScheduler,
@@ -398,6 +399,18 @@ class GoalContextTests(unittest.TestCase):
 
 
 class ParseLoopRequestTests(unittest.TestCase):
+    """逐条对应原版 `parseLoopRequest`（`loop/scheduler.ts:8-26`）。
+
+    **早先这里的文法与原版不同，而且静默给出错误行为**：
+
+        /loop 1.5h do it   原版 → 间隔 90 分钟、prompt "do it"
+                           旧版 → 间隔 10 分钟、prompt "1.5h do it"
+        /loop 5x hello     原版 → 报错
+                           旧版 → 间隔 10 分钟、prompt "5x hello"
+
+    用户想要 90 分钟的循环，实际拿到 10 分钟——不报错，只是不对。
+    """
+
     def test_prompt_only_uses_default_interval(self) -> None:
         prompt, interval = parse_loop_request("检查构建状态")
         self.assertEqual(prompt, "检查构建状态")
@@ -406,7 +419,36 @@ class ParseLoopRequestTests(unittest.TestCase):
     def test_minutes_and_hours(self) -> None:
         self.assertEqual(parse_loop_request("5m 跑测试")[1], 5 * 60_000)
         self.assertEqual(parse_loop_request("2h 跑测试")[1], 2 * 60 * 60_000)
-        self.assertEqual(parse_loop_request("1h30m 跑测试")[1], 90 * 60_000)
+
+    def test_decimal_intervals_are_supported(self) -> None:
+        """**原版的文法支持小数**（`\\d+(?:\\.\\d+)?`）。
+
+        `1.5h` 是 90 分钟。旧文法不认它，于是把它当成 prompt 并用默认的
+        10 分钟间隔——用户要 90 分钟却得到 10 分钟。
+        """
+        self.assertEqual(parse_loop_request("1.5h 跑测试"), ("跑测试", 90 * 60_000))
+        self.assertEqual(parse_loop_request("2.5m 跑测试"), ("跑测试", 150_000))
+
+    def test_combined_units_are_rejected_like_the_original(self) -> None:
+        """`1h30m` **不是**原版的文法（原版只认单个单位）。
+
+        本实现一度额外支持它，但那与「数字前缀就报错」这条规则冲突——
+        而且两种写法表达同一件事没有必要。按原版拒绝。
+        """
+        with self.assertRaises(LoopError):
+            parse_loop_request("1h30m 跑测试")
+
+    def test_numeric_looking_prefixes_are_rejected(self) -> None:
+        """**「像数字但格式不对」必须报错，不能当成 prompt。**
+
+        少了这条规则，`/loop 5x hello` 会变成「10 分钟循环、prompt 是
+        `5x hello`」——用户以为设了间隔，实际拿到默认值，而且 prompt 里
+        混进了一段他没想发出去的文本。
+        """
+        for body in ("5x hello", "-5m x", "+3m x", "Infinity h x", "NaN h x", ".5m x"):
+            with self.subTest(body=body):
+                with self.assertRaises(LoopError):
+                    parse_loop_request(body)
 
     def test_prompt_is_preserved(self) -> None:
         self.assertEqual(parse_loop_request("10m 检查 构建 状态")[0], "检查 构建 状态")
@@ -414,6 +456,14 @@ class ParseLoopRequestTests(unittest.TestCase):
     def test_interval_below_minimum_is_rejected(self) -> None:
         with self.assertRaises(LoopError):
             parse_loop_request("0m 太快了")
+        # 0.5 分钟 = 30 秒，也不够
+        with self.assertRaises(LoopError):
+            parse_loop_request("0.5m 太快了")
+
+    def test_interval_above_the_timer_limit_is_rejected(self) -> None:
+        hard_limit_minutes = MAX_LOOP_INTERVAL_MS // 60_000 + 1
+        with self.assertRaises(LoopError):
+            parse_loop_request(f"{hard_limit_minutes}m 太久")
 
     def test_missing_prompt_after_interval_is_rejected(self) -> None:
         with self.assertRaises(LoopError):
@@ -422,6 +472,21 @@ class ParseLoopRequestTests(unittest.TestCase):
     def test_empty_body_is_rejected(self) -> None:
         with self.assertRaises(LoopError):
             parse_loop_request("   ")
+
+    def test_boundary_intervals_are_accepted(self) -> None:
+        """正好 1 分钟可用；正好等于上限也可用。"""
+        self.assertEqual(parse_loop_request("1m 跑")[1], 60_000)
+        exact = MAX_LOOP_INTERVAL_MS // 60_000
+        self.assertEqual(parse_loop_request(f"{exact}m 跑")[1], exact * 60_000)
+
+    def test_non_numeric_prefix_is_a_prompt(self) -> None:
+        """不以数字开头就不是间隔——整段都是 prompt。"""
+        self.assertEqual(
+            parse_loop_request("检查 状态"), ("检查 状态", DEFAULT_LOOP_INTERVAL_MS)
+        )
+        self.assertEqual(
+            parse_loop_request("v2 跑测试"), ("v2 跑测试", DEFAULT_LOOP_INTERVAL_MS)
+        )
 
 
 class ManualClock(LoopClock):

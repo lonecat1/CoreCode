@@ -54,6 +54,7 @@ INSTALL = os.path.join(REPO, "src", "minicode", "install.py")
 MEMORY = os.path.join(REPO, "src", "minicode", "memory.py")
 MCP_HTTP = os.path.join(REPO, "src", "minicode", "mcp", "http_client.py")
 PIPELINE = os.path.join(REPO, "src", "minicode", "context", "pipeline.py")
+LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -1416,6 +1417,47 @@ MUTATIONS = [
         "            # 没有模型名就算不出窗口，四级压缩全部跳过。\n"
         "            return current, current",
         "        if False:\n            return current, current",
+    ),
+    (
+        "loop: 间隔文法退回不支持小数（1.5h 被当成 prompt）",
+        LOOP,
+        'r"^(\\d+(?:\\.\\d+)?)(m|h)$"',
+        'r"^(\\d+)(m|h)$"',
+    ),
+    (
+        "loop: 去掉「数字前缀就报错」（写错的间隔被当成 prompt）",
+        LOOP,
+        "    elif _NUMERIC_LIKE_RE.match(first):\n"
+        "        # 见上面：这个分支防止「间隔写错了却被当成 prompt」。\n"
+        '        raise LoopError("间隔格式不对。用分钟（Nm）或小时（Nh），至少 1 分钟。")',
+        "    elif False:\n"
+        '        raise LoopError("间隔格式不对。用分钟（Nm）或小时（Nh），至少 1 分钟。")',
+    ),
+    (
+        "loop: 去掉最小间隔检查（可以设 1 秒循环）",
+        LOOP,
+        "    if interval < MIN_LOOP_INTERVAL_MS or interval > MAX_LOOP_INTERVAL_MS:",
+        "    if interval > MAX_LOOP_INTERVAL_MS:",
+    ),
+    (
+        "loop: 去掉最大间隔检查（超出计时器上限）",
+        LOOP,
+        "    if interval < MIN_LOOP_INTERVAL_MS or interval > MAX_LOOP_INTERVAL_MS:",
+        "    if interval < MIN_LOOP_INTERVAL_MS:",
+    ),
+    (
+        "loop: 小时被当成分钟（2h 变成 2 分钟）",
+        LOOP,
+        'interval = int(value * (3_600_000 if unit == "h" else 60_000))',
+        "interval = int(value * 60_000)",
+    ),
+    (
+        "loop: 指定间隔后没有 prompt 时不再报错",
+        LOOP,
+        "    if not prompt:\n"
+        '        raise LoopError("用法：/loop [Nm|Nh] <prompt>")\n'
+        "    return prompt, interval",
+        "    return prompt, interval",
     ),
 ]
 
