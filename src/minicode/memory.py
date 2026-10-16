@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,7 +46,14 @@ CANDIDATES_PER_DIR: tuple[str, ...] = (
 )
 
 #: 整行 `@path` 引用。
-_INCLUDE_LINE = "@"
+#:
+#: 用正则而不是 `startswith("@")`：原版是 `/^@([^\s]+)\s*$/`，**`\s` 涵盖
+#: 制表符等所有空白**。只判断字面空格会让 `@foo\tbar` 被误当成引用。
+_INCLUDE_LINE_RE = re.compile(r"@(\S+)")
+
+#: include 的最大嵌套深度。**这是本实现的加固**——原版没有上限，
+#: 一个自引用的文件（或长链）会一直递归下去。
+MAX_INCLUDE_DEPTH = 8
 
 
 @dataclass(slots=True)
@@ -71,18 +79,33 @@ def _read_if_present(path: Path) -> str | None:
 def _resolve_includes(
     content: str, from_file: Path, visited: set[str], depth: int = 0
 ) -> str:
-    """展开整行的 `@path` 引用。任何异常都降级成注释，不抛。"""
+    """展开整行的 `@path` 引用。任何异常都降级成注释，不抛。
+
+    ## 两处对齐原版的细节（都曾经不对）
+
+    **① 引用行必须只含一个 token，且用 `\\s` 判定而不是字面空格。**
+    原版是 `line.trim().match(/^@([^\\s]+)\\s*$/)`——`\\s` 涵盖制表符等所有
+    空白。早先这里写的是 `" " in stripped`，于是 `@foo\\tbar`（制表符分隔）
+    在 Python 里会被当成引用、在 TS 里只是普通文本。差别很隐蔽：
+    前者产出一行 `include skipped: not found`，看起来像「文件不存在」，
+    而实际是「这行根本不是引用」。
+
+    **② `visited` 必须在递归返回后移除（DFS 栈语义）。**
+    原版 `visited.delete(includePath)` 在递归之后执行，因此同一个文件可以
+    从**不同分支**各被包含一次；只有真正回到自己祖先时才判为环。
+    早先这里从不移除，于是第二次包含同一个文件会报 `cycle detected`——
+    **原因说错了**（那不是环，是重复引用），而且**内容静默缺失**。
+    """
     lines: list[str] = []
     for raw in content.splitlines():
         stripped = raw.strip()
-        if not stripped.startswith(_INCLUDE_LINE) or " " in stripped:
+        # 见上面 ①：`\S` 而不是「不含字面空格」。
+        match = _INCLUDE_LINE_RE.fullmatch(stripped)
+        if not match:
             lines.append(raw)
             continue
 
-        reference = stripped[len(_INCLUDE_LINE) :]
-        if not reference:
-            lines.append(raw)
-            continue
+        reference = match.group(1)
 
         # 安全检查：绝对路径与含 `..` 的路径一律拒绝。
         if os.path.isabs(reference) or ".." in Path(reference).parts:
@@ -100,13 +123,19 @@ def _resolve_includes(
             lines.append(f"<!-- include skipped: not found {reference} -->")
             continue
 
-        if depth >= 8:
+        # 深度上限是本实现的加固（原版没有）。检查放在读取之前——
+        # 超深时不必先把文件读进内存再丢掉。
+        if depth >= MAX_INCLUDE_DEPTH:
             lines.append(f"<!-- include skipped: too deep {reference} -->")
             continue
 
         visited.add(key)
         lines.append(f"<!-- included from {reference} -->")
-        lines.append(_resolve_includes(included, target, visited, depth + 1))
+        try:
+            lines.append(_resolve_includes(included, target, visited, depth + 1))
+        finally:
+            # 见上面 ②：递归返回后移除，恢复「只对祖先判环」的语义。
+            visited.discard(key)
         lines.append(f"<!-- end include {reference} -->")
 
     return "\n".join(lines)

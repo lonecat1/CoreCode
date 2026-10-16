@@ -51,6 +51,7 @@ WEB_UTILS = os.path.join(REPO, "src", "minicode", "utils", "web.py")
 WEB_TOOLS = os.path.join(REPO, "src", "minicode", "tools", "web.py")
 MANAGE_CLI = os.path.join(REPO, "src", "minicode", "manage_cli.py")
 INSTALL = os.path.join(REPO, "src", "minicode", "install.py")
+MEMORY = os.path.join(REPO, "src", "minicode", "memory.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -1290,6 +1291,38 @@ MUTATIONS = [
         CONFIG,
         '    (("deepseek-reasoner",), 32_000, 64_000),',
         '    (("deepseek",), 8_192, 8_192),\n    (("deepseek-reasoner",), 32_000, 64_000),',
+    ),
+    (
+        "记忆: 引用行判定退回字面空格（制表符分隔被误当引用）",
+        MEMORY,
+        "        match = _INCLUDE_LINE_RE.fullmatch(stripped)",
+        '        match = stripped.startswith("@") and " " not in stripped',
+    ),
+    (
+        "记忆: visited 递归后不移除（重复包含误报为环且内容缺失）",
+        MEMORY,
+        "        finally:\n"
+        "            # 见上面 ②：递归返回后移除，恢复「只对祖先判环」的语义。\n"
+        "            visited.discard(key)",
+        "        finally:\n            pass",
+    ),
+    (
+        "记忆: 不再拒绝父目录穿越（可读仓库外文件）",
+        MEMORY,
+        '        if os.path.isabs(reference) or ".." in Path(reference).parts:',
+        "        if os.path.isabs(reference):",
+    ),
+    (
+        "记忆: 不再拒绝绝对路径",
+        MEMORY,
+        "        if os.path.isabs(reference) or \"..\" in Path(reference).parts:",
+        '        if ".." in Path(reference).parts:',
+    ),
+    (
+        "记忆: 深度上限不再生效（长链无限递归）",
+        MEMORY,
+        "        if depth >= MAX_INCLUDE_DEPTH:",
+        "        if False:",
     ),
 ]
 
