@@ -35,7 +35,7 @@
 | `cli-commands.ts` | 29 个命令名 |
 | `utils/web.ts` | 逐函数 + 端点/解析器配对 |
 | `compact/constants.ts` | 22 个值 + 零引用常量核实 |
-| `utils/token-estimator.ts` | warningLevel 阈值 0.95/0.85/0.50 + `CLEAR_MARKER` |
+| `utils/token-estimator.ts` | warningLevel 阈值 0.95/0.85/0.50 + `CLEAR_MARKER` + `CHARS_PER_TOKEN` 9 项逐项 + 各 role 的长度取法 |
 | `compact/snipCompact.ts` | `PROTECTED_TOOL_NAMES` / `ERROR_MARKERS` / 子串保护分支 / 边界角色（15 个用例） |
 | `compact/context-collapse.ts` | 汇总开销比 0.15 与下限 128 |
 | `utils/tool-result-storage.ts` | 6 个常量 + 预览的「最后一个换行超过 50% 才切」规则 |
@@ -57,7 +57,6 @@
 | `agents/manager.ts` | `MAX_SUB_AGENTS=3` / `MAX_SUB_AGENT_STEPS=20`、id 格式 `agent_N`、`wait` 的 30 秒默认超时、close 的 abort 文案 |
 | `mcp.ts` 的桥接层 | `sanitizeToolSegment` 三条细则、`normalizeInputSchema`、`endpoint_key` 格式、三种 status、失败时的协议上报 |
 | `runtime/turn-runner.ts` | 单飞闸门、`awaitingUser` 由 outcome 推导、`stop` 的默认原因文案 |
-| `utils/token-estimator.ts` | `CHARS_PER_TOKEN` 9 项逐项一致、`CLEAR_MARKER` 逐字一致、各 role 的长度取法、未知 role 默认 3.0 |
 | **全仓 267 个模块级常量** | `tools/check_constants.py`，零孤儿 |
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
