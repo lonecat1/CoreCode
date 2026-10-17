@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..runtime.goal import GoalError, GoalManager
+from ..runtime.goal import GoalError, GoalManager, goal_to_json
 from ..runtime.plan import PlanError, PlanManager
 from ..tooling import ToolContext, ToolDefinition, ToolResult
 
@@ -151,30 +151,40 @@ def create_goal_tools(manager: GoalManager) -> list[ToolDefinition]:
         except GoalError as error:
             return ToolResult.failure(str(error))
 
+        # **输出整份 Goal 文档的 JSON**，而不是一句「Goal 已更新」。
+        #
+        # 对应原版 `tools/goal.ts:29`：`JSON.stringify(updated)`。
+        # 模型需要看到自己刚设置的 completionCriteria、status、以及（完成时）
+        # completion 的嵌套结构，才知道下一步该做什么。
+        payload = goal_to_json(document) or {}
         if document.status in ("completed", "blocked"):
             # 控制位：有结论了 → 受控结束当前回合。
-            detail = document.completion_summary or document.stop_reason or document.status
             return ToolResult(
                 ok=True,
-                output=f"Goal {document.status}: {detail}",
+                output=json.dumps(payload, ensure_ascii=False),
                 stop=True,
             )
-        return ToolResult.success(
-            f"Goal 已更新（{document.status}），完成标准 {len(document.completion_criteria)} 条。"
-        )
+        return ToolResult.success(json.dumps(payload, ensure_ascii=False))
 
     def get_goal(data: Any, context: ToolContext) -> ToolResult:
+        """**必须把 plan 一起返回。**
+
+        对应原版 `tools/goal.ts:12`：
+            JSON.stringify({ goal: goal.getSnapshot(), plan: goal.plan.getSnapshot() })
+
+        早先这里只回四行摘要（status / description / needs_replan / 标准数量），
+        **完全不含 plan**——而模型问「当前目标和计划」正是为了看清 todo 的 id
+        与状态来决定下一步。少了 plan，这个工具几乎没用。
+        """
         snapshot = manager.get_snapshot()
-        if snapshot is None:
-            return ToolResult.success("没有 Goal。")
+        plan_document = manager.plan.get_snapshot()
         return ToolResult.success(
-            "\n".join(
-                [
-                    f"status: {snapshot.status}",
-                    f"description: {snapshot.description}",
-                    f"needs_replan: {snapshot.needs_replan}",
-                    f"criteria: {len(snapshot.completion_criteria)}",
-                ]
+            json.dumps(
+                {
+                    "goal": goal_to_json(snapshot),
+                    "plan": _plan_to_json(plan_document),
+                },
+                ensure_ascii=False,
             )
         )
 

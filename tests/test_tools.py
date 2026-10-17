@@ -179,6 +179,160 @@ class ListFilesSchemaTests(unittest.TestCase):
         self.assertEqual(validator({"recursive": None})["recursive"], False)
 
 
+class GoalToolTests(unittest.TestCase):
+    """`get_goal` / `update_goal` 的输出格式与 `stop` 控制位。
+
+    ## 为什么输出格式重要
+
+    原版两个工具都返回 **JSON**：
+
+        get_goal    → JSON.stringify({ goal, plan })
+        update_goal → JSON.stringify(updated)
+
+    本实现一度只回几行人类可读摘要。对 `get_goal` 尤其致命：它**完全不含
+    plan**，而模型问「当前目标和计划」正是为了看清 todo 的 id 与状态来决定
+    下一步——少了 plan，这个工具几乎没用。
+    """
+
+    def setUp(self) -> None:
+        from minicode.runtime.goal import GoalManager
+        from minicode.runtime.plan import PlanManager
+        from minicode.tools.goal import create_goal_tools
+
+        self.plan = PlanManager("sess-1")
+        self.goal = GoalManager(self.plan)
+        self.tools = {tool.name: tool for tool in create_goal_tools(self.goal)}
+        self.context = ToolContext(cwd=".")
+
+    def _run(self, name: str, payload: dict):
+        return self.tools[name].run(payload, self.context)
+
+    def _json(self, name: str, payload: dict) -> dict:
+        result = self._run(name, payload)
+        self.assertTrue(result.ok, result.output)
+        return json.loads(result.output)
+
+    # -- get_goal -----------------------------------------------------------
+
+    def test_get_goal_returns_goal_and_plan(self) -> None:
+        """**必须同时返回 plan。**
+
+        原版 `JSON.stringify({ goal, plan })`。只给 goal 的话，模型看不到
+        todo 的 id 与状态，也就无法决定下一步。
+        """
+        payload = self._json("get_goal", {})
+        self.assertEqual(sorted(payload), ["goal", "plan"])
+
+    def test_get_goal_without_a_goal_still_returns_the_plan(self) -> None:
+        payload = self._json("get_goal", {})
+        self.assertIsNone(payload["goal"])
+        self.assertIn("todos", payload["plan"])
+
+    def test_get_goal_includes_todo_ids(self) -> None:
+        self.goal.create("目标")
+        self.plan.update([{"title": "第一步", "status": "pending"}])
+        payload = self._json("get_goal", {})
+        todos = payload["plan"]["todos"]
+        self.assertEqual(len(todos), 1)
+        self.assertTrue(todos[0]["id"], "模型需要 id 才能精确更新")
+
+    def test_get_goal_uses_camel_case_plan_fields(self) -> None:
+        payload = self._json("get_goal", {})
+        self.assertEqual(
+            sorted(payload["plan"]),
+            ["id", "schemaVersion", "sessionId", "todos", "updatedAt"],
+        )
+
+    # -- update_goal --------------------------------------------------------
+
+    def test_update_goal_returns_the_goal_document(self) -> None:
+        self.goal.create("目标")
+        self.plan.update([{"title": "a", "status": "pending"}])
+        payload = self._json("update_goal", {"action": "set_criteria", "criteria": ["能跑"]})
+        self.assertEqual(
+            sorted(payload),
+            [
+                "completionCriteria",
+                "description",
+                "id",
+                "needsReplan",
+                "planId",
+                "schemaVersion",
+                "sessionId",
+                "status",
+                "updatedAt",
+            ],
+        )
+        self.assertEqual(payload["completionCriteria"], ["能跑"])
+
+    def test_update_goal_does_not_stop_on_set_criteria(self) -> None:
+        self.goal.create("目标")
+        self.plan.update([{"title": "a", "status": "pending"}])
+        result = self._run("update_goal", {"action": "set_criteria", "criteria": ["x"]})
+        self.assertTrue(result.ok)
+        self.assertFalse(getattr(result, "stop", False))
+
+    def test_update_goal_completed_stops_the_turn(self) -> None:
+        self.goal.create("目标")
+        document = self.plan.update([{"title": "a", "status": "completed"}])
+        self._run("update_goal", {"action": "set_criteria", "criteria": ["能跑"]})
+        result = self._run(
+            "update_goal",
+            {"action": "completed", "summary": "好了", "checks": ["验证过"]},
+        )
+        self.assertTrue(result.ok)
+        self.assertTrue(getattr(result, "stop", False), "完成意味着本回合有结论了")
+
+    def test_completed_nests_summary_checks_and_checked_at(self) -> None:
+        """原版把这三样放在一个嵌套的 `completion` 对象里。
+
+        本实现用三个平铺字段存储，但**发给模型时还原成嵌套形状**——
+        否则模型看到的形状与原版不同。
+        """
+        self.goal.create("目标")
+        self.plan.update([{"title": "a", "status": "completed"}])
+        self._run("update_goal", {"action": "set_criteria", "criteria": ["能跑"]})
+        payload = self._json(
+            "update_goal",
+            {"action": "completed", "summary": "好了", "checks": ["验证过"]},
+        )
+        self.assertEqual(sorted(payload["completion"]), ["checkedAt", "checks", "summary"])
+        self.assertEqual(payload["completion"]["summary"], "好了")
+        self.assertEqual(payload["completion"]["checks"], ["验证过"])
+        self.assertTrue(payload["completion"]["checkedAt"], "完成时刻必须有值")
+
+    def test_blocked_stops_and_includes_the_reason(self) -> None:
+        self.goal.create("目标")
+        result = self._run("update_goal", {"action": "blocked", "reason": "缺权限"})
+        self.assertTrue(result.ok)
+        self.assertTrue(getattr(result, "stop", False))
+        payload = json.loads(result.output)
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["stopReason"], "缺权限")
+
+    def test_optional_fields_are_omitted_not_null(self) -> None:
+        """`stopReason` / `completion` 无值时**省略**。
+
+        写 `null` 会让模型以为「该字段有值但为空」。
+        """
+        self.goal.create("目标")
+        self.plan.update([{"title": "a", "status": "pending"}])
+        payload = self._json(
+            "update_goal", {"action": "set_criteria", "criteria": ["x"]}
+        )
+        self.assertNotIn("stopReason", payload)
+        self.assertNotIn("completion", payload)
+
+    def test_unknown_action_is_a_failure(self) -> None:
+        self.goal.create("目标")
+        result = self._run("update_goal", {"action": "nonsense"})
+        self.assertFalse(result.ok)
+
+    def test_tool_descriptions_are_present(self) -> None:
+        self.assertTrue(self.tools["get_goal"].description)
+        self.assertTrue(self.tools["update_goal"].description)
+
+
 class UpdatePlanToolTests(unittest.TestCase):
     """`update_plan` 的输出格式。
 

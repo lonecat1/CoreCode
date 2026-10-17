@@ -57,6 +57,7 @@ PIPELINE = os.path.join(REPO, "src", "minicode", "context", "pipeline.py")
 LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
 TOOLS_GOAL = os.path.join(REPO, "src", "minicode", "tools", "goal.py")
 PLAN = os.path.join(REPO, "src", "minicode", "runtime", "plan.py")
+GOAL_RUNTIME = os.path.join(REPO, "src", "minicode", "runtime", "goal.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -1464,10 +1465,12 @@ MUTATIONS = [
     (
         "update_plan: 输出退回一行摘要（模型拿不到 id）",
         TOOLS_GOAL,
+        "            payload[\"explanation\"] = explanation.strip()\n"
         "        return ToolResult.success(json.dumps(payload, ensure_ascii=False))",
-        '        completed = sum(1 for todo in document.todos if todo.status == "completed")\n'
+        "            payload[\"explanation\"] = explanation.strip()\n"
+        "        completed = sum(1 for todo in document.todos if todo.status == \"completed\")\n"
         "        return ToolResult.success(\n"
-        '            f"Plan updated: {completed}/{len(document.todos)} completed."\n'
+        "            f\"Plan updated: {completed}/{len(document.todos)} completed.\"\n"
         "        )",
     ),
     (
@@ -1489,6 +1492,65 @@ MUTATIONS = [
         PLAN,
         "                if not isinstance(raw_id, str) or not raw_id.strip():",
         "                if False:",
+    ),
+    (
+        "get_goal: 只回 goal 不回 plan（模型看不到 todo id）",
+        TOOLS_GOAL,
+        '                    "plan": _plan_to_json(plan_document),',
+        '                    "plan": None,',
+    ),
+    (
+        "update_goal: 输出退回一行摘要（模型看不到结构化结果）",
+        TOOLS_GOAL,
+        "        return ToolResult.success(json.dumps(payload, ensure_ascii=False))\n\n"
+        "    def get_goal",
+        "        return ToolResult.success(f\"Goal 已更新（{document.status}）。\")\n\n"
+        "    def get_goal",
+    ),
+    (
+        "goal: completion 不再嵌套（形状与原版不同）",
+        GOAL_RUNTIME,
+        '        payload["completion"] = {\n'
+        '            "summary": goal.completion_summary,\n'
+        '            "checks": list(goal.completion_checks),\n'
+        '            "checkedAt": goal.completion_checked_at or "",\n'
+        "        }",
+        '        payload["completion"] = goal.completion_summary',
+    ),
+    (
+        "goal: 完成时不再记录 checkedAt",
+        GOAL_RUNTIME,
+        "            completion_checked_at=_now_iso(),",
+        "            completion_checked_at=None,",
+    ),
+    (
+        "goal: 可选字段写成 null（模型以为有值但为空）",
+        GOAL_RUNTIME,
+        '    if goal.stop_reason is not None:\n        payload["stopReason"] = goal.stop_reason',
+        '    payload["stopReason"] = goal.stop_reason',
+    ),
+    (
+        "goal: get_snapshot 退回逐字段构造（新增字段被漏掉）",
+        GOAL_RUNTIME,
+        "        return replace(\n"
+        "            self._document,\n"
+        "            completion_criteria=list(self._document.completion_criteria),\n"
+        "            completion_checks=list(self._document.completion_checks),\n"
+        "        )",
+        "        return GoalDocument(\n"
+        "            schema_version=self._document.schema_version,\n"
+        "            id=self._document.id,\n"
+        "            session_id=self._document.session_id,\n"
+        "            plan_id=self._document.plan_id,\n"
+        "            description=self._document.description,\n"
+        "            completion_criteria=list(self._document.completion_criteria),\n"
+        "            status=self._document.status,\n"
+        "            needs_replan=self._document.needs_replan,\n"
+        "            stop_reason=self._document.stop_reason,\n"
+        "            completion_summary=self._document.completion_summary,\n"
+        "            completion_checks=list(self._document.completion_checks),\n"
+        "            updated_at=self._document.updated_at,\n"
+        "        )",
     ),
 ]
 

@@ -29,7 +29,7 @@ Plan 是「这轮工作怎么拆」，模型可以自由改。Goal 是「用户�
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from .plan import PlanManager
@@ -64,6 +64,12 @@ class GoalDocument:
     stop_reason: str | None = None
     completion_summary: str | None = None
     completion_checks: list[str] = field(default_factory=list)
+    #: 宣布完成的时刻（ISO 8601）。对应原版 `completion.checkedAt`。
+    #:
+    #: 原版把 summary / checks / checkedAt 三样放在一个嵌套的 `completion`
+    #: 对象里；本实现用三个平铺字段存（更贴近 dataclass 的习惯），
+    #: 但**序列化给模型时仍然还原成嵌套形状**——见 `goal_to_json()`。
+    completion_checked_at: str | None = None
     updated_at: str = ""
 
 
@@ -81,22 +87,36 @@ class GoalManager:
 
     # -- 查询 ---------------------------------------------------------------
 
+    @property
+    def plan(self) -> PlanManager:
+        """与本 Goal 共享的计划。
+
+        对应原版 `GoalManager` 的 `readonly plan: PlanManager`。公开出来是因为
+        `get_goal` 工具要把 goal 与 plan **一起**返回（原版
+        `JSON.stringify({ goal, plan })`）——只给 goal 的话，模型看不到 todo
+        的 id 与状态，也就无法决定下一步。
+        """
+        return self._plan
+
     def get_snapshot(self) -> GoalDocument | None:
+        """返回一份**副本**，调用方改它不会影响内部状态。
+
+        ## 为什么用 `replace()` 而不是逐字段构造
+
+        逐字段构造时，**新加的字段很容易被漏掉**——而且漏了不会报错，只是
+        快照里少一个值（本项目在会话落盘上就吃过这个亏，见 D14）。
+        加 `completion_checked_at` 时正好又踩到一次：构造函数里没有它，
+        于是 `get_snapshot()` 返回的快照丢了刚记录的完成时刻。
+
+        `dataclasses.replace()` 复制全部字段，只需要覆盖**需要深拷贝的容器**
+        （两个 list）——这样新增字段时不必记得来改这里。
+        """
         if self._document is None:
             return None
-        return GoalDocument(
-            schema_version=self._document.schema_version,
-            id=self._document.id,
-            session_id=self._document.session_id,
-            plan_id=self._document.plan_id,
-            description=self._document.description,
+        return replace(
+            self._document,
             completion_criteria=list(self._document.completion_criteria),
-            status=self._document.status,
-            needs_replan=self._document.needs_replan,
-            stop_reason=self._document.stop_reason,
-            completion_summary=self._document.completion_summary,
             completion_checks=list(self._document.completion_checks),
-            updated_at=self._document.updated_at,
         )
 
     # -- 生命周期（用户侧） --------------------------------------------------
@@ -216,6 +236,7 @@ class GoalManager:
             stop_reason=None,
             completion_summary=summary.strip(),
             completion_checks=checks,
+            completion_checked_at=_now_iso(),
         )
         return self.get_snapshot()  # type: ignore[return-value]
 
@@ -283,3 +304,44 @@ def _now_iso() -> str:
     milliseconds = int(time.time() * 1000)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(milliseconds / 1000))
     return f"{stamp}.{milliseconds % 1000:03d}Z"
+
+
+def goal_to_json(goal: GoalDocument | None) -> dict[str, Any] | None:
+    """把 GoalDocument 转成与原版一致的 JSON 形状（驼峰 + 嵌套 `completion`）。
+
+    对应原版 `GoalDocument` 的类型定义。两处**刻意的形状还原**：
+
+    **① 驼峰字段名。** 原版是 `JSON.stringify(goal)`，字段就是
+    `schemaVersion` / `sessionId` / `planId` / `completionCriteria` /
+    `needsReplan` / `stopReason` / `updatedAt`。模型见过的是这些名字。
+
+    **② `completion` 是嵌套对象。** 本实现用三个平铺字段
+    （`completion_summary` / `completion_checks` / `completion_checked_at`）
+    存储——更贴近 dataclass 的习惯——但**发给模型时还原成**
+    `{"summary", "checks", "checkedAt"}`，否则模型看到的形状与原版不同。
+
+    可选字段（`stopReason` / `completion`）在无值时**省略**，写 `null`
+    会让模型以为「该字段有值但为空」。
+    """
+    if goal is None:
+        return None
+    payload: dict[str, Any] = {
+        "schemaVersion": goal.schema_version,
+        "id": goal.id,
+        "sessionId": goal.session_id,
+        "planId": goal.plan_id,
+        "description": goal.description,
+        "completionCriteria": list(goal.completion_criteria),
+        "status": goal.status,
+        "needsReplan": goal.needs_replan,
+        "updatedAt": goal.updated_at,
+    }
+    if goal.stop_reason is not None:
+        payload["stopReason"] = goal.stop_reason
+    if goal.completion_summary is not None:
+        payload["completion"] = {
+            "summary": goal.completion_summary,
+            "checks": list(goal.completion_checks),
+            "checkedAt": goal.completion_checked_at or "",
+        }
+    return payload
