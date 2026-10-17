@@ -537,6 +537,62 @@
 | **平台差异** | `readline` 是可选 C 扩展，**Windows 上没有**。实现是「有则用、无则静默跳过」——补全不可用不影响任何其他功能，也绝不报错。 |
 | **可回退** | 换回合并表。**不建议**——修好的是「用户看不到 / 猜不到子命令」。 |
 
+---
+
+## D47 · 环境变量的拼写（**修正**）
+
+| | |
+|---|---|
+| **原行为** | 读 `MINI_CODE_*`——**MINI 与 CODE 之间有一个下划线**：`MINI_CODE_HOME` / `MINI_CODE_MODEL` / `MINI_CODE_MAX_OUTPUT_TOKENS` / `MINI_CODE_MAX_RETRIES` / `MINI_CODE_MODEL_MODE` / `MINI_CODE_DEBUG_AUTOCOMPACT` / `MINI_CODE_BIN_DIR`。 |
+| **本实现（修正前）** | 读 `MINICODE_*`（没有下划线），且**完全没有** `MAX_RETRIES` / `MODEL_MODE` / `DEBUG_AUTOCOMPACT` 三个。 |
+| **为什么必须改** | 一个从原版过来的用户：`MINI_CODE_HOME=/tmp/x minicode` → 程序照旧读写 `~/.mini-code`，**不报错、不提示**。配置看起来生效了，只是被静默忽略——这类问题最难自查。 |
+| **现在** | 两套都认，**原版拼写优先**（上游契约优先，别名只照顾本项目既有测试与文档）。三个缺失的开关也补齐了。 |
+| **影响面** | 见下面三项。 |
+| **可回退** | 只认 `MINICODE_*`。**不建议**——那会重新引入「配置被静默忽略」。 |
+
+### 补齐的三个开关
+
+| 变量 | 原版行为 | 本实现 |
+|---|---|---|
+| `MAX_RETRIES` | `getRetryLimit()`：`Number()` 后非有限或 <0 用默认值，否则 `floor` | 同；另加 `should_auto_compact()` 与原版门控顺序 |
+| `MODEL_MODE=mock` | 选 mock 适配器。**原版没有 `--mock` 标志**，这是它唯一的入口 | 两者都支持：`--mock` 给人用，环境变量给脚本用 |
+| `DEBUG_AUTOCOMPACT=1` | 往 **stderr** 打 `[auto-compact] …` | 同，字段顺序也一致 |
+
+### 一个 `0` 的坑
+
+`MAX_RETRIES=0` 是合法值（**不重试**），但 `0` 在 Python 里是假值：
+
+    max_retries = resolve_max_retries() or DEFAULT   # ← 0 被悄悄变回 4
+
+原版 `Number('0') = 0` → `Math.floor(0)` → 0 次重试。改成显式判 `None`。
+
+---
+
+## D48 · 启动横幅（**修正**）
+
+| | |
+|---|---|
+| **原行为** | `renderPanel('MiniCode', metaBadges)`（`tui/chrome.ts`）：5 行结构（边框 / 标题 / **空行** / 徽章行 / 边框），徽章顺序 `session · provider · model · messages · events · [context] · skills · mcp · [mcp-wait] · [mcp-err]`，宽度 `max(60, 终端列数 ?? 100)`。 |
+| **本实现（修正前）** | 中文键值行：模型 / 会话 / 目录 / 工具 / 技能 / MCP。 |
+| **为什么必须改** | docstring 里我写过一句「本实现放在键值行里——**信息量一致**」。**并不一致**：缺 `provider`、`messages`、`events`，多出「目录」「工具」。横幅是用户启动后看到的第一样东西，字段不对等于「这个工具报告的事和原版不一样」——`provider` 尤其重要，它告诉用户连的是哪个端点、还是离线。 |
+| **附带发现** | 删除 `tui/*` 时，我以为只删了全屏 UI。实际上 `renderBanner` 住在 `tui/chrome.ts`，而**普通 readline 路径也在用它**（`index.ts:161`）。 |
+| **宽度是两套规则** | 正文封顶 `MAX_BODY_WIDTH`（长段落可读），横幅**不封顶**。早先共用 `output_width()`，200 列终端只画 100 列的框。 |
+| **可回退** | 换回键值行。**不建议**——那会重新引入「横幅报告的信息和原版不一样」。 |
+
+### 现在
+
+与 TS **逐字节一致**，由 `tools/e2e_compare.py` 的 `banner_only` 场景守住（只比框体行）：
+
+    ╭──────…──────╮
+    │ MiniCode
+    │
+    │ [session] local  [provider] offline  [model] not-configured  [messages] 1  [events] 0  ...
+    ╰──────…──────╯
+
+框外本实现多两样：`输入 /help …` 提示行与 `› ` 提示符——行模式 REPL 没有提示符，
+用户就不知道在哪输入；原版的 readline 干脆什么都不显示。这两项登记在
+`e2e_compare.py` 的 `INTENTIONAL` 里。
+
 ### 两条分叉，按「会不会写回」区分
 
 | | 做法 | 覆盖 |
@@ -601,6 +657,8 @@ U+FFFD 会**落盘**，用户的文件被真的改坏。本实现选择让这次
 | D44 | MCP 工具描述只看真假、失败不关连接 | **修正** | 空白描述回落兜底文案；报错服务器不再留活进程 |
 | D45 | 非法 UTF-8 直接抛 `UnicodeDecodeError` | **修正 + 加固** | 状态文件不崩；编辑工具拒绝而非写坏文件 |
 | D46 | 斜杠命令表合并成 29 条，且补全函数未接线 | **修正** | `/help` 完整；`/loop s` + Tab 能补出 `/loop stop` |
+| D47 | 环境变量拼写成 `MINICODE_*` | **修正** | 原版用户设的 `MINI_CODE_HOME` 不再被静默忽略 |
+| D48 | 启动横幅是另一套字段与排版 | **修正** | 与 TS **逐字节一致**（5 行结构 + 7 个徽章） |
 
 **一条贯穿全部修正的原则**：凡是会**静默**造成数据丢失或计量失真的地方就修；
 凡是属于行为契约（阈值、护栏、排序、占位模板）或**明显有意的取舍**
