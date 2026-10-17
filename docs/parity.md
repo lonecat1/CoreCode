@@ -57,7 +57,12 @@
 | `agents/manager.ts` | `MAX_SUB_AGENTS=3` / `MAX_SUB_AGENT_STEPS=20`、id 格式 `agent_N`、`wait` 的 30 秒默认超时、close 的 abort 文案 |
 | `mcp.ts` 的桥接层 | `sanitizeToolSegment` 三条细则、`normalizeInputSchema`、`endpoint_key` 格式、三种 status、失败时的协议上报 |
 | `runtime/turn-runner.ts` | 单飞闸门、`awaitingUser` 由 outcome 推导、`stop` 的默认原因文案 |
+| `tools/run-command.ts` | `READONLY_COMMANDS` **17/17**、`DEVELOPMENT_COMMANDS` **8/8**、`MAX_OUTPUT_BYTES = 1048576` |
+| `cli-commands.ts` | `SLASH_COMMANDS` **37 条逐条同序**；`completeSlashCommand` 的两条规则（前缀命中 / 无命中列全部） |
+| `compact/snipCompact.ts` 的边界文本 | `buildAnthropicSnipBoundaryText()` **逐字一致**（4 行，含空行） |
+| `plan/context.ts` 的注入头 | `PLAN_CONTEXT_HEADER` **5 行逐字一致** |
 | **全仓 267 个模块级常量** | `tools/check_constants.py`，零孤儿 |
+| **全仓 589 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
 `utils/*` 里少数工具函数的边界值 · `runtime/*` 的算法内部阈值
@@ -96,11 +101,30 @@
 |---|---|---|
 | `tools/check_imports.py` | 相对导入是否存在、名字是否真的定义、有没有从未被导入的模块 | 78 个模块全通过 |
 | `tools/check_constants.py` | 模块级常量的「谁在用」：零引用 / 仅测试引用 / **伪引用**（只在注释里出现） | 267 个常量，零孤儿 |
-| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 229 条，0 歧义 0 无效 |
+| `tools/check_orphans.py` | 模块级**函数与类**的引用情况：定义了却没人调 | 589 个函数/类，零孤儿 |
+| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 237 条，0 歧义 0 无效 |
 
 **「伪引用」那一类是这套检查的主要价值**：常量只在注释或 docstring 里被
 提到时，扫一眼会觉得「有引用」，而实际没有任何代码读它。我自己就被骗过一次
 ——把 `MIN_KEEP_TOKENS` 的注释行当成了「有人在用」。
+
+### 为什么又加了一个「函数孤儿」检查器
+
+`check_constants.py` 只扫**模块级赋值**（常量），函数不在它的视野里。于是这类
+缺陷完全逃得掉：
+
+> `find_matching_slash_commands()` 被定义、有 docstring、看起来完全正常，
+> 但**没有任何调用点**。用户感受到的是「Tab 补全没反应」。
+
+常量孤儿通常是「写多了」；**函数孤儿往往是「该接线但没接」**——后者更严重，
+因为它描述的是一个缺失的功能，而代码读起来像功能已经有了。
+
+`check_orphans.py` 上线后的第一批产出就是三个真缺陷：那个补全函数、它自己扫出
+的 `NullContextPipeline`（与 `IdentityContextPipeline` 功能完全相同、从未使用），
+以及四条无人调用的死函数。
+
+**白名单是双向的**：已不再零引用的条目也会被报出来。写这个工具时我在白名单里
+放了两条入口函数，工具当场把它们报了出来——`main` 其实被 `__main__.py` 引用着。
 
 ### 一条操作纪律：变异检查运行期间**不得编辑源码**
 
@@ -321,7 +345,7 @@ Python 版连工具都没有，自然做不到。
 | `mock-model.ts` | 161 | `adapters/mock.py`(91) | 🔶 **有意差异**（见下） |
 | `utils/model-context.ts` | 144 | `context/model_context.py`(101) | ✅ **已核对一致**（见下） |
 | `config.ts` 的 Claude 回退 | — | `load_effective_settings()` | ✅ **已补齐** |
-| `tty-app.ts` + `tui/*` | ~3,500 | 已删除 | 🔶 用户明确放弃全屏 TUI |
+| `tty-app.ts` + `tui/*`（9 个文件） | 4,169 | 已删除 | 🔶 用户明确放弃全屏 TUI |
 
 ### 逐文件核对的结果（三处）
 
