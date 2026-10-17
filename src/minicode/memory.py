@@ -70,7 +70,7 @@ class MemoryFile:
 
 def _read_if_present(path: Path) -> str | None:
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8", errors="replace")
     except (OSError, UnicodeDecodeError):
         return None
     return text if text.strip() else None

@@ -63,7 +63,7 @@ LIST_REQUEST_TIMEOUT = 3.0
 
 def _read_protocol_cache() -> dict[str, str]:
     try:
-        raw = protocol_cache_path().read_text(encoding="utf-8")
+        raw = protocol_cache_path().read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
     try:

@@ -171,7 +171,7 @@ def read_permission_store(path: Any | None = None) -> PermissionStore:
     # 突然全部失效」——而程序不会报错，只是每次都问一遍。
     target = path or permissions_path()
     try:
-        raw = target.read_text(encoding="utf-8")
+        raw = target.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return PermissionStore()
     try:

@@ -223,7 +223,7 @@ def _truncate_utf16(text: str, limit: int) -> str:
 def _read_lines(path: Path) -> list[str]:
     """读文件并按行切分。任何读取异常都当作「文件不存在」（与原实现一致）。"""
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8", errors="replace")
     except (OSError, UnicodeDecodeError):
         return []
     return [line for line in raw.split("\n") if line.strip()]

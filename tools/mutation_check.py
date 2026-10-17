@@ -1611,6 +1611,61 @@ MUTATIONS = [
 ]
 
 
+#: 文本解码健壮性（D45）。非法 UTF-8 不该让程序起不来，也不该写坏文件。
+_DECODING_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "解码: settings.json 读到非法字节就崩（用户起不来）",
+        CONFIG,
+        '        raw = target.read_text(encoding="utf-8", errors="replace")\n'
+        "    except FileNotFoundError:\n"
+        "        return {}\n"
+        "    except OSError as error:\n"
+        '        raise ConfigError(f"无法读取 {target}：{error}") from error',
+        '        raw = target.read_text(encoding="utf-8")\n'
+        "    except FileNotFoundError:\n"
+        "        return {}\n"
+        "    except OSError as error:\n"
+        '        raise ConfigError(f"无法读取 {target}：{error}") from error',
+    ),
+    (
+        "解码: history 读到非法字节就崩（整个 CLI 起不来）",
+        HISTORY,
+        'path or history_path(), encoding="utf-8", errors="replace", newline=""',
+        'path or history_path(), encoding="utf-8", newline=""',
+    ),
+    (
+        "解码: /init 读到非法字节就崩（只 except OSError）",
+        REPO_INIT,
+        'gitignore_path, encoding="utf-8", errors="replace", newline=""',
+        'gitignore_path, encoding="utf-8", newline=""',
+    ),
+    (
+        "解码: mcp 配置读到非法字节就崩",
+        CONFIG,
+        '        raw = path.read_text(encoding="utf-8", errors="replace")\n'
+        "    except OSError:",
+        '        raw = path.read_text(encoding="utf-8")\n    except OSError:',
+    ),
+    (
+        "解码: 非 UTF-8 文件被当成空文件（会覆盖用户文件）",
+        FILE_REVIEW,
+        "    except UnicodeDecodeError as error:",
+        "    except FileNotFoundError as error:",
+    ),
+    (
+        "解码: 非 UTF-8 时漏出原始 codec 消息（用户看不懂）",
+        FILE_REVIEW,
+        '        raise FileReviewError(\n'
+        '            f"{target_path} 不是 UTF-8 文本（{error.reason}），"\n'
+        '            "为避免写坏文件，本次修改已取消。"\n'
+        "        ) from error",
+        "        raise",
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_DECODING_MUTATIONS]
+
+
 #: 单次跑测试的上限（秒）。
 #:
 #: 必须有限制：有的变异会让程序**永久阻塞**而不是失败（例如分帧状态机不再

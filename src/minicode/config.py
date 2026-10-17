@@ -282,7 +282,7 @@ def read_settings_file(path: Path | None = None) -> dict[str, Any]:
     # 它会指向错误的位置，于是「读自己的配置」变成「读别人的配置」。
     target = path or settings_path()
     try:
-        raw = target.read_text(encoding="utf-8")
+        raw = target.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return {}
     except OSError as error:
@@ -456,7 +456,7 @@ def read_mcp_config_file(path: Path) -> dict[str, Any]:
     缺失、损坏、或结构不对 → 返回 `{}`（不抛）。MCP 配置坏掉不该让程序起不来。
     """
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
     try:
@@ -518,7 +518,7 @@ def read_mcp_tokens_file(path: Path | None = None) -> dict[str, Any]:
     """
     target = path or mcp_tokens_path()
     try:
-        raw = target.read_text(encoding="utf-8")
+        raw = target.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return {}
     parsed = json.loads(raw)

@@ -34,6 +34,15 @@ import os
 from .tooling import ToolContext, ToolResult
 
 
+class FileReviewError(Exception):
+    """写前审查无法继续（例如目标不是 UTF-8 文本）。
+
+    抛给调用方而不是返回 `ToolResult.failure`：这里是**底层读函数**，
+    它不该知道「工具失败」长什么样。工具注册表会把任何异常变成模型可读的
+    失败文本，所以最终用户看到的仍是一条干净的失败。
+    """
+
+
 def load_existing_file(target_path: str) -> str:
     try:
         # `newline=""`：不归一化换行，保持与原版 `readFile` 一致。
@@ -47,6 +56,21 @@ def load_existing_file(target_path: str) -> str:
         # 那样 `modify_file` 会以为自己在「创建新文件」，实际上是在覆盖一个
         # 已存在但读不出来的东西。宁可让工具失败，也不要静默替换。
         return ""
+    except UnicodeDecodeError as error:
+        # **非 UTF-8 内容不当作空文件，而是明确失败。**
+        #
+        # 原版这里不会走到：Node 的 `readFile(path, 'utf8')` 遇到非法字节
+        # **不抛错**，而是替换成 U+FFFD——于是 `edit_file` 会拿着替换后的
+        # 文本去比较、去写回，把用户的文件**真的改坏**。
+        #
+        # 本实现选择失败而不是有损读取（见 D45）。裸的 `UnicodeDecodeError`
+        # 也可以交给上层兜住（工具注册表确实会兜），但它的消息是
+        # `'utf-8' codec can't decode byte 0xff in position 0: ...`，
+        # 对用户毫无指导意义。这里换成一句能照着做的话。
+        raise FileReviewError(
+            f"{target_path} 不是 UTF-8 文本（{error.reason}），"
+            "为避免写坏文件，本次修改已取消。"
+        ) from error
 
 
 def build_unified_diff(file_path: str, before: str, after: str) -> str:

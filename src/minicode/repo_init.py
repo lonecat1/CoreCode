@@ -346,7 +346,17 @@ def _write_file_if_missing(file_path: str, content: str) -> InitStatus:
 def ensure_gitignore_entries(gitignore_path: str) -> InitStatus:
     """补齐 `.gitignore` 里缺失的条目。**只追加，不重写已有规则。**"""
     try:
-        with open(gitignore_path, encoding="utf-8", newline="") as handle:
+        # `errors="replace"`：与 Node 的 `readFile(path, 'utf8')` 一致——非法
+        # 字节替换成 U+FFFD 而不是抛错。
+        #
+        # 不加这行的话，一个含非 UTF-8 字节的 `.gitignore` 会让
+        # `UnicodeDecodeError` 一路冒出 `ensure_gitignore_entries` →
+        # `initialize_repo` → `/init` 的处理函数（它只 `except OSError`），
+        # 于是 `/init` **带着 traceback 崩掉**。而这里做的事只是「读出来、
+        # 看看有没有这几行、没有就追加」，完全没必要因为一行非法字节罢工。
+        with open(
+            gitignore_path, encoding="utf-8", errors="replace", newline=""
+        ) as handle:
             existing = handle.read()
     except FileNotFoundError:
         lines = [GITIGNORE_COMMENT, *GITIGNORE_ENTRIES]

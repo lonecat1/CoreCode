@@ -72,7 +72,9 @@ class HistoryEntry:
 def _read_lines(path: Any | None = None) -> list[str]:
     """读原始行。文件不存在或读不了都返回空列表——历史坏掉不该让程序起不来。"""
     try:
-        with open(path or history_path(), encoding="utf-8", newline="") as handle:
+        with open(
+            path or history_path(), encoding="utf-8", errors="replace", newline=""
+        ) as handle:
             raw = handle.read()
     except OSError:
         return []

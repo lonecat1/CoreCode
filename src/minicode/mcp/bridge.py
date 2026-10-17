@@ -537,7 +537,7 @@ def _load_token(server_name: str) -> str | None:
 
     path = minicode_home() / "mcp-tokens.json"
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
     try:

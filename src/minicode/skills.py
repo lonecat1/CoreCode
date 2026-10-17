@@ -140,7 +140,7 @@ def _read_skill(directory: Path, name: str, source: str) -> LoadedSkill | None:
         # 若用普通 `utf-8` 读，BOM 会留在正文最前面，于是 `# 标题` 变成
         # `\ufeff# 标题`——不再以 `#` 开头，标题被当成描述行，
         # 系统提示里就会出现一段带乱码的描述。这个 bug 真实发生过。
-        content = skill_file.read_text(encoding="utf-8-sig")
+        content = skill_file.read_text(encoding="utf-8-sig", errors="replace")
     except (OSError, UnicodeDecodeError):
         return None
     if not content.strip():
@@ -230,7 +230,7 @@ def install_skill(
     if resolved.is_dir():
         candidate = resolved / "SKILL.md"
         try:
-            content = candidate.read_text(encoding="utf-8-sig")
+            content = candidate.read_text(encoding="utf-8-sig", errors="replace")
             inferred = resolved.name
         except (OSError, UnicodeDecodeError):
             content = None
@@ -238,7 +238,7 @@ def install_skill(
     if content is None:
         candidate = resolved if resolved.name == "SKILL.md" else resolved / "SKILL.md"
         try:
-            content = candidate.read_text(encoding="utf-8-sig")
+            content = candidate.read_text(encoding="utf-8-sig", errors="replace")
             inferred = candidate.parent.name
         except (OSError, UnicodeDecodeError) as error:
             raise SkillError(f"找不到可安装的 SKILL.md：{source_path}") from error
