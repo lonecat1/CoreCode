@@ -60,8 +60,10 @@ _WINDOWS_BIN_DIRNAME = "bin"
 
 
 def default_bin_dir() -> Path:
-    """启动器目录。可用 `MINICODE_BIN_DIR` 覆盖（与原版一致）。"""
-    override = os.environ.get("MINICODE_BIN_DIR")
+    """启动器目录。可用 `MINI_CODE_BIN_DIR` / `MINICODE_BIN_DIR` 覆盖。"""
+    from .config import env_value
+
+    override = env_value("BIN_DIR")
     if override:
         return Path(override).resolve()
     if platform.system() == "Windows":

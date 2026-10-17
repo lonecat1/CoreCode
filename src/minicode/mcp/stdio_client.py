@@ -51,9 +51,11 @@ CLIENT_VERSION = "0.1.0"
 #: 它是**跨项目共享**的机器级缓存，不该被单个项目的配置影响。
 #: （这一点与原实现一致，属于有意保留的取舍，见 docs/divergences.md。）
 def protocol_cache_path() -> Path:
-    override = os.environ.get("MINICODE_HOME")
-    base = Path(override).expanduser().resolve() if override else Path.home() / ".mini-code"
-    return base / "mcp-protocol-cache.json"
+    # 走 `config.minicode_home()`：它同时认 `MINI_CODE_HOME` 与
+    # `MINICODE_HOME`（原版拼写优先）。这里自己读环境变量的话会漏掉原版拼写。
+    from ..config import minicode_home
+
+    return minicode_home() / "mcp-protocol-cache.json"
 
 
 #: 各类请求的默认超时（秒）。

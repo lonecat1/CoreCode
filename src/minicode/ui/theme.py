@@ -54,6 +54,8 @@ WHITE = "\x1b[37m"
 
 #: 亮色前景
 BRIGHT_RED = "\x1b[91m"
+BRIGHT_GREEN = "\x1b[92m"
+BRIGHT_YELLOW = "\x1b[93m"
 BRIGHT_BLUE = "\x1b[94m"
 BRIGHT_CYAN = "\x1b[96m"
 BRIGHT_WHITE = "\x1b[97m"

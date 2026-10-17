@@ -799,10 +799,10 @@ MUTATIONS = [
         "        if True:\n            lines.append(truncate_plain(head + value, limit))\n            continue",
     ),
     (
-        "UI: 横幅不显示 MCP 行",
+        "UI: 横幅不显示 mcp 徽章",
         UI_RENDER,
-        '    if mcp_summary:\n        rows.append(("MCP", mcp_summary))',
-        "    if False:\n        rows.append((\"MCP\", mcp_summary))",
+        '        _color_badge("mcp", f"{mcp_connected}/{mcp_total}", MAGENTA),\n',
+        "",
     ),
     (
         "init: MINI.md 用覆盖写（用户的项目说明被模板冲掉）",
@@ -1255,16 +1255,16 @@ MUTATIONS = [
         "    if False:",
     ),
     (
-        "UI: 横幅内容行少一列（右边框每行错开）",
+        "UI: 横幅内边距算成 width-5（每行都少一列，右边框错开）",
         UI_RENDER,
-        '            + " " * max(0, inner - string_display_width(head) - string_display_width(shown))',
-        '            + " " * max(0, inner - 1 - string_display_width(head) - string_display_width(shown))',
+        "    inner = max(0, width - 4)\n    left_width = string_display_width(left)",
+        "    inner = max(0, width - 5)\n    left_width = string_display_width(left)",
     ),
     (
-        "UI: 横幅标题行少一列（右边框错开）",
+        "UI: 边框少一段横线（顶边比内容行短）",
         UI_RENDER,
-        '        + " " * max(0, inner - string_display_width(title_head + title_tail))',
-        '        + " " * max(0, inner - 1 - string_display_width(title_head + title_tail))',
+        "    inner = max(0, width - 2)\n    left = BOX_TOP_LEFT if top else BOX_BOTTOM_LEFT",
+        "    inner = max(0, width - 3)\n    left = BOX_TOP_LEFT if top else BOX_BOTTOM_LEFT",
     ),
     (
         "配置: 兜底输出上限退回旧值 8192（长回答被截断）",
@@ -1719,6 +1719,77 @@ _SLASH_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_SLASH_MUTATIONS]
+
+
+#: 启动横幅：字段与布局对齐原版（`tui/chrome.ts` 的 `renderBanner`）。
+_BANNER_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "横幅: 用中文键值行而不是徽章（字段与原版不同）",
+        UI_RENDER,
+        '        _color_badge("session", "local", BRIGHT_YELLOW),',
+        '        "模型 " + shown_model,',
+    ),
+    (
+        "横幅: 丢掉 provider 徽章（用户看不出连的是哪）",
+        UI_RENDER,
+        '        _color_badge("provider", shown_provider, CYAN),\n',
+        "",
+    ),
+    (
+        "横幅: 丢掉 messages 徽章",
+        UI_RENDER,
+        '        _color_badge("messages", str(message_count), BRIGHT_CYAN),\n',
+        "",
+    ),
+    (
+        "横幅: 丢掉 events 徽章",
+        UI_RENDER,
+        '        _color_badge("events", str(event_count), BLUE),\n',
+        "",
+    ),
+    (
+        "横幅: provider 没值时不回落 offline",
+        UI_RENDER,
+        "    raw = (provider or \"\").strip()\n    if not raw:\n        return \"offline\"",
+        "    raw = (provider or \"\").strip()\n    if not raw:\n        return \"\"",
+    ),
+    (
+        "横幅: 标题后不空一行（与原版布局不同）",
+        UI_RENDER,
+        '            _panel_row("", panel_width),\n',
+        "",
+    ),
+    (
+        "横幅: 宽度不设 60 下限",
+        UI_RENDER,
+        "    panel_width = max(60, width if width is not None else (terminal_columns() or 100))",
+        "    panel_width = max(20, width if width is not None else (terminal_columns() or 100))",
+    ),
+    (
+        "横幅: 宽度被封顶到正文宽度（200 列终端只画 100 列）",
+        UI_RENDER,
+        "    panel_width = max(60, width if width is not None else (terminal_columns() or 100))",
+        "    panel_width = max(60, min(100, width if width is not None else (terminal_columns() or 100)))",
+    ),
+    (
+        "横幅: 放不下时直接截断、不加省略号",
+        UI_RENDER,
+        '        with_ellipsis = f"{output}{separator}{paint(\'...\', DIM)}"\n'
+        "        if string_display_width(with_ellipsis) <= max_width:\n"
+        "            return with_ellipsis",
+        "        with_ellipsis = output\n"
+        "        if string_display_width(with_ellipsis) <= max_width:\n"
+        "            return with_ellipsis",
+    ),
+    (
+        "横幅: mcp-wait / mcp-err 无条件出现",
+        UI_RENDER,
+        "    if mcp_connecting > 0:",
+        "    if True:",
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_BANNER_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。

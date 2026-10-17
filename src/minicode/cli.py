@@ -27,7 +27,12 @@ from typing import Any
 from .adapters.anthropic import AnthropicModelAdapter
 from .adapters.mock import MockModelAdapter
 from .agents.manager import SubAgentManager
-from .config import ConfigError, RuntimeConfig, load_runtime_config
+from .config import (
+    ConfigError,
+    RuntimeConfig,
+    load_runtime_config,
+    resolve_model_mode,
+)
 from .host import HostCallbacks, SessionHost
 from .local_tool_shortcuts import parse_local_tool_shortcut
 from .permissions import (
@@ -127,15 +132,28 @@ def build_host(
     args: argparse.Namespace,
     *,
     callbacks: HostCallbacks | None = None,
+    warn_offline: bool = True,
 ) -> SessionHost:
-    """按命令行参数装配一个可用的会话宿主。"""
+    """按命令行参数装配一个可用的会话宿主。
+
+    `warn_offline=False` 时不打印「已进入离线 mock 模式」那句提示——REPL 会
+    打启动横幅，而横幅的徽章行已经写着 `[provider] offline` 与
+    `[model] not-configured`，再打三行说明是重复噪音（原版在 REPL 里什么都不打）。
+    单次模式（`-p`）没有横幅，那里仍然需要这句。
+    """
     import os
 
     cwd = os.path.abspath(args.cwd or os.getcwd())
 
     runtime: RuntimeConfig | None = None
     config_error: str | None = None
-    if not args.mock:
+    # `MINI_CODE_MODEL_MODE=mock` / `MINICODE_MODEL_MODE=mock` 也进 mock 模式。
+    #
+    # 原版**没有** `--mock` 标志，这是它唯一的 mock 入口（`index.ts`）；本实现
+    # 两者都支持：`--mock` 给人用，环境变量给脚本/测试用。不认它的话，一个
+    # 按原版文档设了 `MINI_CODE_MODEL_MODE=mock` 的脚本会去打真实 API。
+    mock_mode = bool(args.mock) or resolve_model_mode() == "mock"
+    if not mock_mode:
         try:
             runtime = load_runtime_config()
         except ConfigError as error:
@@ -156,7 +174,7 @@ def build_host(
     tools = create_root_registry(cwd=cwd, plan=plan)
     worker_tools = create_worker_registry(tools)
 
-    model = _build_model(runtime, args.mock, subagents_holder)
+    model = _build_model(runtime, mock_mode, subagents_holder)
 
     subagents = SubAgentManager(
         model=model,
@@ -220,10 +238,12 @@ def build_host(
     host.refresh_system_prompt()
 
     if config_error:
-        host._notice(  # noqa: SLF001 - 一次性告知，随后继续用 mock 模式
-            f"未找到可用配置（{config_error}）\n已进入离线 mock 模式："
-            "它能跑通完整流程，但不会调用真实模型。"
-        )
+        # **只在没有横幅的模式下提示**（见 `build_host` 的说明）。
+        if warn_offline:
+            host._notice(  # noqa: SLF001 - 一次性告知，随后继续用 mock 模式
+                f"未找到可用配置（{config_error}）\n已进入离线 mock 模式："
+                "它能跑通完整流程，但不会调用真实模型。"
+            )
     return host
 
 
@@ -438,7 +458,9 @@ def main(argv: list[str] | None = None) -> int:
         on_notice=lambda text: print(f"\n{text}\n"),
     )
 
-    host = build_host(args, callbacks=callbacks)
+    # 单次模式（`-p`）没有启动横幅，用户看不到 `[provider] offline` 徽章，
+    # 所以要打那句「已进入离线 mock 模式」的说明；REPL 有横幅，不需要重说。
+    host = build_host(args, callbacks=callbacks, warn_offline=bool(args.prompt))
     if args.yes:
         # 显式替换提示函数：用户已声明「全部放行」。
         host.permissions._prompt = auto_approve_prompt  # noqa: SLF001
@@ -602,11 +624,25 @@ def _attach_ui_callbacks(host: SessionHost, ui: "ConsoleUI") -> None:
 
 
 def _print_banner(host: SessionHost, ui: "ConsoleUI") -> None:
-    from .mcp.status import summarize_mcp_servers
-    from .tools import create_worker_registry
+    """打印启动横幅。**字段与布局逐条对齐原版**（见 `render_banner`）。
 
-    model_name = host.runtime_config.model if host.runtime_config else "离线 mock"
-    skills = []
+    对应原版 `index.ts:159-170`：
+
+        const mcpStatus = summarizeMcpServers(tools.getMcpServers())
+        renderBanner(runtime, cwd, permissions.getSummary(), {
+          transcriptCount: 0, messageCount: messages.length,
+          skillCount: tools.getSkills().length,
+          mcpTotalCount, mcpConnectedCount, mcpConnectingCount, mcpErrorCount,
+        })
+
+    注意 `runtime` 为 null 时原版打 `not-configured` 与 `offline`——**不是**
+    中文占位。早先这里传的是「离线 mock」，与原版不同。
+    """
+    from .mcp.status import summarize_mcp_servers
+
+    model_name = host.runtime_config.model if host.runtime_config else ""
+    provider = host.runtime_config.base_url if host.runtime_config else ""
+    skills: list[Any] = []
     try:
         skills = host.tools.skills()
     except Exception:  # noqa: BLE001
@@ -614,21 +650,32 @@ def _print_banner(host: SessionHost, ui: "ConsoleUI") -> None:
 
     # MCP 计数走统一汇总（对应原版 `index.ts:159` 的 summarizeMcpServers），
     # 而不是在使用处现算——否则横幅与 `/mcp` 迟早出现两套口径。
+    total = connected = connecting = errored = 0
     try:
-        mcp_line = summarize_mcp_servers(host.tools.mcp_servers()).line()
+        summary = summarize_mcp_servers(host.tools.mcp_servers())
+        total = summary.total
+        connected = summary.connected
+        connecting = summary.connecting
+        errored = summary.error
     except Exception:  # noqa: BLE001 - MCP 汇总失败不该让横幅打不出来
-        mcp_line = ""
+        pass
 
     ui.write(
         render_banner(
             model=model_name,
             session_id=host.session_id,
             cwd=host.cwd,
-            tool_count=len(host.tools.list()),
-            readonly_tool_count=len(create_worker_registry(host.tools).list()),
+            provider=provider,
             skill_count=len(skills),
-            mcp_summary=mcp_line,
-            width=ui.width,
+            message_count=len(host.messages),
+            # `events` 是 UI 侧的事件条数；原版启动时固定传 0（`transcriptCount: 0`）。
+            event_count=0,
+            mcp_total=total,
+            mcp_connected=connected,
+            mcp_connecting=connecting,
+            mcp_error=errored,
+            # **不传 width**：横幅有自己的宽度规则（`max(60, 终端列数 ?? 100)`），
+            # 与正文的 `output_width()`（封顶 100）不同。原版就是这样分开的。
         )
     )
     ui.write(

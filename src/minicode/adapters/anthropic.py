@@ -28,7 +28,7 @@ import urllib.request
 from typing import Any, Callable, Iterator
 
 from ..abort import throw_if_aborted
-from ..config import RuntimeConfig, resolve_max_output_tokens
+from ..config import RuntimeConfig, resolve_max_output_tokens, resolve_max_retries
 from ..types import AgentStep, ProviderUsage, StepDiagnostics, ToolCall
 
 DEFAULT_MAX_RETRIES = 4
@@ -324,10 +324,24 @@ class AnthropicModelAdapter:
         self,
         config_provider: Callable[[], RuntimeConfig],
         *,
-        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_retries: int | None = None,
         opener: Any | None = None,
     ) -> None:
         self._config_provider = config_provider
+        # `max_retries=None` → 先问环境变量（`MINI_CODE_MAX_RETRIES` /
+        # `MINICODE_MAX_RETRIES`），再退回本模块的 `DEFAULT_MAX_RETRIES`。
+        #
+        # 对应原版 `getRetryLimit()`：它读 `process.env.MINI_CODE_MAX_RETRIES`，
+        # 值不是有限数或小于 0 时用默认值。以前这里**只接受构造参数**，
+        # 环境变量完全没接——用户设了也没用，且不报错。
+        if max_retries is None:
+            # **必须显式判 None，不能用 `or`。**
+            #
+            # `MINI_CODE_MAX_RETRIES=0` 是合法值（「不重试」），而 `0` 在
+            # Python 里是假值——`resolve_max_retries() or DEFAULT` 会把它
+            # 悄悄变回默认的 4 次。原版 `Number('0') = 0` → `Math.floor(0)` → 0。
+            from_env = resolve_max_retries()
+            max_retries = DEFAULT_MAX_RETRIES if from_env is None else from_env
         self._max_retries = max_retries
         self._opener = opener or urllib.request.build_opener()
 

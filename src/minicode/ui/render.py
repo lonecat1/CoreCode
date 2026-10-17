@@ -37,16 +37,28 @@ Claude Code 的默认界面本身就是**美化过的行模式 REPL**：逐行�
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
 from .theme import (
+    BLUE,
+    BOLD,
     BOX_BOTTOM_LEFT,
     BOX_BOTTOM_RIGHT,
     BOX_HORIZONTAL,
     BOX_TOP_LEFT,
     BOX_TOP_RIGHT,
     BOX_VERTICAL,
+    BRIGHT_CYAN,
+    BRIGHT_GREEN,
+    BRIGHT_RED,
+    BRIGHT_YELLOW,
+    CYAN,
+    DIM,
+    GREEN,
+    MAGENTA,
+    YELLOW,
     COLOR_ASSISTANT,
     COLOR_BANNER_TITLE,
     COLOR_ERROR,
@@ -82,6 +94,25 @@ MAX_BODY_WIDTH = 100
 # ---------------------------------------------------------------------------
 
 
+def terminal_columns() -> int | None:
+    """终端的原始列数；问不到时用 `COLUMNS` 环境变量；都没有则 `None`。
+
+    与 `output_width()` 的区别：这里**不封顶、不设下限**，返回「终端到底多宽」，
+    由调用方自己决定怎么用（横幅需要 `max(60, …)` 且不封顶）。
+    """
+    try:
+        return os.get_terminal_size().columns
+    except (OSError, ValueError):
+        pass
+    raw = os.environ.get("COLUMNS")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+    return None
+
+
 def output_width(columns: int | None = None) -> int:
     """决定正文用多宽。
 
@@ -115,6 +146,74 @@ def wrap_body(text: str, width: int | None = None) -> list[str]:
     return lines or [""]
 
 
+def _border_line(top: bool, width: int) -> str:
+    """`╭─…─╮` / `╰─…─╯`，等宽 `width`。"""
+    inner = max(0, width - 2)
+    left = BOX_TOP_LEFT if top else BOX_BOTTOM_LEFT
+    right = BOX_TOP_RIGHT if top else BOX_BOTTOM_RIGHT
+    return (
+        paint(left, COLOR_STATUS)
+        + paint(BOX_HORIZONTAL * inner, COLOR_STATUS)
+        + paint(right, COLOR_STATUS)
+    )
+
+
+def _panel_row(left: str, width: int, right: str = "") -> str:
+    """框内一行：`│ ` + left + 填充 + right + ` │`，等宽 `width`。
+
+    对应原版 `panelRow()`（`tui/chrome.ts`）：`inner = width - 4`，
+    左右各有 1 列内边距，所以**总宽仍是 `width`**。
+    """
+    inner = max(0, width - 4)
+    left_width = string_display_width(left)
+    right_width = string_display_width(right)
+    gap = max(1, inner - left_width - right_width) if right else 0
+    shown = left
+    if left_width + right_width + gap > inner:
+        shown = truncate_plain(left, max(0, inner - right_width - 1))
+    pad = max(0, inner - string_display_width(shown) - right_width)
+    return (
+        paint(BOX_VERTICAL, COLOR_STATUS)
+        + " "
+        + shown
+        + " " * pad
+        + right
+        + " "
+        + paint(BOX_VERTICAL, COLOR_STATUS)
+    )
+
+
+def _color_badge(label: str, value: str, color: str) -> str:
+    """`[label] value`。对应原版 `colorBadge()`。"""
+    return paint(f"[{label}]", color) + " " + paint(value, BOLD)
+
+
+def _join_segments_within_width(
+    segments: list[str], separator: str, max_width: int
+) -> str:
+    """把徽章拼进给定宽度，放不下时以 ` ...` 收尾。
+
+    对应原版 `joinSegmentsWithinWidth()`。逐段累加，第一段就放不下时**截断它**；
+    否则尝试带省略号，还放不下就停在上一段。
+    """
+    if max_width <= 0 or not segments:
+        return ""
+
+    output = ""
+    for segment in segments:
+        candidate = f"{output}{separator}{segment}" if output else segment
+        if string_display_width(candidate) <= max_width:
+            output = candidate
+            continue
+        if not output:
+            return truncate_plain(strip_ansi(segment), max_width)
+        with_ellipsis = f"{output}{separator}{paint('...', DIM)}"
+        if string_display_width(with_ellipsis) <= max_width:
+            return with_ellipsis
+        return output
+    return output
+
+
 def render_banner(
     model: str,
     session_id: str,
@@ -124,79 +223,108 @@ def render_banner(
     readonly_tool_count: int = 0,
     skill_count: int = 0,
     mcp_summary: str = "",
+    provider: str = "",
+    message_count: int = 1,
+    event_count: int = 0,
+    mcp_total: int = 0,
+    mcp_connected: int = 0,
+    mcp_connecting: int = 0,
+    mcp_error: int = 0,
     width: int | None = None,
 ) -> str:
-    """启动横幅：圆角框 + 关键信息。
+    """启动横幅。**布局与字段逐条对齐原版**（`tui/chrome.ts` 的 `renderBanner`）。
 
-    只在会话开始时打印一次，之后不再重复——行模式的历史由终端滚动缓冲负责。
+    ## 原版的结构
 
-    `mcp_summary` 由 `mcp.status.summarize_mcp_servers(...).line()` 产生。
-    原版把 MCP 计数放在横幅的徽章行里（`tui/chrome.ts:286-296`），本实现放在
-    键值行里——行模式没有徽章，但信息量一致。
+        ╭─(width-2)─╮
+        │ MiniCode
+        │                         ← 标题后固定一个空行
+        │ [session] local  [provider] offline  [model] …  [skills] 0  [mcp] 0/0
+        ╰─(width-2)─╯
+
+    中间那行是**徽章串**，字段顺序固定：
+
+        session(local) · provider · model · messages · events
+        · [context] · skills · mcp=connected/total · [mcp-wait] · [mcp-err]
+
+    面板宽度 = `max(60, 终端列数 ?? 100)`。
+
+    ## 早先这里是另一套排版，而且我给它写了个错误的理由
+
+    旧实现是「中文键值对」：模型 / 会话 / 目录 / 工具。docstring 里写着
+    「原版把 MCP 计数放在徽章行里，本实现放在键值行里——**信息量一致**」。
+
+    并不一致。缺了 `provider`、`messages`、`events`，多出「目录」「工具」。
+    横幅是用户启动后看到的第一样东西，字段不对等于「这个工具报告的事和原版
+    不一样」。原版的徽章行里 `provider` 尤其重要：它告诉用户这次连的是
+    哪个端点、还是离线。
+
+    ## 参数
+
+    `session_id` / `cwd` / `tool_count` / `mcp_summary` 保留但**不再展示**：
+    原版的徽章行里没有这三项（`_cwd` 与 `_permissionSummary` 在原版签名里
+    就是下划线开头的未用参数）。留着是为了不破坏调用方，注释说明它们不参与渲染。
     """
-    limit = width or output_width()
-    inner = max(20, limit - 2)
+    # **横幅有自己的宽度规则**，与正文不同：
+    #
+    #     原版：Math.max(60, process.stdout.columns ?? 100)
+    #
+    # 两者不一样：正文宽度被 `MAX_BODY_WIDTH` 封顶（长段落超过 100 列很难读），
+    # 而横幅**不封顶**——终端有多宽就用多宽，并且有 60 列下限。
+    #
+    # 早先这里复用了 `output_width()`，于是 200 列的终端也只画 100 列宽的框，
+    # 与原版不一致。
+    panel_width = max(60, width if width is not None else (terminal_columns() or 100))
+    inner = max(0, panel_width - 4)
 
-    rows: list[tuple[str, str]] = [
-        ("模型", model),
-        ("会话", session_id),
-        ("目录", cwd),
+    shown_model = model or "not-configured"
+    shown_provider = _provider_label(provider)
+
+    badges = [
+        _color_badge("session", "local", BRIGHT_YELLOW),
+        _color_badge("provider", shown_provider, CYAN),
+        _color_badge("model", shown_model, GREEN),
+        _color_badge("messages", str(message_count), BRIGHT_CYAN),
+        _color_badge("events", str(event_count), BLUE),
+        _color_badge("skills", str(skill_count), BRIGHT_GREEN),
+        _color_badge("mcp", f"{mcp_connected}/{mcp_total}", MAGENTA),
     ]
-    if tool_count:
-        detail = f"{tool_count} 个"
-        if readonly_tool_count:
-            detail += f"（子 Agent 可见 {readonly_tool_count} 个只读工具）"
-        rows.append(("工具", detail))
-    if skill_count:
-        rows.append(("技能", f"{skill_count} 个"))
-    if mcp_summary:
-        rows.append(("MCP", mcp_summary))
+    if mcp_connecting > 0:
+        badges.append(_color_badge("mcp-wait", str(mcp_connecting), YELLOW))
+    if mcp_error > 0:
+        badges.append(_color_badge("mcp-err", str(mcp_error), BRIGHT_RED))
 
-    # **每一行的「框内内容」必须正好占满 `inner` 列。**
-    #
-    # 早先这里按 `inner - 2 - label_width - 2` 算可用宽度，比正确值少 1，
-    # 于是内容行宽 75、边框行宽 76——右边框每一行都错开一列。启动横幅是用户
-    # 看到的第一样东西，错位很显眼。
-    #
-    # 正确的口径：框内 = `" " + 标签 + 补齐 + "  " + 内容 + 填充`，总宽必须
-    # 等于 `inner`。下面用 `_fill()` 统一收口，不再各处手算。
-    label_width = max(string_display_width(label) for label, _ in rows)
-    body: list[str] = []
-    for label, value in rows:
-        head = " " + label + " " * (label_width - string_display_width(label)) + "  "
-        available = max(10, inner - string_display_width(head))
-        shown = truncate_plain(value, available)
-        body.append(
-            paint(BOX_VERTICAL, COLOR_STATUS)
-            + " "
-            + paint(label, COLOR_HINT)
-            + " " * (label_width - string_display_width(label))
-            + "  "
-            + shown
-            + " " * max(0, inner - string_display_width(head) - string_display_width(shown))
-            + paint(BOX_VERTICAL, COLOR_STATUS)
-        )
+    meta_line = _join_segments_within_width(badges, "  ", inner)
 
     title = paint("MiniCode", COLOR_BANNER_TITLE)
-    hint = paint("终端编码助手", COLOR_HINT)
-    title_head = " MiniCode  "
-    title_tail = "终端编码助手"
-    title_line = (
-        paint(BOX_VERTICAL, COLOR_STATUS)
-        + " "
-        + title
-        + "  "
-        + hint
-        + " " * max(0, inner - string_display_width(title_head + title_tail))
-        + paint(BOX_VERTICAL, COLOR_STATUS)
+    return "\n".join(
+        [
+            _border_line(True, panel_width),
+            _panel_row(title, panel_width),
+            _panel_row("", panel_width),
+            _panel_row(meta_line, panel_width),
+            _border_line(False, panel_width),
+        ]
     )
 
-    rule = paint(BOX_HORIZONTAL * inner, COLOR_STATUS)
-    top = paint(BOX_TOP_LEFT, COLOR_STATUS) + rule + paint(BOX_TOP_RIGHT, COLOR_STATUS)
-    bottom = (
-        paint(BOX_BOTTOM_LEFT, COLOR_STATUS) + rule + paint(BOX_BOTTOM_RIGHT, COLOR_STATUS)
-    )
-    return "\n".join([top, title_line, *body, bottom])
+
+def _provider_label(provider: str) -> str:
+    """`provider` 徽章的值。
+
+    对应原版：
+
+        runtime?.baseUrl
+          ? runtime.baseUrl.replace(/^https?:\\/\\//, '').split('/')[0] || 'custom'
+          : 'offline'
+
+    也就是「有 baseUrl 就取主机名，否则 `offline`」。
+    """
+    raw = (provider or "").strip()
+    if not raw:
+        return "offline"
+    without_scheme = raw.split("://", 1)[-1]
+    host = without_scheme.split("/", 1)[0]
+    return host or "custom"
 
 
 def render_user(text: str, width: int | None = None) -> str:

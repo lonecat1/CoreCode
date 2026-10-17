@@ -232,33 +232,172 @@ class RenderTests(ColorEnvMixin):
                 model="qwen3.8-27b",
                 session_id="abc123",
                 cwd="/tmp/project",
-                tool_count=12,
-                readonly_tool_count=6,
+                provider="https://api.deepseek.com/v1",
                 skill_count=2,
-                width=80,
+                mcp_total=3,
+                mcp_connected=2,
+                # 200 列：所有 7 个徽章都放得下。宽度不足时的 `...` 截断
+                # 另有测试（`test_banner_truncates_with_ellipsis`）。
+                width=200,
             )
         )
-        self.assertIn("qwen3.8-27b", rendered)
-        self.assertIn("abc123", rendered)
-        self.assertIn("/tmp/project", rendered)
-        self.assertIn("12", rendered)
-        self.assertIn("6", rendered)
+        # **字段与原版一致**：session / provider / model / messages / events /
+        # skills / mcp。会话 id 与工作目录不在其中——原版的徽章行里没有它们
+        # （它的 `_cwd` 参数是下划线开头的未用参数）。
+        for field in ("[session] local", "[provider] api.deepseek.com",
+                      "[model] qwen3.8-27b", "[messages]", "[events] 0",
+                      "[skills] 2", "[mcp] 2/3"):
+            with self.subTest(field=field):
+                self.assertIn(field, rendered)
 
     def test_banner_omits_absent_sections(self) -> None:
+        """没有 MCP 服务器时，`mcp-wait` / `mcp-err` 徽章不出现。
+
+        原版这两个徽章是条件渲染的（`...(connecting > 0 ? [...] : [])`），
+        所以「没有」时不该留下空白标记。`[mcp] 0/0` 本体总是有。
+        """
+        rendered = strip_ansi(
+            render_banner(model="m", session_id="s", cwd="/x", width=200)
+        )
+        self.assertIn("[mcp] 0/0", rendered)
+        self.assertNotIn("[mcp-wait]", rendered)
+        self.assertNotIn("[mcp-err]", rendered)
+
+    def test_banner_shows_optional_mcp_badges_when_present(self) -> None:
+        rendered = strip_ansi(
+            render_banner(
+                model="m", session_id="s", cwd="/x",
+                mcp_total=3, mcp_connected=1, mcp_connecting=1, mcp_error=1,
+                width=200,
+            )
+        )
+        for badge in ("[mcp] 1/3", "[mcp-wait] 1", "[mcp-err] 1"):
+            with self.subTest(badge=badge):
+                self.assertIn(badge, rendered)
+
+    def test_banner_has_the_original_five_line_structure(self) -> None:
+        """**行结构与原版一致**：边框 / 标题 / 空行 / 徽章行 / 边框。
+
+        第三行那个空行不是多余的：原版 `renderPanel` 在标题后固定插一个
+        `emptyPanelRow`（`tui/chrome.ts`）。少了它，「标题贴着徽章」——
+        用户一眼就能看出与原版不同。
+        """
         rendered = strip_ansi(
             render_banner(model="m", session_id="s", cwd="/x", width=80)
         )
-        self.assertNotIn("技能", rendered)
+        lines = rendered.split("\n")
+        self.assertEqual(len(lines), 5, f"应为 5 行，实际 {len(lines)}：{lines}")
+        self.assertTrue(lines[0].startswith("╭"), lines[0])
+        self.assertIn("MiniCode", lines[1])
+        # 第 3 行：边框内除两侧竖线与内边距外，应为空
+        inner = lines[2].strip().strip("│").strip()
+        self.assertEqual(inner, "", f"第 3 行应为空行，实际 {lines[2]!r}")
+        self.assertIn("[session]", lines[3])
+        self.assertTrue(lines[4].startswith("╰"), lines[4])
+
+    def test_banner_uses_the_original_field_order(self) -> None:
+        """**字段顺序与原版一致**：session → provider → model → messages →
+        events → skills → mcp。
+
+        顺序不是随意的：`messages`/`events` 紧跟在 model 后面，才能一眼看出
+        「这次会话已经有多少内容」；`skills` 与 `mcp` 是外部能力，放最后。
+        """
+        rendered = strip_ansi(
+            render_banner(
+                model="m", session_id="s", cwd="/x",
+                provider="https://api.example.com/v1",
+                skill_count=2, mcp_total=1, mcp_connected=1, width=200,
+            )
+        )
+        order = [
+            "[session]", "[provider]", "[model]", "[messages]",
+            "[events]", "[skills]", "[mcp]",
+        ]
+        positions = [rendered.index(tag) for tag in order]
+        self.assertEqual(positions, sorted(positions), "徽章顺序与原版不一致")
+
+    def test_banner_provider_falls_back_to_offline(self) -> None:
+        """没有 baseUrl → `offline`（原版 `runtime?.baseUrl ? … : 'offline'`）。"""
+        rendered = strip_ansi(
+            render_banner(model="", session_id="s", cwd="/x", width=200)
+        )
+        self.assertIn("[provider] offline", rendered)
+        self.assertIn("[model] not-configured", rendered)
+
+    def test_banner_provider_shows_the_host_only(self) -> None:
+        """有 baseUrl → 只取主机名（去掉协议与路径）。"""
+        rendered = strip_ansi(
+            render_banner(
+                model="m", session_id="s", cwd="/x",
+                provider="https://api.deepseek.com/v1/chat",
+                width=200,
+            )
+        )
+        self.assertIn("[provider] api.deepseek.com", rendered)
+        self.assertNotIn("https://", rendered)
+
+    def test_banner_width_has_a_floor_of_60(self) -> None:
+        """面板宽度 = `max(60, 终端列数 ?? 100)`，**有 60 下限**。"""
+        for requested in (10, 40, 60):
+            with self.subTest(width=requested):
+                rendered = render_banner(
+                    model="m", session_id="s", cwd="/x", width=requested
+                )
+                widths = {string_display_width(line) for line in rendered.split("\n")}
+                self.assertEqual(widths, {60})
+
+    def test_banner_width_is_not_capped_at_body_width(self) -> None:
+        """**横幅不封顶**，与正文的 `MAX_BODY_WIDTH` 是两套规则。
+
+        正文封顶是为了长段落可读；横幅是该多宽就多宽。早先两者共用
+        `output_width()`，200 列的终端也只画出 100 列宽的框。
+        """
+        from minicode.ui.render import MAX_BODY_WIDTH
+
+        rendered = render_banner(
+            model="m", session_id="s", cwd="/x", width=MAX_BODY_WIDTH + 60
+        )
+        widest = max(string_display_width(line) for line in rendered.split("\n"))
+        self.assertEqual(widest, MAX_BODY_WIDTH + 60)
 
     def test_banner_survives_narrow_width(self) -> None:
+        # 面板宽度有下限 60（原版 `Math.max(60, columns ?? 100)`），
+        # 所以「窄宽度」要断言的是**截断生效且所有行等宽**，而不是能压到 50。
         rendered = render_banner(
             model="很长的模型名字" * 5,
             session_id="s" * 40,
             cwd="/very/long/path" * 10,
-            width=50,
+            provider="https://" + "x" * 200 + ".com",
+            width=60,
         )
-        for line in rendered.split("\n"):
-            self.assertLessEqual(string_display_width(line), 50)
+        widths = {string_display_width(line) for line in rendered.split("\n")}
+        self.assertEqual(len(widths), 1, f"所有行必须等宽，实际 {widths}")
+        self.assertLessEqual(widths.pop(), 60)
+
+    def test_banner_truncates_with_ellipsis_when_too_narrow(self) -> None:
+        """放不下时以 ` ...` 收尾（原版 `joinSegmentsWithinWidth`）。"""
+        rendered = strip_ansi(
+            render_banner(
+                model="m" * 40, session_id="s", cwd="/x", width=60,
+            )
+        )
+        meta = [line for line in rendered.split("\n") if "[session]" in line]
+        self.assertTrue(meta, rendered)
+        self.assertIn("...", meta[0])
+
+    def test_banner_survives_narrow_width(self) -> None:
+        # 面板宽度有下限 60（原版 `Math.max(60, columns ?? 100)`），
+        # 所以「窄宽度」要断言的是**截断生效且所有行等宽**，而不是能压到 50。
+        rendered = render_banner(
+            model="很长的模型名字" * 5,
+            session_id="s" * 40,
+            cwd="/very/long/path" * 10,
+            provider="https://" + "x" * 200 + ".com",
+            width=60,
+        )
+        widths = {string_display_width(line) for line in rendered.split("\n")}
+        self.assertEqual(len(widths), 1, f"所有行必须等宽，实际 {widths}")
+        self.assertLessEqual(widths.pop(), 60)
 
     def test_banner_lines_are_all_the_same_width(self) -> None:
         """**所有行必须等宽**，否则右边框会错开。

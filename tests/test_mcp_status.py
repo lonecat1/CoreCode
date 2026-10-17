@@ -147,15 +147,21 @@ class BannerIntegrationTests(unittest.TestCase):
     def test_banner_shows_mcp_line(self) -> None:
         from minicode.ui.render import render_banner
 
+        # MCP 计数现在是**徽章** `[mcp] connected/total`，与原版一致
+        # （`tui/chrome.ts` 的 `colorBadge('mcp', ...)`），不再是键值行。
         text = render_banner(
             model="m",
             session_id="s",
             cwd="/tmp",
-            mcp_summary="mcp 1/2 · 1 失败",
-            width=80,
+            mcp_total=2,
+            mcp_connected=1,
+            mcp_error=1,
+            # 宽度要够，否则后面的徽章会被 `...` 截断（那是原版行为）。
+            width=200,
         )
-        self.assertIn("MCP", text)
-        self.assertIn("mcp 1/2 · 1 失败", text)
+        self.assertIn("[mcp]", text)
+        self.assertIn("1/2", text)
+        self.assertIn("[mcp-err]", text)
 
     def test_banner_omits_mcp_row_when_empty(self) -> None:
         """没有 MCP 服务器时不该多出一行空标签。"""
@@ -168,15 +174,20 @@ class BannerIntegrationTests(unittest.TestCase):
         from minicode.ui.width import string_display_width
         from minicode.ui.render import render_banner
 
+        # 原版的面板宽度是 `Math.max(60, columns ?? 100)`——**有下限 60**。
+        # 所以这里断言的是「所有行等宽且不小于 60」，而不是「不超过请求的宽度」。
         text = render_banner(
             model="m",
             session_id="s",
             cwd="/tmp",
-            mcp_summary="mcp 1/3 · 1 等待 · 1 失败",
+            mcp_total=3,
+            mcp_connected=1,
+            mcp_connecting=1,
+            mcp_error=1,
             width=40,
         )
-        for line in text.splitlines():
-            self.assertLessEqual(string_display_width(line), 40, line)
+        widths = {string_display_width(line) for line in text.splitlines()}
+        self.assertEqual(widths, {60}, "宽度被 max(60, …) 抬到 60，且所有行等宽")
 
 
 class ConfigPathsCommandTests(unittest.TestCase):

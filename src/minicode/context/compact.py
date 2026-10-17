@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass, field
 
 from ..types import (
@@ -43,6 +44,7 @@ from .tokens import (
     estimate_messages_tokens,
     mark_provider_usage_stale,
 )
+from .model_context import get_model_context_window
 
 STALE_REASON = "conversation was compacted after this provider usage was recorded"
 
@@ -336,6 +338,45 @@ def should_auto_compact(messages: list[ChatMessage], model: str) -> bool:
     return stats.utilization >= AUTOCOMPACT_UTILIZATION
 
 
+def debug_auto_compact(message: str) -> None:
+    """`MINI_CODE_DEBUG_AUTOCOMPACT=1` 时往 **stderr** 打一行调试信息。
+
+    对应原版 `debugAutoCompact()`（`compact/auto-compact.ts:18-22`）：
+
+        if (process.env.MINI_CODE_DEBUG_AUTOCOMPACT === '1') {
+          console.error(`[auto-compact] ${message}`)
+        }
+
+    走 stderr 而不是 stdout：它不该污染对话输出，也不该被管道当成回答内容。
+    """
+    from ..config import is_autocompact_debug
+
+    if is_autocompact_debug():
+        print(f"[auto-compact] {message}", file=sys.stderr)
+
+
+def should_auto_compact(messages: list[ChatMessage], model: str) -> bool:
+    """只看阈值：利用率是否达到 auto-compact 的门槛。
+
+    对应原版 `shouldAutoCompact()`（`auto-compact.ts:33-43`）。**单独导出**的
+    理由与原版一致：调试时想只问「该不该压」，不想真的压一次。
+
+    调试输出逐字段对齐原版，连 `should=` 也用 JS 的 `true`/`false` 拼写——
+    它的用途是让人并排比较两种实现的同一行，拼写不同就没法比。
+    """
+    stats = compute_context_stats(messages, model)
+    should = stats.utilization >= AUTOCOMPACT_UTILIZATION
+    debug_auto_compact(
+        f"source={stats.accounting.source} total={stats.accounting.total_tokens} "
+        f"provider={stats.accounting.provider_usage_tokens} "
+        f"estimate={stats.accounting.estimated_tokens} "
+        f"utilization={stats.utilization:.3f} "
+        f"threshold={AUTOCOMPACT_UTILIZATION} "
+        f"should={'true' if should else 'false'}"
+    )
+    return should
+
+
 def auto_compact(
     messages: list[ChatMessage],
     model: str,
@@ -343,15 +384,19 @@ def auto_compact(
 ) -> CompressionResult | None:
     """带三重门控与熔断的自动压缩。
 
-    门控：① 未熔断；② 利用率 ≥ 85%；③ 有效输入 ≥ 20000（小窗口下摘要开销不划算）。
+    门控：① 未熔断；② 有效输入 ≥ 20000；③ 利用率 ≥ 85%。
+
+    **顺序与原版一致**（`auto-compact.ts:50-61`）：先看熔断，再看有效输入，
+    最后才看利用率。先排除小窗口可以省掉一次 stats 计算。
     """
     if _state.disabled:
         return None
 
-    stats = compute_context_stats(messages, model)
-    if stats.utilization < AUTOCOMPACT_UTILIZATION:
+    window = get_model_context_window(model)
+    if window.effective_input < MIN_EFFECTIVE_INPUT_FOR_AUTOCOMPACT:
         return None
-    if stats.effective_input < MIN_EFFECTIVE_INPUT_FOR_AUTOCOMPACT:
+
+    if not should_auto_compact(messages, model):
         return None
 
     try:

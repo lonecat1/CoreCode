@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,8 +27,40 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# 环境变量：**两套拼写都认**
+#
+# 原版用的是 `MINI_CODE_*`（MINI 与 CODE 之间**有下划线**）：
+#
+#     config.ts:36        process.env.MINI_CODE_HOME
+#     index.ts            process.env.MINI_CODE_MODEL_MODE
+#     anthropic-adapter   process.env.MINI_CODE_MAX_RETRIES
+#     等
+#
+# 本实现历史上的拼写是 `MINICODE_*`（没有下划线），测试与文档都按它写。
+#
+# 一个从原版过来的用户设 `MINI_CODE_HOME` 却发现程序仍写 `~/.mini-code`——
+# 而且**不报错**。这类「配置被静默忽略」是最难自查的。
+#
+# 所以两个都认，**原版拼写优先**：它是上游的契约，别名只是照顾既有测试。
+# ---------------------------------------------------------------------------
+
+
+def env_value(suffix: str) -> str | None:
+    """读取 `<PREFIX>_<suffix>`，两套前缀都认，原版拼写优先。
+
+    `suffix` 传大写名字，如 `"HOME"` / `"MAX_RETRIES"`。
+    空字符串视为未设置（和原版的 `process.env.X` 假值判断一致）。
+    """
+    for prefix in ("MINI_CODE", "MINICODE"):
+        raw = os.environ.get(f"{prefix}_{suffix}")
+        if raw:
+            return raw
+    return None
+
+
 def _home_dir() -> Path:
-    override = os.environ.get("MINICODE_HOME")
+    override = env_value("HOME")
     if override:
         return Path(override).expanduser().resolve()
     return Path.home() / ".mini-code"
@@ -351,15 +384,28 @@ def resolve_env_value(
 ) -> str:
     """取一个配置值：settings.json 的 env 优先，其后是进程环境变量。
 
-    `MINICODE_*` 前缀的变量是**本工具专有**的，不会被别的工具设置，
-    因此始终以进程环境为准（便于临时覆盖，例如 `MINICODE_MODEL=x minicode`）。
+    `MINICODE_*` / `MINI_CODE_*` 前缀的变量是**本工具专有**的，不会被别的工具
+    设置，因此始终以进程环境为准（便于临时覆盖，例如
+    `MINICODE_MODEL=x minicode`）。
     """
     source = environ if environ is not None else os.environ
     from_settings = (settings.get("env") or {}).get(key)
 
-    if key.startswith("MINICODE_"):
+    if key.startswith(("MINICODE_", "MINI_CODE_")):
         return str(source.get(key) or from_settings or "").strip()
     return str(from_settings or source.get(key) or "").strip()
+
+
+def resolve_dedicated(suffix: str, settings: dict[str, Any]) -> str:
+    """本工具专有的配置项：两套拼写都试，原版拼写优先。
+
+    见上面的「环境变量：两套拼写都认」。`suffix` 传大写名字，如 `"MODEL"`。
+    """
+    for prefix in ("MINI_CODE", "MINICODE"):
+        value = resolve_env_value(f"{prefix}_{suffix}", settings)
+        if value:
+            return value
+    return ""
 
 
 def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
@@ -379,7 +425,7 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
         return resolve_env_value(key, settings)
 
     model = (
-        value("MINICODE_MODEL")
+        resolve_dedicated("MODEL", settings)
         or str(settings.get("model") or "").strip()
         or value("ANTHROPIC_MODEL")
     )
@@ -422,7 +468,7 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
             "设置 ANTHROPIC_AUTH_TOKEN（或 ANTHROPIC_API_KEY）。"
         )
 
-    raw_max = value("MINICODE_MAX_OUTPUT_TOKENS") or settings.get("maxOutputTokens")
+    raw_max = resolve_dedicated("MAX_OUTPUT_TOKENS", settings) or settings.get("maxOutputTokens")
     max_output_tokens: int | None = None
     if raw_max is not None:
         try:
@@ -434,7 +480,7 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
 
     # 思考开关：环境变量优先于 settings。
     raw_thinking = (
-        value("MINICODE_THINKING") or str(settings.get("thinking") or "")
+        resolve_dedicated("THINKING", settings) or str(settings.get("thinking") or "")
     ).strip().lower()
     thinking: str | None = raw_thinking if raw_thinking in ("enabled", "disabled") else None
 
@@ -448,6 +494,60 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
         thinking=thinking,
         source_summary=f"settings: {settings_path or _settings_path()} > process.env",
     )
+
+
+# ---------------------------------------------------------------------------
+# 三个只从**进程环境**读的开关（原版同样直接读 `process.env`）
+# ---------------------------------------------------------------------------
+
+
+def resolve_max_retries() -> int | None:
+    """`MINI_CODE_MAX_RETRIES` / `MINICODE_MAX_RETRIES` → 重试次数。
+
+    对应原版 `getRetryLimit()`（`anthropic-adapter.ts:12-18`）：
+
+        const value = Number(process.env.MINI_CODE_MAX_RETRIES)
+        if (!Number.isFinite(value) || value < 0) return DEFAULT_MAX_RETRIES
+        return Math.floor(value)
+
+    返回 `None` 表示「没设或设得不对，用默认值」——默认值是适配器自己的常量
+    （`DEFAULT_MAX_RETRIES = 4`），不在这里复制一份。**这里是刻意的**：
+    config 不能导入 adapters（会形成循环导入），而把 4 抄成第二份又会让两处
+    各自漂移。
+
+    注意这里**没有**上限校验：原版允许 `999`，只是会重试很多次。也不读
+    settings.json——它是给调试用的进程级开关。
+    """
+    raw = env_value("MAX_RETRIES")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return math.floor(value)
+
+
+def resolve_model_mode() -> str | None:
+    """`MINI_CODE_MODEL_MODE` / `MINICODE_MODEL_MODE`。
+
+    原版用它选适配器（`index.ts`）：
+
+        process.env.MINI_CODE_MODEL_MODE === 'mock'
+          ? new MockModelAdapter()
+          : new AnthropicModelAdapter(...)
+
+    **原版没有 `--mock` 标志**，这是它唯一的 mock 入口。本实现两者都支持：
+    `--mock` 给人用，这个环境变量给脚本/测试用。
+    """
+    return env_value("MODEL_MODE")
+
+
+def is_autocompact_debug() -> bool:
+    """`MINI_CODE_DEBUG_AUTOCOMPACT=1` → 往 stderr 打 auto-compact 的调试信息。"""
+    return env_value("DEBUG_AUTOCOMPACT") == "1"
 
 
 def read_mcp_config_file(path: Path) -> dict[str, Any]:
