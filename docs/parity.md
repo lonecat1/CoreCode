@@ -49,13 +49,16 @@
 | `runtime/session-runtime.ts` | `submit` 的四级优先级、`command` 的 `/loop` `/goal` 分发、`assertIdle` 的三条检查 |
 | `listener/scheduler.ts`（即 `loop/scheduler.ts`） | 间隔文法两条规则 + 默认/最小/最大间隔 |
 | `agent-loop.ts` | 无模块级常量与数值阈值（纯逻辑）；压缩阶段顺序逐条对照 |
-| **全仓 266 个模块级常量** | `tools/check_constants.py`，零孤儿 |
+| `plan/types.ts` + `manager.ts` + `tools/plan.ts` | `updatePlanSchema` 的 3 状态枚举、`<=1 in_progress`、id 校验两条、工具输出形状 |
+| `goal/manager.ts` + `tools/goal.ts` | `goalUpdateSchema` 三支联合、`get_goal` 返回 goal+plan、`completion` 嵌套形状 |
+| `skills.ts` | 4 个技能根目录与顺序、名称校验（D19 加固） |
+| `prompt.ts` | MCP 行格式、`MCP_NAMING_HINT` 逐字一致 |
+| `types.ts` | 9 个消息角色 + 6 个回合结局 |
+| **全仓 267 个模块级常量** | `tools/check_constants.py`，零孤儿 |
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
-`agent-loop.ts`（681 行，主要逻辑模块）· `prompt.ts` · `types.ts` ·
-`skills.ts` · `runtime/*` 的算法内部阈值 · `agents/manager.ts` 的调度细节 ·
-`mcp/bridge.py` 的状态机
-
+`agents/manager.ts`（调度细节）· `mcp/bridge.py`（状态机）·
+`runtime/*` 的算法内部阈值
 这些模块的**行为**经过对照与测试，但它们内部的**常量表与阈值**没有逐条验证过
 ——而 `utils/context.ts` 恰恰就是在这类地方出问题的。
 
