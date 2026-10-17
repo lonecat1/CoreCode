@@ -53,6 +53,7 @@ MANAGE_CLI = os.path.join(REPO, "src", "minicode", "manage_cli.py")
 INSTALL = os.path.join(REPO, "src", "minicode", "install.py")
 MEMORY = os.path.join(REPO, "src", "minicode", "memory.py")
 MCP_HTTP = os.path.join(REPO, "src", "minicode", "mcp", "http_client.py")
+MCP_BRIDGE = os.path.join(REPO, "src", "minicode", "mcp", "bridge.py")
 PIPELINE = os.path.join(REPO, "src", "minicode", "context", "pipeline.py")
 LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
 TOOLS_GOAL = os.path.join(REPO, "src", "minicode", "tools", "goal.py")
@@ -1551,6 +1552,61 @@ MUTATIONS = [
         "            completion_checks=list(self._document.completion_checks),\n"
         "            updated_at=self._document.updated_at,\n"
         "        )",
+    ),
+    (
+        "bridge: 空白描述不回退（模型拿到空描述）",
+        MCP_BRIDGE,
+        "        cleaned_description = (descriptor.description or \"\").strip()\n"
+        "        description = cleaned_description or (\n"
+        '            f"Call MCP tool {remote_name} from server {server}."\n'
+        "        )",
+        "        description = descriptor.description or "
+        'f"Call MCP tool {remote_name} from server {server}."',
+    ),
+    (
+        "bridge: 失败时不报配置的协议（用户看不出试过什么）",
+        MCP_BRIDGE,
+        "                        protocol=_configured_protocol(config),",
+        "                        protocol=None,",
+    ),
+    (
+        "bridge: hydrate 失败不关 client（进程挂着却显示 error）",
+        MCP_BRIDGE,
+        "            try:\n"
+        "                client.close()\n"
+        "            except Exception:  # noqa: BLE001 - 关闭失败不该掩盖原始错误\n"
+        "                pass",
+        "            pass",
+    ),
+    (
+        "bridge: sanitize 不再小写（工具名大小写混乱）",
+        MCP_BRIDGE,
+        "    lowered = (value or \"\").strip().lower()",
+        "    lowered = (value or \"\").strip()",
+    ),
+    (
+        "bridge: sanitize 不去首尾下划线（出现 mcp____x）",
+        MCP_BRIDGE,
+        '    cleaned = _UNSAFE_SEGMENT.sub("_", lowered).strip("_")',
+        '    cleaned = _UNSAFE_SEGMENT.sub("_", lowered)',
+    ),
+    (
+        "bridge: 空片段不再兜底成 tool（工具名变成 mcp____）",
+        MCP_BRIDGE,
+        '    return cleaned or "tool"',
+        "    return cleaned",
+    ),
+    (
+        "bridge: 非对象 schema 不再给宽松默认（远端拒收）",
+        MCP_BRIDGE,
+        '    return {"type": "object", "additionalProperties": True}',
+        '    return {"type": "object"}',
+    ),
+    (
+        "bridge: auto 协议在失败时也被报出来（没有信息量）",
+        MCP_BRIDGE,
+        '    if protocol in (None, "auto"):\n        return None',
+        "    if protocol is None:\n        return None",
     ),
 ]
 

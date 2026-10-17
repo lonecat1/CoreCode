@@ -517,6 +517,130 @@ class BridgeTests(unittest.TestCase):
         bridge.dispose()
         self.assertEqual(bridge._clients, [])  # noqa: SLF001
 
+    def test_failed_start_reports_the_configured_protocol(self) -> None:
+        """**启动失败时报「配置里写的」协议，而不是协商结果。**
+
+        启动就失败了，协商结果必然是 `None`——报它等于什么都没说。用户需要
+        知道「我要求的是 content-length，它没成」。原版同理。
+        """
+        from minicode.mcp.bridge import _configured_protocol
+
+        self.assertEqual(_configured_protocol({"protocol": "content-length"}), "content-length")
+        self.assertIsNone(_configured_protocol({"protocol": "auto"}))
+        self.assertIsNone(_configured_protocol({}))
+
+        bridge = create_mcp_backed_tools(
+            _REPO,
+            {"broken": {"command": "definitely-not-real-xyz", "protocol": "newline-json"}},
+        )
+        try:
+            self.assertEqual(bridge.summaries[0].status, "error")
+            self.assertEqual(bridge.summaries[0].protocol, "newline-json")
+        finally:
+            bridge.dispose()
+
+    def test_auto_protocol_is_not_reported_on_failure(self) -> None:
+        """`auto` 是「自己挑」，报它没有信息量。"""
+        bridge = create_mcp_backed_tools(
+            _REPO, {"broken": {"command": "definitely-not-real-xyz", "protocol": "auto"}}
+        )
+        try:
+            self.assertEqual(bridge.summaries[0].status, "error")
+            self.assertIsNone(bridge.summaries[0].protocol)
+        finally:
+            bridge.dispose()
+
+    def test_hydrate_failure_closes_the_client(self) -> None:
+        """**列工具失败要立刻关掉 client。**
+
+        早先只记一条错误摘要就返回，而 client 已经进了 `_clients`——于是
+        「已报错」的服务器仍有一个活着的子进程/连接，一直挂到 dispose。
+        摘要写着 error 而进程还在跑，对用户不可见。
+        """
+        from minicode.mcp.bridge import McpBridge
+
+        closed: list[bool] = []
+
+        class ExplodingClient:
+            protocol = "content-length"
+
+            def list_tools(self):
+                raise RuntimeError("远端拒绝列工具")
+
+            def close(self):
+                closed.append(True)
+
+        bridge = McpBridge(cwd=_REPO, servers={"x": {"command": "x"}})
+        bridge._hydrate_server("x", {"command": "x"}, ExplodingClient())  # noqa: SLF001
+
+        self.assertEqual(bridge.summaries[0].status, "error")
+        self.assertIn("远端拒绝列工具", bridge.summaries[0].error)
+        self.assertEqual(closed, [True], "失败后必须关闭 client")
+
+    def test_close_failure_does_not_mask_the_original_error(self) -> None:
+        """关闭本身失败时，报出的仍是**原始**错误。"""
+        from minicode.mcp.bridge import McpBridge
+
+        class ExplodingClient:
+            protocol = None
+
+            def list_tools(self):
+                raise RuntimeError("原始错误")
+
+            def close(self):
+                raise RuntimeError("关闭也失败了")
+
+        bridge = McpBridge(cwd=_REPO, servers={"x": {"command": "x"}})
+        bridge._hydrate_server("x", {"command": "x"}, ExplodingClient())  # noqa: SLF001
+
+        self.assertEqual(bridge.summaries[0].status, "error")
+        self.assertIn("原始错误", bridge.summaries[0].error)
+        self.assertNotIn("关闭也失败", bridge.summaries[0].error)
+
+    def test_tool_description_falls_back_when_blank(self) -> None:
+        """**空白描述要回退到兜底文案。**
+
+        原版是 `descriptor.description?.trim() || 兜底`。只写 `or` 的话
+        `"   "` 是**真值**，于是模型拿到一条空白描述——等于没描述，
+        而它本来会得到「Call MCP tool X from server Y.」这句有用的兜底。
+        """
+        from minicode.mcp.bridge import McpBridge
+
+        class NoopClient:
+            def call_tool(self, name, arguments):
+                return {"content": []}
+
+        class Descriptor:
+            def __init__(self, description, name="t"):
+                self.name = name
+                self.description = description
+                self.input_schema = {"type": "object"}
+
+        bridge = McpBridge(cwd=_REPO, servers={})
+        for blank in ("", "   ", "\n\t "):
+            with self.subTest(description=blank):
+                wrapped = bridge._wrap_tool("srv", Descriptor(blank), NoopClient())  # noqa: SLF001
+                self.assertEqual(
+                    wrapped.description, "Call MCP tool t from server srv."
+                )
+
+    def test_tool_description_is_stripped(self) -> None:
+        """有内容时也要去掉首尾空白——模型看到的是干净的一句。"""
+        from minicode.mcp.bridge import McpBridge
+
+        class NoopClient:
+            def call_tool(self, name, arguments):
+                return {"content": []}
+
+        class Descriptor:
+            name = "t"
+            description = "  Reads things.  "
+            input_schema = {"type": "object"}
+
+        bridge = McpBridge(cwd=_REPO, servers={})
+        wrapped = bridge._wrap_tool("srv", Descriptor(), NoopClient())  # noqa: SLF001
+        self.assertEqual(wrapped.description, "Reads things.")
+
     def test_wrapped_tools_work_on_newline_json_server(self) -> None:
         """两条传输路径都要能真正调用成功。"""
         bridge = self._bridge("newline-json")

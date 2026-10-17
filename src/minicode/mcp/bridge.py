@@ -54,6 +54,22 @@ def mcp_tool_name(server: str, tool: str) -> str:
     return f"{MCP_TOOL_PREFIX}{sanitize_tool_segment(server)}__{sanitize_tool_segment(tool)}"
 
 
+def _configured_protocol(config: dict[str, Any]) -> str | None:
+    """配置里**显式要求**的协议；`auto` / 未配置返回 `None`。
+
+    对应原版错误分支里的
+    `config.protocol === 'auto' || undefined ? undefined : config.protocol`。
+
+    为什么失败时要报配置值而不是协商结果：启动就失败了，协商结果必然是
+    `None`，报它等于什么都没说。用户需要知道「我要求的是 content-length，
+    它没成」。
+    """
+    protocol = config.get("protocol")
+    if protocol in (None, "auto"):
+        return None
+    return str(protocol)
+
+
 # ---------------------------------------------------------------------------
 # 结果格式化（契约，改动会影响模型看到的文本）
 # ---------------------------------------------------------------------------
@@ -248,6 +264,13 @@ class McpBridge:
                         name=name,
                         command=summarize_server_endpoint(config),
                         status="error",
+                        # **报「配置里写的」协议，而不是协商结果。**
+                        #
+                        # 启动就失败了，协商结果必然是 None——报它等于什么都没说。
+                        # 原版同理：`config.protocol === 'auto' || undefined
+                        # ? undefined : config.protocol`。用户需要知道
+                        # 「我要求的是 content-length，它没成」。
+                        protocol=_configured_protocol(config),
                         error=str(error),
                     )
                 )
@@ -280,6 +303,18 @@ class McpBridge:
         try:
             remote_tools = client.list_tools()
         except Exception as error:  # noqa: BLE001
+            # **失败要立刻关掉这个 client。**
+            #
+            # 原版在 catch 里 `await client.close()`。早先这里只记一条错误摘要
+            # 就返回，而 client 已经进了 `self._clients`——于是「已报错」的服务器
+            # 仍有一个活着的子进程/连接，一直挂到 dispose 才收。
+            #
+            # 更麻烦的是它对用户不可见：摘要写着 error，进程却还在跑，
+            # 占着端口与内存。关掉它是这一层唯一正确的事。
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001 - 关闭失败不该掩盖原始错误
+                pass
             self.summaries.append(
                 McpServerSummary(
                     name=name,
@@ -330,7 +365,15 @@ class McpBridge:
     ) -> ToolDefinition:
         remote_name = descriptor.name
         local_name = mcp_tool_name(server, remote_name)
-        description = descriptor.description or f"Call MCP tool {remote_name} from server {server}."
+        # **描述要 `strip()` 后再判空。**
+        #
+        # 原版是 `descriptor.description?.trim() || 兜底文案`。只写 `or` 的话，
+        # `"   "`（纯空白）是**真值**，于是模型拿到一条空白描述——等于没描述，
+        # 而它本来会得到「Call MCP tool X from server Y.」这句有用的兜底。
+        cleaned_description = (descriptor.description or "").strip()
+        description = cleaned_description or (
+            f"Call MCP tool {remote_name} from server {server}."
+        )
 
         def run(data: Any, context: ToolContext) -> ToolResult:
             try:
