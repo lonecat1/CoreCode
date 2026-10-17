@@ -54,11 +54,16 @@
 | `skills.ts` | 4 个技能根目录与顺序、名称校验（D19 加固） |
 | `prompt.ts` | MCP 行格式、`MCP_NAMING_HINT` 逐字一致 |
 | `types.ts` | 9 个消息角色 + 6 个回合结局 |
+| `agents/manager.ts` | `MAX_SUB_AGENTS=3` / `MAX_SUB_AGENT_STEPS=20`、id 格式 `agent_N`、`wait` 的 30 秒默认超时、close 的 abort 文案 |
+| `mcp.ts` 的桥接层 | `sanitizeToolSegment` 三条细则、`normalizeInputSchema`、`endpoint_key` 格式、三种 status、失败时的协议上报 |
+| `runtime/turn-runner.ts` | 单飞闸门、`awaitingUser` 由 outcome 推导、`stop` 的默认原因文案 |
 | **全仓 267 个模块级常量** | `tools/check_constants.py`，零孤儿 |
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
-`agents/manager.ts`（调度细节）· `mcp/bridge.py`（状态机）·
-`runtime/*` 的算法内部阈值
+`utils/*` 里少数工具函数的边界值 · `runtime/*` 的算法内部阈值
+
+> 注：`agents/manager.ts`、`mcp/bridge.py`、`runtime/turn-runner.ts`、
+> `runtime/session-runtime.ts` 已在本轮完成数据级比对，从上面的清单移出。
 这些模块的**行为**经过对照与测试，但它们内部的**常量表与阈值**没有逐条验证过
 ——而 `utils/context.ts` 恰恰就是在这类地方出问题的。
 
