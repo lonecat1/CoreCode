@@ -57,13 +57,26 @@
 | `agents/manager.ts` | `MAX_SUB_AGENTS=3` / `MAX_SUB_AGENT_STEPS=20`、id 格式 `agent_N`、`wait` 的 30 秒默认超时、close 的 abort 文案 |
 | `mcp.ts` 的桥接层 | `sanitizeToolSegment` 三条细则、`normalizeInputSchema`、`endpoint_key` 格式、三种 status、失败时的协议上报 |
 | `runtime/turn-runner.ts` | 单飞闸门、`awaitingUser` 由 outcome 推导、`stop` 的默认原因文案 |
+| `utils/token-estimator.ts` | `CHARS_PER_TOKEN` 9 项逐项一致、`CLEAR_MARKER` 逐字一致、各 role 的长度取法、未知 role 默认 3.0 |
 | **全仓 267 个模块级常量** | `tools/check_constants.py`，零孤儿 |
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
 `utils/*` 里少数工具函数的边界值 · `runtime/*` 的算法内部阈值
 
 > 注：`agents/manager.ts`、`mcp/bridge.py`、`runtime/turn-runner.ts`、
-> `runtime/session-runtime.ts` 已在本轮完成数据级比对，从上面的清单移出。
+> `runtime/session-runtime.ts`、`utils/token-estimator.ts` 已在本轮完成
+> 数据级比对，从上面的清单移出。
+
+### 横切契约：非法 UTF-8（D45）
+
+这条不归属某一个模块，但影响 10 个读取点，因此单列：
+
+| 类别 | 做法 | 测试 |
+|---|---|---|
+| 只读的状态文件 | `errors="replace"`（与 Node `readFile('utf8')` 一致） | `tests/test_text_decoding.py` |
+| 会被写回的文件 | 抛 `FileReviewError`，本次修改取消 | 同上 |
+
+判断依据是「会不会写回」：有损读 + 写回 = **用户文件被真的改坏**。
 这些模块的**行为**经过对照与测试，但它们内部的**常量表与阈值**没有逐条验证过
 ——而 `utils/context.ts` 恰恰就是在这类地方出问题的。
 
@@ -83,12 +96,29 @@
 | 脚本 | 查什么 | 当前结果 |
 |---|---|---|
 | `tools/check_imports.py` | 相对导入是否存在、名字是否真的定义、有没有从未被导入的模块 | 78 个模块全通过 |
-| `tools/check_constants.py` | 模块级常量的「谁在用」：零引用 / 仅测试引用 / **伪引用**（只在注释里出现） | 265 个常量，零孤儿 |
-| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 181 条，0 歧义 0 无效 |
+| `tools/check_constants.py` | 模块级常量的「谁在用」：零引用 / 仅测试引用 / **伪引用**（只在注释里出现） | 267 个常量，零孤儿 |
+| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 229 条，0 歧义 0 无效 |
 
 **「伪引用」那一类是这套检查的主要价值**：常量只在注释或 docstring 里被
 提到时，扫一眼会觉得「有引用」，而实际没有任何代码读它。我自己就被骗过一次
 ——把 `MIN_KEEP_TOKENS` 的注释行当成了「有人在用」。
+
+### 一条操作纪律：变异检查运行期间**不得编辑源码**
+
+`mutation_check.py` 会**改写源码**再跑测试，跑完从 `.mutation-backup` 还原。
+因此它运行期间：
+
+- 改源码 → 你的改动可能被「还原」覆盖，或者被当成变异的一部分；
+- 跑测试 → 会得到假失败（源码此刻是被改坏的）。
+
+我违反过一次：在变异检查运行时给 `config.py` 加 `errors="replace"`，而它当时
+正好有一个变异作用在同一文件上，把 `_write_json_pretty` 的 `indent=2` 改掉了。
+症状是另一个模块的测试报「期望 pretty JSON 却得到紧凑 JSON」——**完全看不出
+和「我在改 config.py」有关系**。
+
+`heal_leftovers()` 从备份恢复成功（备份里含我的改动，两者都保住了）。教训：
+**要改源码，先停作业**；输出去文件（`tests/_out.txt`）而不是靠作业输出，
+因为作业会跨轮次丢失。
 
 （原版有 4 个零引用常量，本实现删掉 3 个、接线 1 个。另外把整套**导入期路径
 快照**（8 个）也删了——它们的注释写着「仅供展示」，而实际零引用，且那句注释

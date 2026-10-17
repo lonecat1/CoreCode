@@ -514,6 +514,30 @@
 
 ---
 
+## D45 · 非法 UTF-8 的处理（**修正 + 加固**）
+
+| | |
+|---|---|
+| **原行为** | Node 的 `readFile(path, 'utf8')` 遇到非法字节**不抛错**，替换成 U+FFFD。读进来什么样，后续照常处理。 |
+| **本实现（修正前）** | `read_text(encoding="utf-8")` 抛 `UnicodeDecodeError`——它是 `ValueError` 的子类，**不是** `OSError`，所以那些 `except OSError: return {}` 完全接不住，异常一路冒到用户面前变成 traceback。 |
+| **为什么必须改** | 实测三个崩点：`settings.json`、`history.jsonl`、以及 `/init` 读 `.gitignore`（那里只 `except OSError`）。一个手抖写坏的配置文件就能让程序起不来，而原版只会「读到一个带替换符的值」。 |
+| **影响面** | 见下面两条分叉。 |
+| **可回退** | 去掉 `errors="replace"`。**不建议**——那会重新引入「一个坏字节 → 程序起不来」。 |
+
+### 两条分叉，按「会不会写回」区分
+
+| | 做法 | 覆盖 |
+|---|---|---|
+| **只读的状态文件** | `errors="replace"`（Node 语义） | settings.json、mcp.json、mcp tokens、history.jsonl、permissions、session store、protocol cache、memory、skill 文件、`.gitignore` |
+| **会被写回的文件** | **明确失败**（`FileReviewError`） | `edit_file` / `modify_file` / `patch_file` 的读旧内容 |
+
+第二条是**有意的加固**，不是忠实复刻：原版是「有损读 → 比较 → 写回」，于是
+U+FFFD 会**落盘**，用户的文件被真的改坏。本实现选择让这次修改失败，消息是
+「X 不是 UTF-8 文本（invalid start byte），为避免写坏文件，本次修改已取消。」
+——比 `'utf-8' codec can't decode byte 0xff in position 0` 更能指导用户行动。
+
+---
+
 ## 汇总表
 
 | # | 主题 | 类型 | 影响面 |
@@ -562,6 +586,7 @@
 | D42 | `update_plan`/`get_goal` 输出散文而非 JSON | **修正** | 模型能拿到 todo / goal 的结构化数据与 id |
 | D43 | 关闭子 Agent 时无条件等待它停下 | **加固** | 卡住的 worker 不会让 `/exit` 永久挂住 |
 | D44 | MCP 工具描述只看真假、失败不关连接 | **修正** | 空白描述回落兜底文案；报错服务器不再留活进程 |
+| D45 | 非法 UTF-8 直接抛 `UnicodeDecodeError` | **修正 + 加固** | 状态文件不崩；编辑工具拒绝而非写坏文件 |
 
 **一条贯穿全部修正的原则**：凡是会**静默**造成数据丢失或计量失真的地方就修；
 凡是属于行为契约（阈值、护栏、排序、占位模板）或**明显有意的取舍**
