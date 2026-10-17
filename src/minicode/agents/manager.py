@@ -206,6 +206,19 @@ class SubAgentManager:
 
         thread = record.thread
         if thread is not None:
+            # **带超时地等 worker 停下（D43）。**
+            #
+            # 原版是 `await record.completion`——无条件等。在 JS 里那是有界的：
+            # abort 会让 await 中的 Promise 走 catch 分支结束。
+            #
+            # Python 线程**不能从外部取消**：abort 只是把 signal 置位，worker
+            # 要自己检查到才会退出。如果它正卡在不检查 signal 的阻塞调用里
+            # （网络、子进程、死循环），无条件 join 会让 `/new`、`/exit`、
+            # 以及 `close_all` **一起永久挂住**。
+            #
+            # 5 秒是经验值：正常收尾在毫秒级。超时后我们仍然把状态标成
+            # `closed` 并返回——**用户能继续操作**比「保证线程真的停了」更重要，
+            # 而残留线程因为 signal 已置位，会在下一个检查点自行退出。
             thread.join(5.0)
 
         with self._lock:
