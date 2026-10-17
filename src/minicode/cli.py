@@ -530,6 +530,14 @@ def _run_repl(host: SessionHost) -> int:
     _print_banner(host, ui)
     _attach_ui_callbacks(host, ui)
 
+    # 斜杠命令的 Tab 补全。对应原版 `index.ts:206` 的 `completer` 选项。
+    #
+    # 装不上（Windows 没有 readline 扩展）就静默跳过——补全不可用不该让 REPL
+    # 起不来，也不该因此报错打扰用户。
+    from .cli_commands import install_slash_completion
+
+    install_slash_completion()
+
     while True:
         try:
             line = input(paint("› ", COLOR_USER)).strip()

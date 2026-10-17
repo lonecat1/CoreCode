@@ -220,6 +220,3 @@ def clear_history(path: Any | None = None) -> None:
         return
 
 
-def history_directory() -> str:
-    """历史文件所在目录（供调用方确保它存在）。"""
-    return str(minicode_home())

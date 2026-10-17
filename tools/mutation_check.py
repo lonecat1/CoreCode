@@ -1666,6 +1666,61 @@ _DECODING_MUTATIONS: list[tuple[str, str, str, str]] = [
 MUTATIONS = [*MUTATIONS, *_DECODING_MUTATIONS]
 
 
+#: 斜杠命令表与补全。这张表同时是 `/help`、Tab 补全、命令分派的唯一事实来源。
+_SLASH_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "slash: 无命中时不再列出全部（Tab 什么都没反应）",
+        CLI_COMMANDS,
+        "    return (hits if hits else all_slash_usages(), line)",
+        "    return (hits, line)",
+    ),
+    (
+        "slash: 补全改成「只匹配第一段」（/loop s 匹配不上）",
+        CLI_COMMANDS,
+        "    hits = find_matching_slash_commands(line)",
+        "    hits = find_matching_slash_commands(line.split()[0] if line.split() else line)",
+    ),
+    (
+        "slash: /loop stop 被合并掉（/help 少一行、补全错）",
+        CLI_COMMANDS,
+        '    SlashCommand("/loop", "/loop stop", "停止 Loop，回合进行中或等待批准时也生效。"),\n',
+        "",
+    ),
+    (
+        "slash: /goal pause 被合并掉",
+        CLI_COMMANDS,
+        '    SlashCommand("/goal", "/goal pause [reason]", "暂停 Goal，回合进行中或等待批准时也生效。"),\n',
+        "",
+    ),
+    (
+        "slash: /help 挤成一行（用户读不了）",
+        CLI_COMMANDS,
+        '    return "\\n".join(f"{item.usage}    {item.description}" for item in SLASH_COMMANDS)',
+        '    return " ".join(f"{item.usage}    {item.description}" for item in SLASH_COMMANDS)',
+    ),
+    (
+        "slash: 补全把 delims 留空（readline 按词切，语义不对）",
+        CLI_COMMANDS,
+        '        readline.set_completer_delims("")',
+        "        pass",
+    ),
+    (
+        "slash: readline 不可用时抛错（Windows 起不来）",
+        CLI_COMMANDS,
+        "    except ImportError:\n        return False",
+        "    except ImportError:\n        raise",
+    ),
+    (
+        "slash: 补全器忽略整行、只用 readline 传来的词",
+        CLI_COMMANDS,
+        "            line = readline.get_line_buffer()",
+        "            line = text",
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_SLASH_MUTATIONS]
+
+
 #: 单次跑测试的上限（秒）。
 #:
 #: 必须有限制：有的变异会让程序**永久阻塞**而不是失败（例如分帧状态机不再

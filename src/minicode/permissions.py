@@ -522,7 +522,3 @@ def auto_approve_prompt(
     return PermissionPromptResult(decision="allow_once")
 
 
-def auto_deny_prompt(
-    request: PermissionRequest, signal: Any | None = None
-) -> PermissionPromptResult:
-    return PermissionPromptResult(decision="deny_once")

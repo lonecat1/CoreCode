@@ -128,7 +128,56 @@ class WireConversionTests(unittest.TestCase):
             ]
         )
         self.assertEqual(messages[0]["role"], "user")
-        self.assertIn("snipped", messages[0]["content"][0]["text"])
+        self.assertIn("Snipped", messages[0]["content"][0]["text"])
+
+    def test_snip_boundary_text_matches_the_original_word_for_word(self) -> None:
+        """**逐字对齐原版 `buildAnthropicSnipBoundaryText()`。**
+
+        这是模型在被裁剪处看到的**唯一**提示。早先这里是三段自拟文案，语义
+        还不一样：
+
+          - 原版在安抚模型：中段被删，但「最近的对话与当前任务上下文都保留
+            着」，鼓励它直接用现有上下文继续；
+          - 自拟版在警告模型：别对删掉的内容做任何假设。
+
+        两者对同一次裁剪给出不同的行为暗示，所以必须逐字相同才能谈行为对等。
+
+        期望值抄自 `compact/snipCompact.ts:365`，**不要顺手润色**。
+        """
+        from minicode.adapters.anthropic import _SNIP_BOUNDARY_TEXT
+
+        self.assertEqual(
+            _SNIP_BOUNDARY_TEXT,
+            "[Snipped earlier conversation segment]\n"
+            "\n"
+            "A middle portion of the earlier conversation was removed to preserve "
+            "context space.\n"
+            "The recent conversation and active task context are preserved.",
+        )
+        # 结构也要对上：标题行、空行、两句正文
+        self.assertEqual(len(_SNIP_BOUNDARY_TEXT.split("\n")), 4)
+        self.assertEqual(_SNIP_BOUNDARY_TEXT.split("\n")[1], "")
+
+    def test_snip_boundary_ignores_the_stored_content(self) -> None:
+        """消息自带的 `content`（含统计信息）不上线，模型只看到固定文案。
+
+        原版同样只用 `buildAnthropicSnipBoundaryText()` 的返回值——统计数字是
+        给 UI 看的，写进 wire 只是噪音。
+        """
+        _, messages = to_wire_messages(
+            [
+                {
+                    "role": "snip_boundary",
+                    "content": "removed 12 messages, freed 3456 tokens",
+                    "removedMessageIds": [],
+                    "removedCount": 12,
+                    "tokensFreed": 3456,
+                }
+            ]
+        )
+        text = messages[0]["content"][0]["text"]
+        self.assertNotIn("3456", text)
+        self.assertNotIn("removed 12", text)
 
     def test_tool_result_error_flag_survives(self) -> None:
         _, messages = to_wire_messages(

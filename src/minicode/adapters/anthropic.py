@@ -163,11 +163,23 @@ def to_wire_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str
 
 #: 取代被 snip 删除的那段历史。模型看到它才知道「中间有内容被裁剪了」，
 #: 而不是以为对话本来就断开。
+#:
+#: **逐字对齐原版 `buildAnthropicSnipBoundaryText()`**（`compact/snipCompact.ts:365`）。
+#:
+#: 早先这里是三段自拟文案（`[Earlier conversation was snipped to save context
+#: space]` + 「do not assume anything about the removed content」）。语义不同：
+#:
+#:   - 原版在**安抚**模型：中段被删了，但「最近的对话与当前任务上下文都保留着」，
+#:     鼓励它直接用现有上下文继续；
+#:   - 自拟版在**警告**模型：别对删掉的内容做任何假设。
+#:
+#: 两者对同一次裁剪给出不同的行为暗示，而这是模型在被裁剪处看到的**唯一**提示。
+#: 逐字相同才能谈行为对等。
 _SNIP_BOUNDARY_TEXT = (
-    "[Earlier conversation was snipped to save context space]\n"
-    "Some messages between the earlier part of this conversation and this point were "
-    "removed to free up context. The conversation continues from here; do not assume "
-    "anything about the removed content."
+    "[Snipped earlier conversation segment]\n"
+    "\n"
+    "A middle portion of the earlier conversation was removed to preserve context space.\n"
+    "The recent conversation and active task context are preserved."
 )
 
 

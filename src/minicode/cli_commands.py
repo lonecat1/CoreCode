@@ -27,26 +27,45 @@ class SlashCommand:
 
 
 SLASH_COMMANDS: tuple[SlashCommand, ...] = (
+    # ## 一条 usage 一个条目，**不要合并**
+    #
+    # 原版 `cli-commands.ts:21-172` 共 37 条：`/loop` 占三条、`/goal` 占六条。
+    # `/help` 与 Tab 补全都直接读这张表，所以合并会同时坏掉两件事：
+    #
+    #   - `/help` 少列 8 行，用户看不到 `/loop stop`、`/goal pause` 这些子形式；
+    #   - 补全错。合并成 `/loop [Nm|Nh] <prompt> | /loop stop` 之后，敲
+    #     `/loop s` + Tab 一个都匹配不上，退化成列出全部命令；原版会给出
+    #     `/loop stop`。
+    #
+    # 顺序也与原版一致（按文件顺序，`/loop` `/goal` 在最前）。
+    SlashCommand("/loop", "/loop", "显示当前内存中的 Loop。"),
+    SlashCommand(
+        "/loop",
+        "/loop [Nm|Nh] <prompt>",
+        "按间隔重复一个 prompt；默认 10 分钟，最小 1 分钟。",
+    ),
+    SlashCommand("/loop", "/loop stop", "停止 Loop，回合进行中或等待批准时也生效。"),
+    SlashCommand("/goal", "/goal", "显示当前内存中的 Goal、完成标准、状态与 Plan。"),
+    SlashCommand("/goal", "/goal <description>", "创建一个 Goal 并开始自动推进。"),
+    SlashCommand("/goal", "/goal status", "显示 Goal 状态。"),
+    SlashCommand("/goal", "/goal pause [reason]", "暂停 Goal，回合进行中或等待批准时也生效。"),
+    SlashCommand("/goal", "/goal resume", "显式恢复一个已暂停或受阻的 Goal。"),
+    SlashCommand("/goal", "/goal clear", "停止并清除 Goal；保留 Plan。"),
+    SlashCommand("/plan", "/plan", "显示当前内存中的 Todo 清单。"),
     SlashCommand("/help", "/help", "显示可用命令。"),
     SlashCommand("/tools", "/tools", "列出可用工具与只读子集。"),
-    SlashCommand("/status", "/status", "显示模型、会话与上下文状态。"),
-    SlashCommand("/model", "/model [model-name]", "显示当前模型，或持久化一个模型覆盖。"),
-    SlashCommand("/config-paths", "/config-paths", "显示配置文件路径与 Claude 兼容回退路径。"),
-    SlashCommand("/init", "/init", "初始化仓库：生成 MINI.md、.mini-code/ 与 .gitignore 条目。"),
-    SlashCommand("/plan", "/plan", "显示当前内存 Plan / Todo 清单。"),
-    SlashCommand("/goal", "/goal [status|pause|resume|clear]", "创建、查看或控制 Goal。"),
-    SlashCommand("/loop", "/loop [Nm|Nh] <prompt> | /loop stop", "创建、查看或停止 Loop。"),
-    SlashCommand("/memory", "/memory", "显示已加载的指令文件。"),
-    SlashCommand("/skills", "/skills", "列出发现的技能。"),
-    SlashCommand("/mcp", "/mcp", "显示 MCP 服务器与连接状态。"),
-    SlashCommand("/permissions", "/permissions", "显示权限存储路径与当前规则。"),
-    SlashCommand("/resume", "/resume <id>", "恢复一个已保存的会话。"),
+    SlashCommand("/status", "/status", "显示当前模型与配置来源。"),
+    SlashCommand("/model", "/model", "显示当前模型。"),
+    SlashCommand("/model", "/model <model-name>", "把模型覆盖持久化到 ~/.mini-code/settings.json。"),
+    SlashCommand("/config-paths", "/config-paths", "显示 mini-code 与 Claude 回退配置的路径。"),
+    SlashCommand("/skills", "/skills", "列出发现的 SKILL.md 技能。"),
+    SlashCommand("/mcp", "/mcp", "显示已配置的 MCP 服务器与连接状态。"),
+    SlashCommand("/resume", "/resume", "恢复一个已保存的会话（交互选择，或 /resume <id>）。"),
     SlashCommand("/rename", "/rename <name>", "重命名当前会话。"),
+    SlashCommand("/new", "/new", "清空已保存会话，重新开始。"),
     SlashCommand("/fork", "/fork", "把当前会话分叉成独立的新会话。"),
-    SlashCommand("/new", "/new", "清空当前会话状态，重新开始。"),
-    SlashCommand("/compact", "/compact", "手动压缩上下文（调用模型生成摘要）。"),
-    SlashCommand("/collapse", "/collapse", "把旧的上下文区间投影为摘要（不改真实转录）。"),
-    SlashCommand("/snip", "/snip", "删除一段安全的中间历史（不调用模型）。"),
+    SlashCommand("/permissions", "/permissions", "显示权限存储路径与当前规则。"),
+    SlashCommand("/exit", "/exit", "退出。"),
     # 本地工具快捷方式：直接调用工具，**不经过模型**。
     # 用法与说明照抄原版 `cli-commands.ts:106-145`——它是用户可见的契约。
     SlashCommand("/ls", "/ls [path]", "列出目录中的文件。"),
@@ -69,7 +88,19 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
         "/cmd [cwd::]<command> [args...]",
         "直接执行允许清单内的开发命令，可指定另一个工作目录。",
     ),
-    SlashCommand("/exit", "/exit", "退出。"),
+    SlashCommand("/compact", "/compact", "压缩会话上下文，释放上下文窗口空间。"),
+    SlashCommand(
+        "/collapse",
+        "/collapse",
+        "把旧的上下文区间投影为摘要，不删除真实转录。",
+    ),
+    SlashCommand("/snip", "/snip", "删除一段安全的中间历史，不调用模型。"),
+    SlashCommand(
+        "/init",
+        "/init",
+        "在当前项目里创建 .mini-code/、.gitignore 条目与 MINI.md（幂等）。",
+    ),
+    SlashCommand("/memory", "/memory", "显示已加载进系统提示的指令文件。"),
 )
 
 
@@ -79,6 +110,75 @@ def format_slash_commands() -> str:
 
 def find_matching_slash_commands(prefix: str) -> list[str]:
     return [item.usage for item in SLASH_COMMANDS if item.usage.startswith(prefix)]
+
+
+def all_slash_usages() -> list[str]:
+    return [item.usage for item in SLASH_COMMANDS]
+
+
+def complete_slash_command(line: str) -> tuple[list[str], str]:
+    """Tab 补全的候选集。**对应原版 `completeSlashCommand`。**
+
+    原版（`cli-commands.ts:313`）：
+
+        const hits = SLASH_COMMANDS.map(c => c.usage).filter(u => u.startsWith(line))
+        return [hits.length > 0 ? hits : SLASH_COMMANDS.map(c => c.usage), line]
+
+    也就是「按**整行**前缀匹配；一个都不匹配时列出全部」。返回
+    `(候选, 被补全的内容)`，这是 Node `readline` 的 completer 契约。
+
+    ## 这条函数被定义后很久没接线
+
+    它一直存在，但**没有任何调用点**，也没有测试——`check_constants.py` 只检查
+    **常量**的引用情况，不检查函数，所以这类缺陷逃过了工具。
+    `tools/check_orphans.py` 就是为此补的。
+
+    现在它由 `install_slash_completion()` 接进 readline。
+    """
+    hits = find_matching_slash_commands(line)
+    return (hits if hits else all_slash_usages(), line)
+
+
+def install_slash_completion() -> bool:
+    """把斜杠命令补全装进 readline。返回是否装上。
+
+    ## 为什么经常返回 False
+
+    `readline` 是**可选**的 C 扩展：POSIX 上随标准库提供，**Windows 上没有**
+    （`pyreadline3` 是第三方包，而本项目零第三方依赖）。
+
+    所以这里是「有则用、无则静默跳过」：装不上不影响任何功能，只是按 Tab 没有
+    补全。绝不能让「补全不可用」变成「程序起不来」。
+
+    ## 为什么要把 delims 清空
+
+    readline 默认按 ` \t\n"` 等字符切词，于是输入 `/loop st` 时按 Tab 只补全
+    `st`，而且会把整行替换成一个 usage——行为与原版（按整行前缀匹配）不一致。
+
+    清空 delims 后，readline 把整行当作待补全内容，正好对上原版的 `startsWith`
+    语义。Tab 绑定到 `complete`，让它列出全部候选。
+    """
+    try:
+        import readline  # noqa: PLC0415 - 可选扩展，必须在函数内导入
+    except ImportError:
+        return False
+
+    def _completer(text: str, state: int) -> str | None:
+        # 用整行（而不是 readline 传来的词）做前缀匹配，见上面的说明。
+        try:
+            line = readline.get_line_buffer()
+        except Exception:  # noqa: BLE001 - 某些实现没有 get_line_buffer
+            line = text
+        matches, _ = complete_slash_command(line)
+        return matches[state] if state < len(matches) else None
+
+    try:
+        readline.set_completer_delims("")
+        readline.set_completer(_completer)
+        readline.parse_and_bind("tab: complete")
+    except Exception:  # noqa: BLE001 - 装不上就当没有，不能影响启动
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +737,3 @@ def _short_id() -> str:
     return str(uuid.uuid4())[:8]
 
 
-def render_json(value: Any) -> str:
-    """给工具输出用的稳定 JSON 渲染。"""
-    return json.dumps(value, ensure_ascii=False, indent=2)

@@ -602,9 +602,3 @@ def load_effective_settings(
     return merge_settings(merged, own)
 
 
-def try_load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig | None:
-    """宽容版：配置不全时返回 None，让宿主降级到离线模式而不是崩溃。"""
-    try:
-        return load_runtime_config(settings_path)
-    except ConfigError:
-        return None

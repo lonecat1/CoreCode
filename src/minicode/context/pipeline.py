@@ -181,14 +181,9 @@ class ContextPipeline:
         self.collapse_state.consecutive_failures = next_state.consecutive_failures
 
 
-class NullContextPipeline(ContextPipeline):
-    """不做任何压缩。没有配置模型名时使用。"""
-
-    def prepare(
-        self,
-        messages: list[ChatMessage],
-        *,
-        step: int,
-        model_name: str,
-    ) -> tuple[list[ChatMessage], list[ChatMessage]]:
-        return messages, messages
+# 这里曾有一个 `NullContextPipeline`，`prepare()` 直接返回 `(messages, messages)`。
+# 它**从未被任何地方使用**——`agent_loop.py` 里的 `IdentityContextPipeline` 做
+# 完全相同的事，而实际装配用的是那一个。
+#
+# 两份功能相同的空实现放着，下一个读者会不知道该用哪个、也不知道哪一个才是
+# 「官方」的空管线。已删除。`tools/check_orphans.py` 就是为此写的：它扫出了这条。
