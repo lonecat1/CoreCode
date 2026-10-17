@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -176,6 +177,144 @@ class ListFilesSchemaTests(unittest.TestCase):
         validator = list_files_tool.validator
         self.assertEqual(validator({"glob": None})["glob"], "")
         self.assertEqual(validator({"recursive": None})["recursive"], False)
+
+
+class UpdatePlanToolTests(unittest.TestCase):
+    """`update_plan` 的输出格式。
+
+    ## 为什么这个格式重要
+
+    输出是**模型可见的**。原版返回**整份 plan 文档的 JSON**
+    （`JSON.stringify({ ...updated, explanation })`），本实现一度只回一句
+    `"Plan updated: 1/3 completed."`。
+
+    区别不只是「啰嗦与否」：模型下一次要**改已有条目**就必须知道它们的 id。
+    只回「1/3 completed」时模型拿不到 id，于是只能靠「省略 id」新增——
+    **想更新却静默变成了新增，ToDo 越改越多。**
+    """
+
+    def setUp(self) -> None:
+        from minicode.runtime.plan import PlanManager
+        from minicode.tools.goal import create_update_plan_tool
+
+        self.plan = PlanManager("sess-1")
+        self.tool = create_update_plan_tool(self.plan)
+        self.context = ToolContext(cwd=".")
+
+    def _run(self, payload: dict) -> str:
+        result = self.tool.run(payload, self.context)
+        self.assertTrue(result.ok, result.output)
+        return result.output
+
+    def test_output_is_json_with_camel_case_fields(self) -> None:
+        """字段名与原版一致（驼峰），因为这是模型看到的结构。
+
+        改成 snake_case 会让「同一条计划在两种实现下的表示不同」，而模型对
+        字段名的预期来自它见过的训练数据。
+        """
+        output = self._run({"todos": [{"title": "a", "status": "pending"}]})
+        payload = json.loads(output)
+        self.assertEqual(
+            sorted(payload),
+            ["id", "schemaVersion", "sessionId", "todos", "updatedAt"],
+        )
+        self.assertEqual(payload["schemaVersion"], 1)
+        self.assertEqual(payload["sessionId"], "sess-1")
+
+    def test_output_includes_todo_ids(self) -> None:
+        """**这条是核心**：模型必须能从输出里拿到 id。"""
+        payload = json.loads(
+            self._run({"todos": [{"title": "第一步", "status": "pending"}]})
+        )
+        self.assertEqual(sorted(payload["todos"][0]), ["id", "status", "title"])
+        self.assertTrue(payload["todos"][0]["id"])
+
+    def test_ids_from_the_output_can_be_used_to_update(self) -> None:
+        """往返：用返回的 id 改状态，id 必须保持不变。"""
+        first = json.loads(
+            self._run({"todos": [{"title": "a", "status": "pending"}]})
+        )
+        todo_id = first["todos"][0]["id"]
+
+        second = json.loads(
+            self._run({"todos": [{"id": todo_id, "title": "a", "status": "completed"}]})
+        )
+        self.assertEqual(second["todos"][0]["id"], todo_id)
+        self.assertEqual(second["todos"][0]["status"], "completed")
+
+    def test_explanation_is_echoed(self) -> None:
+        """schema 里有这个字段，模型传了就该收到反馈。
+
+        静默丢弃它等于让模型以为写进去了。
+        """
+        payload = json.loads(
+            self._run(
+                {"todos": [{"title": "a", "status": "pending"}], "explanation": "先摸底"}
+            )
+        )
+        self.assertEqual(payload["explanation"], "先摸底")
+
+    def test_explanation_is_omitted_when_absent(self) -> None:
+        payload = json.loads(self._run({"todos": [{"title": "a", "status": "pending"}]}))
+        self.assertNotIn("explanation", payload)
+
+    def test_explanation_is_omitted_when_blank(self) -> None:
+        payload = json.loads(
+            self._run({"todos": [{"title": "a", "status": "pending"}], "explanation": "   "})
+        )
+        self.assertNotIn("explanation", payload)
+
+    def test_empty_todos_clears_the_plan(self) -> None:
+        self._run({"todos": [{"title": "a", "status": "pending"}]})
+        payload = json.loads(self._run({"todos": []}))
+        self.assertEqual(payload["todos"], [])
+
+    def test_invalid_todos_is_a_failure_not_an_exception(self) -> None:
+        result = self.tool.run({"todos": "not a list"}, self.context)
+        self.assertFalse(result.ok)
+        self.assertIn("数组", result.output)
+
+    def test_unknown_id_is_a_failure(self) -> None:
+        result = self.tool.run(
+            {"todos": [{"id": "nope", "title": "x", "status": "pending"}]}, self.context
+        )
+        self.assertFalse(result.ok)
+        self.assertIn("未知", result.output)
+
+    def test_empty_string_id_is_a_failure(self) -> None:
+        """错误消息要说清「id 必须非空、新增请省略」，而不只是「未知 id」。
+
+        只断言 `ok=False` 的话，把空 id 的校验删掉测试依然通过——它会落到
+        「未知 id」那条分支上，同样失败，但原因说错了。
+        """
+        result = self.tool.run(
+            {"todos": [{"id": "", "title": "x", "status": "pending"}]}, self.context
+        )
+        self.assertFalse(result.ok)
+        self.assertIn("非空", result.output)
+        self.assertIn("省略", result.output)
+
+    def test_two_in_progress_is_a_failure(self) -> None:
+        result = self.tool.run(
+            {
+                "todos": [
+                    {"title": "a", "status": "in_progress"},
+                    {"title": "b", "status": "in_progress"},
+                ]
+            },
+            self.context,
+        )
+        self.assertFalse(result.ok)
+
+    def test_schema_accepts_explanation(self) -> None:
+        properties = self.tool.input_schema["properties"]
+        self.assertIn("explanation", properties)
+        self.assertEqual(self.tool.input_schema["required"], ["todos"])
+
+    def test_schema_requires_title_and_status_per_todo(self) -> None:
+        item = self.tool.input_schema["properties"]["todos"]["items"]
+        self.assertEqual(item["required"], ["title", "status"])
+        self.assertNotIn("id", item["required"])
 
 
 if __name__ == "__main__":

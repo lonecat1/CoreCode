@@ -117,10 +117,23 @@ class PlanManager:
                 in_progress += 1
 
             raw_id = raw.get("id")
-            if raw_id is None or raw_id == "":
+            if raw_id is None:
                 todo_id = str(uuid.uuid4())
             else:
-                todo_id = str(raw_id)
+                if not isinstance(raw_id, str) or not raw_id.strip():
+                    # **空字符串 id 必须拒绝，不能当成「省略 id」。**
+                    #
+                    # 原版是 `z.string().min(1).optional()`——只接受
+                    # 「非空字符串」或「完全不传」。
+                    #
+                    # 早先这里把 `""` 也当成「省略」，于是模型想**更新**某个
+                    # 条目却写了个空 id 时，会**静默变成新增**，ToDo 越改越多。
+                    # 拒绝它，模型才会收到明确反馈并改成「省略 id」或给真 id。
+                    raise PlanError(
+                        "Todo 的 id 必须是非空字符串；新增条目请**省略** id，"
+                        "不要传空字符串。"
+                    )
+                todo_id = raw_id
                 if todo_id not in existing_ids:
                     raise PlanError(
                         f"未知的 Todo id：{todo_id!r}。新增条目请省略 id。"

@@ -11,11 +11,32 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from ..runtime.goal import GoalError, GoalManager
 from ..runtime.plan import PlanError, PlanManager
 from ..tooling import ToolContext, ToolDefinition, ToolResult
+
+
+def _plan_to_json(document: Any) -> dict[str, Any]:
+    """把 PlanDocument 转成与原版一致的 JSON 形状。
+
+    字段名用**驼峰**（`schemaVersion` / `sessionId` / `updatedAt`）而不是
+    snake_case：这是模型可见的输出，原版用的是 JSON.stringify 直接序列化
+    驼峰字段。改成 snake_case 会让「同一条计划在两种实现下的表示不同」，
+    而模型对字段名的预期来自它见过的训练数据。
+    """
+    return {
+        "schemaVersion": getattr(document, "schema_version", 1),
+        "id": document.id,
+        "sessionId": document.session_id,
+        "todos": [
+            {"id": todo.id, "title": todo.title, "status": todo.status}
+            for todo in document.todos
+        ],
+        "updatedAt": getattr(document, "updated_at", ""),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -57,10 +78,21 @@ def create_update_plan_tool(plan: PlanManager) -> ToolDefinition:
         except PlanError as error:
             return ToolResult.failure(str(error))
 
-        completed = sum(1 for todo in document.todos if todo.status == "completed")
-        return ToolResult.success(
-            f"Plan updated: {completed}/{len(document.todos)} completed."
-        )
+        # **输出整份 plan 文档的 JSON**，而不是一句「N/M 完成」。
+        #
+        # 对应原版 `tools/plan.ts:34-38`：
+        #     JSON.stringify({ ...updated, explanation: input.explanation })
+        #
+        # 为什么不能是一行摘要：模型下一次要**改已有条目**就必须知道它们的 id。
+        # 只回「1/3 completed」时模型拿不到 id，于是只能靠「省略 id」新增——
+        # 想更新却静默地变成了新增，ToDo 越改越多。
+        # `explanation` 也一并回显：schema 里有这个字段，模型传了却收不到
+        # 任何反馈，等于让它以为写进去了。
+        explanation = (data or {}).get("explanation")
+        payload = _plan_to_json(document)
+        if isinstance(explanation, str) and explanation.strip():
+            payload["explanation"] = explanation.strip()
+        return ToolResult.success(json.dumps(payload, ensure_ascii=False))
 
     return ToolDefinition(
         name="update_plan",

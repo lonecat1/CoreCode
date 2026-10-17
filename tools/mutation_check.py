@@ -55,6 +55,8 @@ MEMORY = os.path.join(REPO, "src", "minicode", "memory.py")
 MCP_HTTP = os.path.join(REPO, "src", "minicode", "mcp", "http_client.py")
 PIPELINE = os.path.join(REPO, "src", "minicode", "context", "pipeline.py")
 LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
+TOOLS_GOAL = os.path.join(REPO, "src", "minicode", "tools", "goal.py")
+PLAN = os.path.join(REPO, "src", "minicode", "runtime", "plan.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -1458,6 +1460,35 @@ MUTATIONS = [
         '        raise LoopError("用法：/loop [Nm|Nh] <prompt>")\n'
         "    return prompt, interval",
         "    return prompt, interval",
+    ),
+    (
+        "update_plan: 输出退回一行摘要（模型拿不到 id）",
+        TOOLS_GOAL,
+        "        return ToolResult.success(json.dumps(payload, ensure_ascii=False))",
+        '        completed = sum(1 for todo in document.todos if todo.status == "completed")\n'
+        "        return ToolResult.success(\n"
+        '            f"Plan updated: {completed}/{len(document.todos)} completed."\n'
+        "        )",
+    ),
+    (
+        "update_plan: 不回显 explanation（模型以为写进去了）",
+        TOOLS_GOAL,
+        "        if isinstance(explanation, str) and explanation.strip():\n"
+        '            payload["explanation"] = explanation.strip()',
+        "        if False:\n"
+        '            payload["explanation"] = explanation.strip()',
+    ),
+    (
+        "update_plan: 字段名退回 snake_case（与原版表示不同）",
+        TOOLS_GOAL,
+        '        "schemaVersion": getattr(document, "schema_version", 1),',
+        '        "schema_version": getattr(document, "schema_version", 1),',
+    ),
+    (
+        "plan: 空字符串 id 被当成「省略」（想更新却静默变成新增）",
+        PLAN,
+        "                if not isinstance(raw_id, str) or not raw_id.strip():",
+        "                if False:",
     ),
 ]
 

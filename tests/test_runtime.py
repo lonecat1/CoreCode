@@ -100,6 +100,38 @@ class PlanTests(unittest.TestCase):
         with self.assertRaises(PlanError):
             self.plan.update([{"id": "nope", "title": "x", "status": "pending"}])
 
+    def test_empty_string_id_is_rejected(self) -> None:
+        """**空字符串 id 必须拒绝，不能当成「省略 id」。**
+
+        原版是 `z.string().min(1).optional()`——只接受「非空字符串」或
+        「完全不传」。早先这里把 `""` 也当成「省略」，于是模型想**更新**
+        某个条目却写了个空 id 时，会**静默变成新增**，ToDo 越改越多。
+
+        **断言消息而不只是异常类型。** 若不校验空 id，代码会落到「未知 id」
+        那条分支上——同样抛 PlanError，但原因说错了。只断言类型的话，
+        把校验删掉测试依然通过。
+        """
+        with self.assertRaises(PlanError) as caught:
+            self.plan.update([{"id": "", "title": "x", "status": "pending"}])
+        message = str(caught.exception)
+        self.assertIn("非空", message, f"应指出「id 必须非空」，实际：{message}")
+        self.assertIn("省略", message, f"应指引「新增请省略 id」，实际：{message}")
+
+        with self.assertRaises(PlanError) as caught:
+            self.plan.update([{"id": "   ", "title": "x", "status": "pending"}])
+        self.assertIn("非空", str(caught.exception))
+
+    def test_non_string_id_is_rejected(self) -> None:
+        with self.assertRaises(PlanError) as caught:
+            self.plan.update([{"id": 123, "title": "x", "status": "pending"}])
+        self.assertIn("非空", str(caught.exception))
+
+    def test_omitting_the_id_still_creates_a_new_todo(self) -> None:
+        """拒绝空字符串不等于拒绝「省略」——后者是新增的正确写法。"""
+        document = self.plan.update([{"title": "新的", "status": "pending"}])
+        self.assertEqual(len(document.todos), 1)
+        self.assertTrue(document.todos[0].id)
+
     def test_duplicate_id_is_rejected(self) -> None:
         first = self.plan.update([{"title": "A", "status": "pending"}])
         todo_id = first.todos[0].id
