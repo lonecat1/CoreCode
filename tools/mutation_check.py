@@ -56,6 +56,7 @@ MEMORY = os.path.join(REPO, "src", "minicode", "memory.py")
 MCP_HTTP = os.path.join(REPO, "src", "minicode", "mcp", "http_client.py")
 MCP_BRIDGE = os.path.join(REPO, "src", "minicode", "mcp", "bridge.py")
 PIPELINE = os.path.join(REPO, "src", "minicode", "context", "pipeline.py")
+CONSTANTS = os.path.join(REPO, "src", "minicode", "context", "constants.py")
 LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
 TOOLS_GOAL = os.path.join(REPO, "src", "minicode", "tools", "goal.py")
 PLAN = os.path.join(REPO, "src", "minicode", "runtime", "plan.py")
@@ -1914,6 +1915,71 @@ _PERMISSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_PERMISSION_FORMAT_MUTATIONS]
+
+
+#: 四级压缩的阈值与保留策略（`tests/test_compaction_thresholds.py`）。
+#:
+#: 这些数字是最容易「差不多就行」的地方：0.85 写成 0.84、`>=` 写成 `>`，
+#: 日常使用几乎看不出来，但边界行为完全不同。期望值来自
+#: `tools/compaction_compare.py` 的跨实现对照（17/17 一致）。
+_COMPACTION_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "压缩: microcompact 门槛从 0.50 提到 0.60",
+        CONSTANTS,
+        "MICROCOMPACT_UTILIZATION = 0.50",
+        "MICROCOMPACT_UTILIZATION = 0.60",
+    ),
+    (
+        "压缩: snip 门槛从 0.70 提到 0.80",
+        CONSTANTS,
+        "SNIP_COMPACT_THRESHOLD = 0.70",
+        "SNIP_COMPACT_THRESHOLD = 0.80",
+    ),
+    (
+        "压缩: auto-compact 门槛从 0.85 降到 0.84",
+        CONSTANTS,
+        "AUTOCOMPACT_UTILIZATION = 0.85",
+        "AUTOCOMPACT_UTILIZATION = 0.84",
+    ),
+    (
+        "压缩: blocked 门槛从 0.95 提到 0.99",
+        CONSTANTS,
+        "BLOCKED_UTILIZATION = 0.95",
+        "BLOCKED_UTILIZATION = 0.99",
+    ),
+    (
+        "压缩: 只保留最近 2 条工具结果（清得更多）",
+        CONSTANTS,
+        "KEEP_RECENT_TOOL_RESULTS = 3",
+        "KEEP_RECENT_TOOL_RESULTS = 2",
+    ),
+    (
+        "压缩: snip 保留最近 8 条（剪得更狠）",
+        CONSTANTS,
+        "SNIP_KEEP_RECENT_MESSAGES = 12",
+        "SNIP_KEEP_RECENT_MESSAGES = 8",
+    ),
+    (
+        "压缩: snip 最少删 2 条（更容易触发）",
+        CONSTANTS,
+        "SNIP_MIN_MESSAGES_TO_REMOVE = 6",
+        "SNIP_MIN_MESSAGES_TO_REMOVE = 2",
+    ),
+    (
+        "压缩: snip 最少省 0 token（门槛失效）",
+        CONSTANTS,
+        "SNIP_MIN_TOKENS_TO_FREE = 2_000",
+        "SNIP_MIN_TOKENS_TO_FREE = 0",
+    ),
+    (
+        "压缩: 工具结果清空标记改成空串（模型看到空白）",
+        CONSTANTS,
+        'CLEAR_MARKER = "[Output cleared for context space]"',
+        'CLEAR_MARKER = ""',
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_COMPACTION_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。
