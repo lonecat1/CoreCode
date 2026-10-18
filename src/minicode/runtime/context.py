@@ -70,25 +70,34 @@ def format_goal(
 
 
 def _goal_to_dict(goal: Any) -> dict[str, Any] | None:
-    if goal is None:
-        return None
-    return {
-        "schemaVersion": goal.schema_version,
-        "id": goal.id,
-        "sessionId": goal.session_id,
-        "planId": goal.plan_id,
-        "description": goal.description,
-        "completionCriteria": list(goal.completion_criteria),
-        "status": goal.status,
-        "needsReplan": goal.needs_replan,
-        "stopReason": goal.stop_reason,
-        "completion": (
-            {"summary": goal.completion_summary, "checks": list(goal.completion_checks)}
-            if goal.completion_summary
-            else None
-        ),
-        "updatedAt": goal.updated_at,
-    }
+    """Goal 文档 → 与原版 `JSON.stringify` 一致的字典。
+
+    ## 为什么要委托给 `goal_to_json`
+
+    这个函数原来自己写了一份字段映射，而 `runtime/goal.py` 的 `goal_to_json`
+    是给工具输出用的。**两份序列化器**意味着同一份 Goal 在模型眼里有两种形状：
+    上下文注入里 `stopReason: null`、`completion: null` 都会出现，工具输出里
+    却被省略；`completion` 还少了 `checkedAt`。
+
+    `JSON.stringify` 对 `undefined` 的行为是**省略该键**，不是写 `null`。
+    凡是「可能没有」的字段都不该以 `null` 出现——模型会以为「这个字段有值但为
+    空」，而不是「这件事还没发生」。
+    """
+    from .goal import goal_to_json
+
+    return goal_to_json(goal)
+
+
+def _loop_to_dict(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    """Loop 快照 → 省略空值的字典。
+
+    对应原版 `JSON.stringify(this.getSnapshot())`。`LoopDocument` 里
+    `nextRunAt` / `stopReason` 是可选字段，`JSON.stringify` 会**省略**它们；
+    本实现若写成 `null`，模型看到的形状就与原版不同。
+    """
+    if not snapshot:
+        return {}
+    return {key: value for key, value in snapshot.items() if value is not None}
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +113,16 @@ LOOP_CONTEXT_LINES = [
 
 
 def build_loop_context(snapshot: dict[str, Any] | None) -> str:
-    lines = ["<current_loop>", json.dumps(snapshot or {}, ensure_ascii=False), "</current_loop>"]
+    """Loop 模式的运行时上下文。
+
+    JSON 走 `_loop_to_dict()`：**省略空值**，与原版 `JSON.stringify` 一致。
+    写成 `"nextRunAt": null` 会让模型看到与原版不同的形状。
+    """
+    lines = [
+        "<current_loop>",
+        json.dumps(_loop_to_dict(snapshot), ensure_ascii=False),
+        "</current_loop>",
+    ]
     lines.extend(LOOP_CONTEXT_LINES)
     return "\n".join(lines)
 

@@ -57,6 +57,7 @@ MCP_HTTP = os.path.join(REPO, "src", "minicode", "mcp", "http_client.py")
 MCP_BRIDGE = os.path.join(REPO, "src", "minicode", "mcp", "bridge.py")
 PIPELINE = os.path.join(REPO, "src", "minicode", "context", "pipeline.py")
 CONSTANTS = os.path.join(REPO, "src", "minicode", "context", "constants.py")
+RUNTIME_CONTEXT = os.path.join(REPO, "src", "minicode", "runtime", "context.py")
 LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
 TOOLS_GOAL = os.path.join(REPO, "src", "minicode", "tools", "goal.py")
 PLAN = os.path.join(REPO, "src", "minicode", "runtime", "plan.py")
@@ -2059,6 +2060,63 @@ _MCP_ROUTING_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_MCP_ROUTING_MUTATIONS]
+
+
+#: 运行时上下文注入（`tests/test_runtime_context.py`）。
+#:
+#: 这两段文本被拼进 system 消息，是模型判断「我在什么模式、该做什么」的全部依据。
+#: 说明文案改一个字都可能改变模型取舍，而且不会有任何测试变红——除非钉住全文。
+_CONTEXT_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "上下文: Goal 少一条说明（模型不知道要核对什么）",
+        RUNTIME_CONTEXT,
+        '    "Check explanations must describe actual results; this MVP checks structure, '
+        'not evidence references.",\n',
+        "",
+    ),
+    (
+        "上下文: Loop 少一条说明",
+        RUNTIME_CONTEXT,
+        '    "The user can stop this Loop with /loop stop. '
+        'There is no model-side stop tool in this MVP.",\n',
+        "",
+    ),
+    (
+        "上下文: Loop 快照不省略空值（写出 nextRunAt: null）",
+        RUNTIME_CONTEXT,
+        "        json.dumps(_loop_to_dict(snapshot), ensure_ascii=False),",
+        "        json.dumps(snapshot or {}, ensure_ascii=False),",
+    ),
+    (
+        "上下文: Goal 注入改回自己那份字段映射（与工具输出形状不一致）",
+        RUNTIME_CONTEXT,
+        "    from .goal import goal_to_json\n\n    return goal_to_json(goal)",
+        "    from .goal import goal_to_json\n\n    return {**goal_to_json(goal), "
+        '"stopReason": None} if goal is not None else None',
+    ),
+    (
+        "上下文: Goal 块的闭合标签拼错",
+        RUNTIME_CONTEXT,
+        '    lines = ["<current_goal>", json.dumps(_goal_to_dict(snapshot), '
+        'ensure_ascii=False), "</current_goal>"]',
+        '    lines = ["<current_goal>", json.dumps(_goal_to_dict(snapshot), '
+        'ensure_ascii=False), "</current_goals>"]',
+    ),
+    (
+        "上下文: format_goal 不在需要规划时提示",
+        RUNTIME_CONTEXT,
+        '    if goal.needs_replan:\n        lines.append("Planning required.")',
+        "    if False:\n        lines.append(\"Planning required.\")",
+    ),
+    (
+        "上下文: format_goal 丢掉 waiting 后缀",
+        RUNTIME_CONTEXT,
+        '    waiting_suffix = " (waiting for your answer)" if waiting else ""',
+        '    waiting_suffix = ""',
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_CONTEXT_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。
