@@ -30,6 +30,7 @@ TOOLS_FILES = os.path.join(REPO, "src", "minicode", "tools", "files.py")
 TOOLS_GREP = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
 UI_THEME = os.path.join(REPO, "src", "minicode", "ui", "theme.py")
 UI_RENDER = os.path.join(REPO, "src", "minicode", "ui", "render.py")
+SESSION_STORE = os.path.join(REPO, "src", "minicode", "session", "store.py")
 UI_CONSOLE = os.path.join(REPO, "src", "minicode", "ui", "console.py")
 UI_CAPS = os.path.join(REPO, "src", "minicode", "ui", "caps.py")
 UI_ANIMATE = os.path.join(REPO, "src", "minicode", "ui", "animate.py")
@@ -1790,6 +1791,61 @@ _BANNER_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_BANNER_MUTATIONS]
+
+
+#: 会话文件格式：必须能读原版 TUI 写出来的会话（`tests/test_session_format.py`）。
+_SESSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "会话: thinking 的事件类型名退回 role 名（原版用 thinking）",
+        SESSION_STORE,
+        "    ROLE_ASSISTANT_THINKING: EVENT_THINKING,",
+        "    ROLE_ASSISTANT_THINKING: ROLE_ASSISTANT_THINKING,",
+    ),
+    (
+        "会话: 摘要的事件类型名退回 role 名（原版用 summary）",
+        SESSION_STORE,
+        "    ROLE_CONTEXT_SUMMARY: EVENT_SUMMARY,",
+        "    ROLE_CONTEXT_SUMMARY: ROLE_CONTEXT_SUMMARY,",
+    ),
+    (
+        "会话: 事件不再写 uuid（原版的链靠它串起来）",
+        SESSION_STORE,
+        '        "uuid": event_uuid,\n',
+        "",
+    ),
+    (
+        "会话: 事件不再写 parentUuid（消息链断掉）",
+        SESSION_STORE,
+        '        "parentUuid": parent_uuid,\n',
+        "",
+    ),
+    (
+        "会话: 事件不再写 sessionId",
+        SESSION_STORE,
+        '        "sessionId": session_id,\n        "cwd": cwd,\n        "parentUuid": parent_uuid,',
+        '        "cwd": cwd,\n        "parentUuid": parent_uuid,',
+    ),
+    (
+        "会话: `unwrap_message` 不覆盖 id（自带 id 与 uuid 冲突）",
+        SESSION_STORE,
+        '    result["id"] = event.get("uuid")',
+        '    result.setdefault("id", event.get("uuid"))',
+    ),
+    (
+        "会话: 不跳过 system 消息（它会下盘，与新版系统提示冲突）",
+        SESSION_STORE,
+        '        if message.get("role") == ROLE_SYSTEM:\n            continue\n',
+        "",
+    ),
+    (
+        "会话: 项目目录名不折叠冒号（与原版目录对不上，读不到旧会话）",
+        SESSION_STORE,
+        '    collapsed = re.sub(r"[/\\\\:]+", "-", cwd)',
+        '    collapsed = re.sub(r"[/\\\\]+", "-", cwd)',
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_SESSION_FORMAT_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。
