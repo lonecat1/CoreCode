@@ -1982,6 +1982,85 @@ _COMPACTION_MUTATIONS: list[tuple[str, str, str, str]] = [
 MUTATIONS = [*MUTATIONS, *_COMPACTION_MUTATIONS]
 
 
+#: MCP 通用工具的注册与路由（`tests/test_mcp.py` 的 BridgeTests）。
+#:
+#: 这一组防的是「按服务器各注册一份」那个真实缺陷：两台服务器都发布资源时，
+#: 模型会收到两组同名工具声明，而 `find()` 只取第一个 —— 第二台静默消失。
+_MCP_ROUTING_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "MCP: 通用工具退回「按服务器各注册一份」（两台服务器 → 重名）",
+        MCP_BRIDGE,
+        "        if self._published_resources:\n"
+        "            self.tools.extend(self._build_resource_tools())",
+        "        for _n, _c in self._published_resources.items():\n"
+        "            self.tools.extend(self._build_resource_tools())",
+    ),
+    (
+        "MCP: 描述里写死第一台服务器名",
+        MCP_BRIDGE,
+        '                description=(\n'
+        '                    "List optional MCP resources exposed by connected MCP "\n'
+        '                    "servers when a server actually publishes them."\n'
+        "                ),",
+        '                description=(\n'
+        '                    f"列出 MCP 服务器 {next(iter(self._published_resources))} 发布的资源。"\n'
+        "                ),",
+    ),
+    (
+        "MCP: 列表行不带服务器名前缀（跨服务器时分不清归属）",
+        MCP_BRIDGE,
+        '                    lines.append(f"{name}: {item.uri}{shown_name}{described}")',
+        '                    lines.append(f"{item.uri}{shown_name}{described}")',
+    ),
+    (
+        "MCP: 缺 server 时只列第一台（不遍历全部）",
+        MCP_BRIDGE,
+        "            return sorted(self._published_resources.items())",
+        "            return sorted(self._published_resources.items())[:1]",
+    ),
+    (
+        "MCP: 未发布时不给那条「不代表工具不可用」的说明",
+        MCP_BRIDGE,
+        "            return ToolResult.success(\n"
+        '                "Connected MCP servers did not publish any MCP resources. "\n'
+        '                "This does not mean MCP tools are unavailable."\n'
+        "            )",
+        '            return ToolResult.success("没有资源。")',
+    ),
+    (
+        "MCP: read_mcp_resource 的 server 变成可选",
+        MCP_BRIDGE,
+        '                    "required": ["server", "uri"],',
+        '                    "required": ["uri"],',
+    ),
+    (
+        "MCP: 未知服务器的报错文案换成中文（契约不同）",
+        MCP_BRIDGE,
+        '                return ToolResult.failure(f"Unknown MCP server: {server}")\n'
+        "            try:\n"
+        "                result = client.read_resource(uri)",
+        '                return ToolResult.failure(f"没有这个服务器：{server}")\n'
+        "            try:\n"
+        "                result = client.read_resource(uri)",
+    ),
+    (
+        "MCP: 提示行的必填参数不再标星",
+        MCP_BRIDGE,
+        "                        f\"{arg.get('name')}{'*' if arg.get('required') else ''}\"",
+        "                        str(arg.get('name'))",
+    ),
+    (
+        "MCP: get_mcp_prompt 的 arguments 缺 additionalProperties",
+        MCP_BRIDGE,
+        '                            "type": "object",\n'
+        '                            "additionalProperties": {"type": "string"},',
+        '                            "type": "object",',
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_MCP_ROUTING_MUTATIONS]
+
+
 #: 单次跑测试的上限（秒）。
 #:
 #: 必须有限制：有的变异会让程序**永久阻塞**而不是失败（例如分帧状态机不再

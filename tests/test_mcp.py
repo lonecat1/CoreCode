@@ -429,6 +429,186 @@ class BridgeTests(unittest.TestCase):
         finally:
             bridge.dispose()
 
+    # ------------------------------------------------------------------
+    # 通用工具的注册与路由（`list/read_mcp_resource`、`list/get_mcp_prompt`）
+    #
+    # 这一组钉住一个**真实缺陷**：那 4 个工具是**跨服务器共用**的，原版在
+    # 循环外 `tools.push(...)` 只注册一份。本实现早先按服务器各注册一份，
+    # 于是两台服务器都发布资源时模型会收到**两组同名工具声明**，而
+    # `ToolRegistry.find()` 只返回第一个 —— 第二台的资源/提示彻底不可达。
+    # ------------------------------------------------------------------
+
+    def _tool(self, bridge, name: str):
+        return next(t for t in bridge.tools if t.name == name)
+
+    def test_generic_tools_are_registered_once_with_two_servers(self) -> None:
+        """**两台服务器 → 4 个通用工具仍各只有一份。**
+
+        重名会让 `model_tools()` 把两组同名声明都发给模型（可能被 API 拒），
+        而 `find()` 只取第一个，第二个服务器的能力静默消失。
+        """
+        bridge = create_mcp_backed_tools(
+            _REPO, {"alpha": server_config(), "beta": server_config()}
+        )
+        try:
+            names = [tool.name for tool in bridge.tools]
+            for generic in (
+                "list_mcp_resources",
+                "read_mcp_resource",
+                "list_mcp_prompts",
+                "get_mcp_prompt",
+            ):
+                with self.subTest(tool=generic):
+                    self.assertEqual(
+                        names.count(generic), 1,
+                        f"{generic} 出现了 {names.count(generic)} 次",
+                    )
+            # 服务端工具仍是每台 3 个（echo/fail/structured）→ 3+3+4 = 10
+            self.assertEqual(len(names), 10, sorted(names))
+        finally:
+            bridge.dispose()
+
+    def test_list_resources_without_server_walks_every_server(self) -> None:
+        """缺 `server` → 遍历**所有**发布资源的服务器，并**逐行带服务器名**。
+
+        前缀不是装饰：跨服务器列出时不写名字，模型分不清同名资源属于谁。
+        """
+        bridge = create_mcp_backed_tools(
+            _REPO, {"alpha": server_config(), "beta": server_config()}
+        )
+        try:
+            result = self._tool(bridge, "list_mcp_resources").run(
+                {}, ToolContext(cwd=_REPO)
+            )
+            self.assertTrue(result.ok, result.output)
+            lines = [l for l in result.output.splitlines() if "test://" in l]
+            self.assertTrue(lines, result.output)
+            for prefix in ("alpha: ", "beta: "):
+                with self.subTest(prefix=prefix):
+                    self.assertTrue(
+                        any(l.startswith(prefix) for l in lines),
+                        f"缺少 {prefix!r} 开头的行：{lines}",
+                    )
+        finally:
+            bridge.dispose()
+
+    def test_list_resources_with_server_filters_to_that_one(self) -> None:
+        bridge = create_mcp_backed_tools(
+            _REPO, {"alpha": server_config(), "beta": server_config()}
+        )
+        try:
+            result = self._tool(bridge, "list_mcp_resources").run(
+                {"server": "beta"}, ToolContext(cwd=_REPO)
+            )
+            self.assertTrue(result.ok, result.output)
+            self.assertIn("beta: ", result.output)
+            self.assertNotIn("alpha: ", result.output)
+        finally:
+            bridge.dispose()
+
+    def test_list_resources_with_unknown_server_says_nothing_published(self) -> None:
+        """未知服务器 → **不是**报错，而是「没有任何服务器发布」那条固定文案。
+
+        原版行为：`targetClients` 过滤后为空 → `lines` 为空 → 返回
+        `Connected MCP servers did not publish any MCP resources. …`
+        它刻意加了后半句「这不代表 MCP 工具不可用」，避免模型误判。
+        """
+        bridge = self._bridge()
+        try:
+            result = self._tool(bridge, "list_mcp_resources").run(
+                {"server": "nope"}, ToolContext(cwd=_REPO)
+            )
+            self.assertTrue(result.ok)
+            self.assertIn("did not publish any MCP resources", result.output)
+            self.assertIn("does not mean MCP tools are unavailable", result.output)
+        finally:
+            bridge.dispose()
+
+    def test_read_resource_requires_a_server(self) -> None:
+        """`read_mcp_resource` 的 `server` 是**必填**，且未知时明确报错。"""
+        bridge = self._bridge()
+        try:
+            tool = self._tool(bridge, "read_mcp_resource")
+            self.assertIn("server", tool.input_schema["required"])
+            self.assertIn("uri", tool.input_schema["required"])
+
+            missing = tool.run({"uri": "test://readme"}, ToolContext(cwd=_REPO))
+            self.assertFalse(missing.ok)
+
+            unknown = tool.run(
+                {"server": "nope", "uri": "test://readme"}, ToolContext(cwd=_REPO)
+            )
+            self.assertFalse(unknown.ok)
+            self.assertIn("Unknown MCP server: nope", unknown.output)
+        finally:
+            bridge.dispose()
+
+    def test_read_resource_returns_the_body(self) -> None:
+        bridge = self._bridge()
+        try:
+            result = self._tool(bridge, "read_mcp_resource").run(
+                {"server": "fake", "uri": "test://readme"}, ToolContext(cwd=_REPO)
+            )
+            self.assertTrue(result.ok, result.output)
+            self.assertTrue(result.output.strip())
+        finally:
+            bridge.dispose()
+
+    def test_list_prompts_formats_arguments_with_required_star(self) -> None:
+        """`args=[who*]` —— 星号标记必填参数，是模型「该填什么」的唯一依据。"""
+        bridge = self._bridge()
+        try:
+            result = self._tool(bridge, "list_mcp_prompts").run(
+                {}, ToolContext(cwd=_REPO)
+            )
+            self.assertTrue(result.ok, result.output)
+            self.assertIn("fake: greet", result.output)
+            self.assertIn("args=[who*]", result.output)
+        finally:
+            bridge.dispose()
+
+    def test_get_prompt_requires_server_and_name(self) -> None:
+        bridge = self._bridge()
+        try:
+            tool = self._tool(bridge, "get_mcp_prompt")
+            required = tool.input_schema["required"]
+            self.assertEqual(sorted(required), ["name", "server"])
+            # `arguments` 要声明成「任意字符串键值」，否则模型可能传嵌套对象
+            self.assertEqual(
+                tool.input_schema["properties"]["arguments"]["additionalProperties"],
+                {"type": "string"},
+            )
+            unknown = tool.run(
+                {"server": "nope", "name": "greet"}, ToolContext(cwd=_REPO)
+            )
+            self.assertFalse(unknown.ok)
+            self.assertIn("Unknown MCP server: nope", unknown.output)
+        finally:
+            bridge.dispose()
+
+    def test_generic_tool_descriptions_do_not_name_a_server(self) -> None:
+        """描述里**不能**写死某个服务器名——同一份工具服务所有服务器。
+
+        早先描述是 `列出 MCP 服务器 {server} 发布的资源。`，两台服务器就会
+        产生两条文字不同的同名工具，模型看到哪个取决于顺序。
+        """
+        bridge = create_mcp_backed_tools(
+            _REPO, {"alpha": server_config(), "beta": server_config()}
+        )
+        try:
+            for generic in (
+                "list_mcp_resources",
+                "read_mcp_resource",
+                "list_mcp_prompts",
+                "get_mcp_prompt",
+            ):
+                description = self._tool(bridge, generic).description
+                for server in ("alpha", "beta"):
+                    with self.subTest(tool=generic, server=server):
+                        self.assertNotIn(server, description)
+        finally:
+            bridge.dispose()
+
     def test_summary_reports_connected_with_counts(self) -> None:
         bridge = self._bridge()
         try:

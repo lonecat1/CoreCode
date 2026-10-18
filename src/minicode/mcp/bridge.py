@@ -237,6 +237,10 @@ class McpBridge:
     tools: list[ToolDefinition] = field(default_factory=list)
     summaries: list[McpServerSummary] = field(default_factory=list)
     _clients: list[Any] = field(default_factory=list)
+    #: 发布资源的服务器 → 它的 client。用于**全局注册一次**的 `list/read_mcp_resource`。
+    _published_resources: dict[str, Any] = field(default_factory=dict)
+    #: 发布提示的服务器 → 它的 client。用于全局注册一次的 `list/get_mcp_prompt`。
+    _published_prompts: dict[str, Any] = field(default_factory=dict)
 
     # -- 构建 ---------------------------------------------------------------
 
@@ -278,6 +282,16 @@ class McpBridge:
 
             self._clients.append(client)
             self._hydrate_server(name, config, client)
+
+        # **循环之后再注册通用工具**，全局只注册一次。
+        #
+        # 与原版一致：它在 `for` 循环外 `tools.push(...)`。这 4 个工具是跨服务器
+        # 共用的，靠 `server` 参数路由——按服务器各注册一份会让模型收到同名工具
+        # 声明，且第二台服务器的资源/提示不可达。
+        if self._published_resources:
+            self.tools.extend(self._build_resource_tools())
+        if self._published_prompts:
+            self.tools.extend(self._build_prompt_tools())
 
     def _create_client(self, name: str, config: dict[str, Any], stdio_cls: Any) -> Any:
         url = str(config.get("url") or "").strip()
@@ -341,10 +355,19 @@ class McpBridge:
         except Exception:  # noqa: BLE001
             prompts = []
 
+        # **这里只登记「谁会发布资源/提示」，不注册通用工具。**
+        #
+        # 那 4 个工具（`list_mcp_resources` / `read_mcp_resource` /
+        # `list_mcp_prompts` / `get_mcp_prompt`）是**跨服务器共用**的，必须
+        # 全局只注册一份——原版就是在循环外 `tools.push(...)` 一次。
+        #
+        # 早先这里按服务器各注册一份，于是两台服务器都会发布资源时，模型会收到
+        # **两组同名工具声明**（`model_tools()` 不查重），而 `find()` 只返回第一个
+        # ——第二台服务器的资源/提示彻底不可达。
         if resources:
-            self.tools.extend(self._wrap_resource_tools(name, client))
+            self._published_resources[name] = client
         if prompts:
-            self.tools.extend(self._wrap_prompt_tools(name, client))
+            self._published_prompts[name] = client
 
         self.summaries.append(
             McpServerSummary(
@@ -391,29 +414,57 @@ class McpBridge:
             run=run,
         )
 
-    def _wrap_resource_tools(self, server: str, client: Any) -> list[ToolDefinition]:
+    def _build_resource_tools(self) -> list[ToolDefinition]:
+        """`list_mcp_resources` / `read_mcp_resource` —— **跨服务器共用一份**。
+
+        对应原版 `mcp.ts:1113-1178`。两者的 `server` 语义**不同**，这一点容易漏：
+
+        | 工具 | `server` | 缺省时 |
+        |---|---|---|
+        | `list_mcp_resources` | **可选** | 遍历**所有**服务器 |
+        | `read_mcp_resource` | **必填**（`min(1)`） | 不可能缺省 |
+
+        行格式也照抄：`{server}: {uri}{ (name)}{ - description}`。
+        服务器名前缀是**必要的**——跨服务器列出时，不写名字模型就分不清
+        同名资源属于谁。
+        """
+
+        def _targets(server: str) -> list[tuple[str, Any]]:
+            if server:
+                client = self._published_resources.get(server)
+                return [(server, client)] if client is not None else []
+            return sorted(self._published_resources.items())
+
         def list_resources(data: Any, context: ToolContext) -> ToolResult:
-            target = (data or {}).get("server")
-            if target and str(target) != server:
-                return ToolResult.success(f"（服务器 {target} 不在此工具范围内）")
-            try:
-                items = client.list_resources()
-            except Exception as error:  # noqa: BLE001
-                return ToolResult.failure(f"MCP {server} 列出资源失败：{error}")
-            if not items:
-                return ToolResult.success("该服务器没有发布资源。")
+            server = str((data or {}).get("server") or "").strip()
             lines: list[str] = []
-            for item in items:
-                suffix = f"  ({item.mime_type})" if item.mime_type else ""
-                lines.append(f"{item.uri}{suffix}")
-                if item.name or item.description:
-                    lines.append(f"    {item.name} {item.description}".rstrip())
-            return ToolResult.success("\n".join(lines))
+            for name, client in _targets(server):
+                try:
+                    items = client.list_resources()
+                except Exception as error:  # noqa: BLE001
+                    lines.append(f"{name}: failed to list resources ({error})")
+                    continue
+                for item in items:
+                    shown_name = f" ({item.name})" if item.name else ""
+                    described = f" - {item.description}" if item.description else ""
+                    lines.append(f"{name}: {item.uri}{shown_name}{described}")
+            if lines:
+                return ToolResult.success("\n".join(lines))
+            return ToolResult.success(
+                "Connected MCP servers did not publish any MCP resources. "
+                "This does not mean MCP tools are unavailable."
+            )
 
         def read_resource(data: Any, context: ToolContext) -> ToolResult:
+            server = str((data or {}).get("server") or "").strip()
             uri = str((data or {}).get("uri") or "").strip()
+            if not server:
+                return ToolResult.failure("server 不能为空。")
             if not uri:
                 return ToolResult.failure("uri 不能为空。")
+            client = self._published_resources.get(server)
+            if client is None:
+                return ToolResult.failure(f"Unknown MCP server: {server}")
             try:
                 result = client.read_resource(uri)
             except Exception as error:  # noqa: BLE001
@@ -423,7 +474,10 @@ class McpBridge:
         return [
             ToolDefinition(
                 name="list_mcp_resources",
-                description=f"列出 MCP 服务器 {server} 发布的资源。",
+                description=(
+                    "List optional MCP resources exposed by connected MCP "
+                    "servers when a server actually publishes them."
+                ),
                 input_schema={
                     "type": "object",
                     "properties": {"server": {"type": "string"}},
@@ -433,45 +487,72 @@ class McpBridge:
             ),
             ToolDefinition(
                 name="read_mcp_resource",
-                description=f"按 URI 读取 MCP 服务器 {server} 的资源内容。",
+                description="Read a specific optional MCP resource by server and URI.",
                 input_schema={
                     "type": "object",
                     "properties": {
                         "server": {"type": "string"},
                         "uri": {"type": "string"},
                     },
-                    "required": ["uri"],
+                    "required": ["server", "uri"],
                 },
                 validator=lambda data: data if isinstance(data, dict) else {},
                 run=read_resource,
             ),
         ]
 
-    def _wrap_prompt_tools(self, server: str, client: Any) -> list[ToolDefinition]:
+    def _build_prompt_tools(self) -> list[ToolDefinition]:
+        """`list_mcp_prompts` / `get_mcp_prompt` —— **跨服务器共用一份**。
+
+        对应原版 `mcp.ts:1182-1240`。`server` 的语义与资源那一对**相同**：
+        `list_mcp_prompts` 可选、`get_mcp_prompt` 必填。
+
+        行格式照抄原版：`{server}: {name} args=[a*, b] - description`
+        （`*` 标记必填参数）。`args=[...]` 那段是模型判断「这个提示要填什么」
+        的唯一依据，漏掉它模型只能猜。
+        """
+
+        def _targets(server: str) -> list[tuple[str, Any]]:
+            if server:
+                client = self._published_prompts.get(server)
+                return [(server, client)] if client is not None else []
+            return sorted(self._published_prompts.items())
+
         def list_prompts(data: Any, context: ToolContext) -> ToolResult:
-            try:
-                items = client.list_prompts()
-            except Exception as error:  # noqa: BLE001
-                return ToolResult.failure(f"MCP {server} 列出提示失败：{error}")
-            if not items:
-                return ToolResult.success("该服务器没有发布提示。")
+            server = str((data or {}).get("server") or "").strip()
             lines: list[str] = []
-            for item in items:
-                required = [
-                    str(arg.get("name"))
-                    for arg in item.arguments
-                    if isinstance(arg, dict) and arg.get("required")
-                ]
-                suffix = f"  必填参数: {', '.join(required)}" if required else ""
-                lines.append(f"{item.name}{suffix}")
-                if item.description:
-                    lines.append(f"    {item.description}")
-            return ToolResult.success("\n".join(lines))
+            for name, client in _targets(server):
+                try:
+                    items = client.list_prompts()
+                except Exception as error:  # noqa: BLE001
+                    lines.append(f"{name}: failed to list prompts ({error})")
+                    continue
+                for item in items:
+                    rendered = ", ".join(
+                        f"{arg.get('name')}{'*' if arg.get('required') else ''}"
+                        for arg in item.arguments
+                        if isinstance(arg, dict)
+                    )
+                    args_summary = f" args=[{rendered}]" if rendered else ""
+                    described = f" - {item.description}" if item.description else ""
+                    lines.append(f"{name}: {item.name}{args_summary}{described}")
+            if lines:
+                return ToolResult.success("\n".join(lines))
+            return ToolResult.success(
+                "Connected MCP servers did not publish any MCP prompts. "
+                "This does not mean MCP tools are unavailable."
+            )
 
         def get_prompt(data: Any, context: ToolContext) -> ToolResult:
+            server = str((data or {}).get("server") or "").strip()
             name = str((data or {}).get("name") or "").strip()
+            if not server:
+                return ToolResult.failure("server 不能为空。")
             if not name:
                 return ToolResult.failure("name 不能为空。")
+            client = self._published_prompts.get(server)
+            if client is None:
+                return ToolResult.failure(f"Unknown MCP server: {server}")
             arguments = (data or {}).get("arguments")
             try:
                 result = client.get_prompt(
@@ -484,7 +565,10 @@ class McpBridge:
         return [
             ToolDefinition(
                 name="list_mcp_prompts",
-                description=f"列出 MCP 服务器 {server} 发布的提示模板。",
+                description=(
+                    "List optional MCP prompts exposed by connected MCP servers "
+                    "when a server actually publishes them."
+                ),
                 input_schema={
                     "type": "object",
                     "properties": {"server": {"type": "string"}},
@@ -494,15 +578,21 @@ class McpBridge:
             ),
             ToolDefinition(
                 name="get_mcp_prompt",
-                description=f"获取 MCP 服务器 {server} 的某个提示模板。",
+                description=(
+                    "Fetch a rendered optional MCP prompt by server, prompt name, "
+                    "and optional arguments."
+                ),
                 input_schema={
                     "type": "object",
                     "properties": {
                         "server": {"type": "string"},
                         "name": {"type": "string"},
-                        "arguments": {"type": "object"},
+                        "arguments": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string"},
+                        },
                     },
-                    "required": ["name"],
+                    "required": ["server", "name"],
                 },
                 validator=lambda data: data if isinstance(data, dict) else {},
                 run=get_prompt,
