@@ -352,6 +352,28 @@ Python 版连工具都没有，自然做不到。
 > `test_no_extra_commands` 断言没有多出原版没有的命令，
 > `test_every_listed_command_has_a_handler_or_is_a_shortcut` 断言每条都能被处理。
 
+### ⚠️ 这张表只说明「命令表里有」，不说明「行模式下能用」
+
+原版有相当一部分功能**只接在 TUI 里**。`index.ts`（普通 readline 路径）压根
+没有 import 它们：
+
+| 功能 | 原版接线位置 | `index.ts` 有吗 |
+|---|---|---|
+| 本地工具快捷方式（`/ls` `/read` `/write` `/edit` `/patch` `/cmd`） | `tty-app.ts:1385`（`parseLocalToolShortcut`） | **没有** |
+| 会话持久化（`saveSession`） | `tty-app.ts` 三处 | **没有** |
+| 输入历史（`saveHistoryEntries`） | `tty-app.ts:1355` | **没有** |
+| 会话清理 / 项目列表 | `tty-app.ts:1825` / `:2194` | **没有** |
+
+所以在**原版的非 TUI 路径**下，`/resume` `/fork` `/ls` … 一律回「未识别命令」。
+
+本实现放弃了 TUI，把这些能力接进了行模式——这是**能力上的加法**（有意差异，
+见 `docs/divergences.md`）。上表里这些行的 ✅✅ 应当理解为「本实现有，且比
+原版的**行模式**多」；`tools/e2e_compare.py` 里它们被标成 `py_only`，正因为
+**两边不可比**。
+
+这一节是补写的。此前那张表让人以为「原版行模式也能用」，与它自己要避免的
+夸大是同一类问题。
+
 
 ### 本地工具快捷方式的实现
 
