@@ -1848,6 +1848,74 @@ _SESSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
 MUTATIONS = [*MUTATIONS, *_SESSION_FORMAT_MUTATIONS]
 
 
+#: 权限存储与分类器：必须与原版同一份契约（`tests/test_permissions_format.py`）。
+_PERMISSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "权限: 存储字段改成 snake_case（读不到原版写的规则）",
+        PERMISSIONS,
+        '"allowedEditPatterns": self.allowed_edit_patterns,',
+        '"allowed_edit_patterns": self.allowed_edit_patterns,',
+    ),
+    (
+        "权限: 写盘不再缩进（与原版来回改会整篇重排）",
+        PERMISSIONS,
+        "json.dumps(store.to_json(), indent=2, ensure_ascii=False) + \"\\n\",",
+        "json.dumps(store.to_json(), ensure_ascii=False) + \"\\n\",",
+    ),
+    (
+        "权限: 存储不写空数组（原版不省略）",
+        PERMISSIONS,
+        "    def to_json(self) -> dict[str, list[str]]:\n        return {",
+        "    def to_json(self) -> dict[str, list[str]]:\n"
+        "        return {k: v for k, v in {",
+    ),
+    (
+        "权限: 拒绝检查挪到危险门之前（无害命令也被拒）",
+        PERMISSIONS,
+        "        dangerous_reason = classify_dangerous_command(command, args)\n"
+        "        reason = (force_prompt_reason or \"\").strip() or dangerous_reason\n"
+        "        if not reason:\n            return",
+        "        dangerous_reason = classify_dangerous_command(command, args)\n"
+        "        if format_command_signature(command, args) in self._denied_commands:\n"
+        '            raise PermissionDenied("denied")\n'
+        "        reason = (force_prompt_reason or \"\").strip() or dangerous_reason\n"
+        "        if not reason:\n            return",
+    ),
+    (
+        "权限: 编辑选项少一条（自动化脚本的 4 变成未定义）",
+        PERMISSIONS,
+        '        PermissionChoice("4", "始终允许此文件", "allow_always"),\n',
+        "",
+    ),
+    (
+        "权限: git restore --source 不再判为危险",
+        PERMISSIONS,
+        '        if "restore" in normalized and any(a.startswith("--source") for a in normalized):',
+        "        if False and any(a.startswith(\"--source\") for a in normalized):",
+    ),
+    (
+        "权限: publish 不再判为危险",
+        PERMISSIONS,
+        '    if command in ("npm", "pnpm", "yarn") and "publish" in normalized:',
+        '    if command in ("npm", "pnpm", "yarn") and False:',
+    ),
+    (
+        "权限: 加严名单退回只认 npm（pnpm/yarn publish 不再提示）",
+        PERMISSIONS,
+        '    if command in ("npm", "pnpm", "yarn") and "publish" in normalized:',
+        '    if command == "npm" and "publish" in normalized:',
+    ),
+    (
+        "权限: 解释器名单退回原版 5 个（pwsh/powershell 不再提示）",
+        PERMISSIONS,
+        '    {"node", "python3", "python", "bun", "bash", "sh", "pwsh", "powershell"}',
+        '    {"node", "python3", "bun", "bash", "sh"}',
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_PERMISSION_FORMAT_MUTATIONS]
+
+
 #: 单次跑测试的上限（秒）。
 #:
 #: 必须有限制：有的变异会让程序**永久阻塞**而不是失败（例如分帧状态机不再

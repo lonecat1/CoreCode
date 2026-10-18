@@ -26,12 +26,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 PY = sys.executable
 TS_ROOT = Path(r"D:\CoreCode\MiniCode")
@@ -138,6 +140,15 @@ SCENARIOS: list[tuple[str, list[str], str | None, str]] = [
     ("工具: /patch 有一处不中", [], "/patch a.txt::alpha::one::zzz::two\n/exit\n", "py_only"),
     ("工具: /cmd", [], "/cmd echo hi\n/exit\n", "py_only"),
     ("工具: /cmd 不在白名单", [], "/cmd curl http://x\n/exit\n", "py_only"),
+    # ---- 权限层：批准提示与持久化规则 ----
+    #
+    # 这些场景**带交互**：`/edit` 会打出 7 个选项，stdin 的下一行就是答复。
+    # 于是可以验证「记住这条规则」到底往磁盘写了什么、以及「仅本次拒绝」是否
+    # 一个字节都不写。
+    ("权限: 始终允许此文件（选 4）", [], "/edit a.txt::alpha::BETA\n4\n/exit\n", "py_only"),
+    ("权限: 仅本次拒绝（选 5）", [], "/edit a.txt::alpha::BETA\n5\n/exit\n", "py_only"),
+    ("权限: 本回合内允许（选 2）", [], "/edit a.txt::alpha::BETA\n2\n/exit\n", "py_only"),
+    ("权限: 始终允许但文件未命中", [], "/edit a.txt::nope::x\n4\n/exit\n", "py_only"),
 ]
 
 #: `py_only` 场景**期望的文件结果**：`相对路径 -> 内容`。
@@ -164,10 +175,84 @@ EXPECTED_FILES: dict[str, dict[str, str]] = {
     # `/cmd` 不写文件
     "工具: /cmd": {},
     "工具: /cmd 不在白名单": {},
+    # 选 4（始终允许此文件）→ 变更应用 + 规则落盘
+    "权限: 始终允许此文件（选 4）": {"a.txt": "BETA\nbeta\ngamma\n"},
+    # 选 5（仅本次拒绝）→ **文件不动**
+    "权限: 仅本次拒绝（选 5）": {},
+    # 选 2（本回合内允许）→ 变更应用，但**不落盘规则**
+    "权限: 本回合内允许（选 2）": {"a.txt": "BETA\nbeta\ngamma\n"},
+    # 批准了但目标文本不在文件里 → 变更本身失败，文件不动
+    "权限: 始终允许但文件未命中": {},
 }
 
 #: `py_only` 场景给 Python 侧额外的命令行参数。
 PY_ONLY_ARGS: list[str] = ["--yes"]
+
+#: `py_only` 场景里**不使用** `--yes` 的那些（它们要靠交互答复）。
+#:
+#: `--yes` 会把提示替换成「全部放行」，那样就测不到「选 4 写了什么规则」。
+NO_AUTO_APPROVE = {
+    label for (label, _a, _s, kind) in SCENARIOS
+    if label.startswith("权限: ")
+}
+
+
+def check_permissions(home: Path) -> str | None:
+    """读 `<home>/permissions.json`，返回 `(规则数, 是否只许了工作区里的文件)`。
+
+    返回 `None` 表示文件不存在。
+    """
+    path = home / "permissions.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return payload
+
+
+#: 权限类场景**额外**要检查的 home 状态：`标签 -> 检查函数`。
+#:
+#: 检查函数接收 `(home, workspace)`，返回 `None` 表示通过，否则返回错误描述。
+#: 用函数而不是字面量，是因为 `permissions.json` 里存的是**绝对路径**
+#: （每个场景的临时目录都不同），没法写成固定字符串。
+HOME_CHECKS: dict[str, "Callable[[Path, Path], str | None]"] = {}
+
+
+def _expect_edit_rule(*, should_exist: bool):
+    def check(home: Path, workspace: Path) -> str | None:
+        payload = check_permissions(home)
+        if not should_exist:
+            if payload is not None and payload.get("allowedEditPatterns"):
+                return f"不该落盘编辑规则，实际 {payload.get('allowedEditPatterns')}"
+            return None
+        if payload is None:
+            return "permissions.json 没写出来"
+        patterns = payload.get("allowedEditPatterns") or []
+        if not patterns:
+            return f"allowedEditPatterns 为空：{payload}"
+        expected = str(workspace / "a.txt")
+        if not any(p.endswith("a.txt") for p in patterns):
+            return f"规则里没有 a.txt：{patterns}"
+        # 其余 5 个字段必须是空数组（原版不省略空数组）
+        for key in (
+            "allowedDirectoryPrefixes",
+            "deniedDirectoryPrefixes",
+            "allowedCommandPatterns",
+            "deniedCommandPatterns",
+            "deniedEditPatterns",
+        ):
+            if payload.get(key) != []:
+                return f"{key} 应为空数组，实际 {payload.get(key)!r}"
+        return None
+
+    return check
+
+
+HOME_CHECKS["权限: 始终允许此文件（选 4）"] = _expect_edit_rule(should_exist=True)
+HOME_CHECKS["权限: 仅本次拒绝（选 5）"] = _expect_edit_rule(should_exist=False)
+HOME_CHECKS["权限: 本回合内允许（选 2）"] = _expect_edit_rule(should_exist=False)
 
 #: 有意差异的理由。键是场景标签。
 INTENTIONAL: dict[str, str] = {
@@ -271,8 +356,17 @@ def main() -> int:
 
         if expectation == "py_only":
             # 原版没有这个功能（见 PY_ONLY_REASON），只能断言本实现自己。
+            #
+            # **每个场景一份独立的 home**：权限规则写在 `<home>/permissions.json`，
+            # 共用的话「选 4（始终允许）」写下的规则会泄漏到后续场景，让它们
+            # 直接放行——断言就变成「上一个场景干得好不好」。
+            py_case_home = base / f"py-home-{slug}"
+            py_case_home.mkdir(parents=True, exist_ok=True)
             py_ws = make_workspace(base / f"py-ws-{slug}")
-            py_out = run_py([*args, *PY_ONLY_ARGS], str(py_ws), py_home, stdin)
+            # 权限类场景**不能**加 `--yes`：那会把提示替换成「全部放行」，
+            # 测不到「选 4 写了什么规则」。它们靠 stdin 里的答复推进。
+            extra = [] if label in NO_AUTO_APPROVE else list(PY_ONLY_ARGS)
+            py_out = run_py([*args, *extra], str(py_ws), str(py_case_home), stdin)
             expected = EXPECTED_FILES.get(label)
             actual = snapshot_tree(py_ws)
             if expected is None:
@@ -282,19 +376,30 @@ def main() -> int:
             # 期望里没列的文件，必须保持出厂内容。
             baseline = snapshot_tree(make_workspace(base / f"base-{slug}"))
             want = {**baseline, **expected}
+            problems: list[str] = []
             if actual != want:
-                behavior_failures.append(label)
-                print(f"FAIL  {label}  （**文件结果不符**）")
                 for name in sorted(set(actual) | set(want)):
                     if actual.get(name) != want.get(name):
-                        print(f"        {name}:")
-                        print(f"          期望: {want.get(name)!r}")
-                        print(f"          实际: {actual.get(name)!r}")
-                # 输出里有没有报错也要看一眼，便于定位。
-                for line in normalize(py_out, py_home, py_home).splitlines()[-6:]:
+                        problems.append(
+                            f"{name}: 期望 {want.get(name)!r} 实际 {actual.get(name)!r}"
+                        )
+            # 额外检查 home 里的状态（权限规则是否按答复落盘）。
+            home_check = HOME_CHECKS.get(label)
+            if home_check is not None:
+                detail = home_check(py_case_home, py_ws)
+                if detail:
+                    problems.append(f"home: {detail}")
+
+            if problems:
+                behavior_failures.append(label)
+                print(f"FAIL  {label}  （**结果不符**）")
+                for problem in problems:
+                    print(f"        {problem}")
+                for line in normalize(py_out, str(py_case_home), str(py_case_home)).splitlines()[-6:]:
                     print(f"          | {line[:100]}")
             else:
-                print(f"OK    {label}  （py_only：文件结果符合期望）")
+                suffix = "，含 home 状态" if home_check is not None else ""
+                print(f"OK    {label}  （py_only：文件结果符合期望{suffix}）")
             continue
 
         ts_ws = make_workspace(base / f"ts-ws-{slug}")
