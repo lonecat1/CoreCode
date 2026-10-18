@@ -103,7 +103,8 @@
 | `tools/check_constants.py` | 模块级常量的「谁在用」：零引用 / 仅测试引用 / **伪引用**（只在注释里出现） | 267 个常量，零孤儿 |
 | `tools/check_orphans.py` | 模块级**函数与类**的引用情况：定义了却没人调 | 596 个函数/类，零孤儿 |
 | `tools/e2e_compare.py` | **把两边真的跑起来比**：同一场景分别跑 TS 与 Python，diff 输出 **+ 比留下的文件与 home 状态** | 24/24 通过（5 个逐字一致） |
-| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 264 条，0 歧义 0 无效 |
+| `tools/compaction_compare.py` | 四级压缩的**判定**：同一批合成对话，比利用率/级别/是否剪/是否清 | 17/17 完全一致 |
+| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 273 条，0 歧义 0 无效 |
 
 **「伪引用」那一类是这套检查的主要价值**：常量只在注释或 docstring 里被
 提到时，扫一眼会觉得「有引用」，而实际没有任何代码读它。我自己就被骗过一次
@@ -183,6 +184,33 @@
 | `settings.json` / `mcp.json` / `history.jsonl` | `tests/test_config.py` / `test_history.py` | 见 §配置层 |
 
 断言口径统一为「**按原版的形状写，我能读**」，而不是「我写得出、我读得回」。
+
+### 压缩层的对照：用例先被证伪一次
+
+压缩的触发点由阈值决定（50% / 70% / 85% / 95%），而阈值是最容易「差不多就行」
+的地方——`0.85` 写成 `0.84`、`>=` 写成 `>`，日常使用几乎看不出来，边界行为
+却完全不同。
+
+`tools/compaction_compare.py` 不走 REPL，直接调两边的纯函数
+（`estimateMessagesTokens` / `computeContextStats` / `shouldAutoCompact` /
+`snipCompactConversation` / `microcompact`），喂同一批合成对话。TS 侧用
+`tsx --eval` import 源模块，**不在 TS 仓库里留文件**。
+
+**第一版 13 个用例全是 2 条消息，13/13 全绿但什么都没验证**：`snip` 永远回
+`too_few_messages`、`microcompact` 永远不动。三条结构条件是后来才弄明白的：
+
+| 级 | 条件 |
+|---|---|
+| snip | 条数 > `KEEP_RECENT(12)` + `MIN_MESSAGES_TO_REMOVE(6)` = ≥ 19 条 |
+| microcompact | `tool_result` **多于** `KEEP_RECENT_TOOL_RESULTS(3)` |
+| auto-compact | 利用率 ≥ 0.85；`blocked` 在 0.95 |
+
+重做后 17 个用例覆盖四种组成（阈值边界 / 条数够多 / 工具结果够多 / 混合），
+**17/17 完全一致**，含「剪了没剪」与「清了没清」。
+
+`tests/test_compaction_thresholds.py` 把这份结果写成硬编码期望快照，于是
+不依赖 TS 也能守住阈值。里面有一条**元测试**断言「至少各有一个真正触发 /
+明确拒绝的例子」——防的正是我自己踩的那个坑。
 
 ### 顺带发现的第四件事：这些命令原版只在 TUI 里接
 
