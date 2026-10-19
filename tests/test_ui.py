@@ -489,6 +489,29 @@ class RenderTests(ColorEnvMixin):
         ]
         self.assertEqual(columns[0], columns[1], "值的起始显示列应当一致")
 
+    def test_key_value_truncates_overlong_values(self) -> None:
+        """超长值必须**截断**到给定宽度内。
+
+        `/status` 那种「值是一句摘要」的场景靠这个：不截断会让一行超出终端
+        宽度，被终端自己折行成两段，看起来像两条不同的键。
+
+        （这条是补的：删掉 `wrap_values` 之后，`truncate_plain` 那行**没有任何
+        测试**覆盖——一条「不截断」的变异因此存活。死代码删掉了，活代码也得
+        有人看着。）
+        """
+        long_value = "x" * 200
+        rendered = strip_ansi(render_key_value([("键", long_value)], 40))
+        self.assertEqual(len(rendered.split("\n")), 1, "应当只有一行")
+        self.assertLessEqual(string_display_width(rendered), 40, rendered)
+
+    def test_key_value_keeps_short_values_intact(self) -> None:
+        """短值不该被动过。"""
+        rendered = strip_ansi(render_key_value([("键", "短值")], 80))
+        self.assertIn("短值", rendered)
+
+    def test_key_value_returns_empty_for_no_rows(self) -> None:
+        self.assertEqual(render_key_value([], 80), "")
+
     def test_help_aligns_by_display_width(self) -> None:
         """同样按显示宽度对齐，中文用法名也要对齐。"""
         rendered = strip_ansi(

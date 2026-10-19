@@ -18,7 +18,32 @@
 | `src/` 各模块 | **全部有对应实现** ✅ |
 | 完全缺失（❌） | **0** |
 | 能力缩水（⚠️） | **0** |
-| 有意差异（🔶） | 39 条，逐条记在 `docs/divergences.md` |
+| 有意差异（🔶） | 50 条，逐条记在 `docs/divergences.md` |
+
+### 机器核对的数字
+
+**这一块由 `python tools/check_docs.py --write` 生成，不要手改。**
+
+理由：下面的数字本来是手写的，于是同一份文档里出现过两个不同的常量数
+（267 与 269，而实际是 270），函数/类数与变异条数也都过期。**一份数字过期的
+「可验证清单」比没有清单更糟**——它让人以为核过了。
+
+<!-- BEGIN GENERATED STATS -->
+
+| 项目 | 数量 |
+|---|---|
+| TS 源文件 | 77 |
+| 已映射到本实现 | 67 |
+| TUI 排除 | 10 |
+| 未映射 | 0 |
+| Python 模块 | 78 |
+| 模块级常量 | 270 |
+| 模块级函数/类 | 606 |
+| 变异用例 | 330 |
+| 单元测试 | 1598 |
+
+<!-- END GENERATED STATS -->
+
 
 ### 但「有实现」不等于「已验证」
 
@@ -64,8 +89,8 @@
 | `plan/context.ts` 的注入头 | `PLAN_CONTEXT_HEADER` **5 行逐字一致** |
 | `goal/context.ts` | `GOAL_CONTEXT_LINES` **7 条逐字一致**；`formatGoal` 行结构；JSON 省略空值（`tests/test_runtime_context.py`） |
 | loop 上下文 | `LOOP_CONTEXT_LINES` **3 条逐字一致**；快照驼峰且省略 `nextRunAt` / `stopReason` |
-| **全仓 269 个模块级常量** | `tools/check_constants.py`，零孤儿 |
-| **全仓 596 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
+| **全仓 270 个模块级常量** | `tools/check_constants.py`，零孤儿 |
+| **全仓 606 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
 `utils/*` 里少数工具函数的边界值
@@ -132,15 +157,16 @@
 | 脚本 | 查什么 | 当前结果 |
 |---|---|---|
 | `tools/check_imports.py` | 相对导入是否存在、名字是否真的定义、有没有从未被导入的模块 | 78 个模块全通过 |
-| `tools/check_constants.py` | 模块级常量的「谁在用」：零引用 / 仅测试引用 / **伪引用**（只在注释里出现） | 267 个常量，零孤儿 |
+| `tools/check_constants.py` | 模块级常量的「谁在用」：零引用 / 仅测试引用 / **伪引用**（只在注释里出现） | 270 个常量，零孤儿 |
 | `tools/check_orphans.py` | 模块级**函数与类**的引用情况：定义了却没人调 | 596 个函数/类，零孤儿 |
 | `tools/e2e_compare.py` | **把两边真的跑起来比**：同一场景分别跑 TS 与 Python，diff 输出 **+ 比留下的文件与 home 状态** | 24/24 通过（5 个逐字一致） |
 | `tools/compaction_compare.py` | 四级压缩的**判定**：同一批合成对话，比利用率/级别/是否剪/是否清 | 17/17 完全一致 |
 | `tools/mcp_compare.py` | MCP 桥接：同一台服务器，比摘要/工具表/12 个调用的返回文本 | 2 种线格式全部一致 |
-| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 301 条，0 歧义 0 无效 |
+| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 条数见上方「机器核对的数字」；0 歧义 0 无效 |
 | `tools/file_map.py` | **逐文件映射**：覆盖度 / 存在性 / 反向覆盖 | 77 = 67 映射 + 10 TUI |
 | `tools/check_duplicates.py` | **同名遮蔽**：同一模块里函数/类被定义两次（前面那个是死代码） | 76 模块，零遮蔽 |
-| `tools/verify_all.py` | 把上面 9 个串成一条命令；`--fast` 跳过依赖 TS 的对照，`--full` 加变异 | 9/9 通过（约 60 秒） |
+| `tools/verify_all.py` | 把上面这些串成一条命令；`--fast` 跳过依赖 TS 的对照，`--full` 加变异 | 10/10 通过（约 60 秒） |
+| `tools/check_docs.py` | **文档里的数字**：与实测比对（生成块 + 手写数字） | 一致 |
 | `tests/test_checkers.py` | **检查器自己的测试**（18 项） | 通过 |
 
 > **检查器也要被测试。** 它们是「其它代码是否可信」的依据，判断错了结论就错，

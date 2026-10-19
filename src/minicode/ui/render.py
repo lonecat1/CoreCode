@@ -487,38 +487,31 @@ def render_help(commands: list[tuple[str, str]], width: int | None = None) -> st
     return "\n".join(lines)
 
 
-def render_key_value(
-    rows: list[tuple[str, str]], width: int | None = None, *, wrap_values: bool = False
-) -> str:
-    """对齐的键值列表（给 /status、/plan、/config-paths 之类复用）。
+def render_key_value(rows: list[tuple[str, str]], width: int | None = None) -> str:
+    """对齐的键值列表（给 `/status` `/plan` `/permissions` 之类复用）。
 
-    `wrap_values=False`（默认）把过长的值**截断**——适合 `/status` 那种
-    「值是一句摘要」的场景，截断后仍能看懂。
+    过长的值**截断**（`truncate_plain`）。这对 `/status` 那种「值是一句摘要」的
+    场景是对的：截断后仍能看懂。
 
-    `wrap_values=True` 改为**折行**。给路径这类值用：`/config-paths` 的全部
-    意义就是让用户看到完整路径去复制，截断成 `C:\\Users\\...\\se...` 会让这条
-    命令彻底没用。折行的代价是占更多屏幕，但那是值得的。
+    ## 曾经有个 `wrap_values=True` 的折行模式，已删除
+
+    它只为 `/config-paths` 存在：那条命令要让人看到**完整路径**去复制，截断会
+    让它彻底没用。但后来 `/config-paths` 改成**逐字输出原版那四行**
+    `label: value`（原版就是这么做的），折行模式就再没有调用者了。
+
+    留着它的后果很具体：一条针对它的变异（「忽略 `wrap_values`」）**永远无法
+    被杀死**——没有生产调用者，也没有测试会红。变异检查因此报 324/325。
+    一个参数没有任何 `True` 的调用点时，它就是死代码，删掉比留着诚实。
     """
     limit = width or output_width()
     if not rows:
         return ""
     key_width = max(string_display_width(key) for key, _ in rows)
-    # 每行前缀：两空格 + 键 + 补齐 + 两空格
-    prefix_width = 2 + key_width + 2
     lines: list[str] = []
     for key, value in rows:
         pad = " " * (key_width - string_display_width(key))
         head = f"  {paint(key, COLOR_HINT)}{pad}  "
-        if not wrap_values:
-            lines.append(truncate_plain(head + value, limit))
-            continue
-        available = max(10, limit - prefix_width)
-        pieces = wrap_plain(value, available) or [""]
-        lines.append(head + pieces[0])
-        # 续行缩进到与首行值对齐，读起来才知道它属于同一个键。
-        continuation = " " * prefix_width
-        for piece in pieces[1:]:
-            lines.append(continuation + piece)
+        lines.append(truncate_plain(head + value, limit))
     return "\n".join(lines)
 
 

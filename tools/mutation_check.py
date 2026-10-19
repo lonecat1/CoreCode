@@ -61,6 +61,7 @@ RUNTIME_CONTEXT = os.path.join(REPO, "src", "minicode", "runtime", "context.py")
 CHECK_CONSTANTS = os.path.join(REPO, "tools", "check_constants.py")
 CHECK_DUPLICATES = os.path.join(REPO, "tools", "check_duplicates.py")
 FILE_MAP = os.path.join(REPO, "tools", "file_map.py")
+CHECK_DOCS = os.path.join(REPO, "tools", "check_docs.py")
 LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
 TOOLS_GOAL = os.path.join(REPO, "src", "minicode", "tools", "goal.py")
 PLAN = os.path.join(REPO, "src", "minicode", "runtime", "plan.py")
@@ -799,10 +800,15 @@ MUTATIONS = [
         "",
     ),
     (
-        "UI: wrap_values 被忽略（长路径被截断，命令失去意义）",
+        # 这里原本有一条「`wrap_values` 被忽略」的变异。`/config-paths` 改成
+        # 逐字输出原版四行之后，`wrap_values=True` 再无调用者，那条变异**永远
+        # 杀不死**（324/325 就是它）。死代码已删除，变异随之删除。
+        # 留着一条恒定存活的变异会污染「0 存活」这个信号——它看起来像一个漏洞，
+        # 实际是一个不该存在的检查项。
+        "UI: 键值表不再截断超长值（长行溢出终端）",
         UI_RENDER,
-        "        if not wrap_values:\n            lines.append(truncate_plain(head + value, limit))\n            continue",
-        "        if True:\n            lines.append(truncate_plain(head + value, limit))\n            continue",
+        "        lines.append(truncate_plain(head + value, limit))",
+        "        lines.append(head + value)",
     ),
     (
         "UI: 横幅不显示 mcp 徽章",
@@ -2417,6 +2423,50 @@ _DIAGNOSTIC_SHAPE_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_DIAGNOSTIC_SHAPE_MUTATIONS]
+
+
+#: 文档数字核对（`tests/test_checkers.py` 的 `CheckDocsTests`）。
+#:
+#: 这一组防的是「检查器自己失效」：如果 `check_docs` 的句式或比对逻辑坏了，
+#: 文档里的数字就会重新开始无声漂移——而那正是它存在的理由。
+_CHECK_DOCS_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "文档核对: 句式放得太宽（把单模块的常量数当成全仓总数）",
+        CHECK_DOCS,
+        '    (r"(\\d+) 个常量，零孤儿", "constants", "个常量，零孤儿"),',
+        '    (r"(\\d+) 个常量", "constants", "个常量"),',
+    ),
+    (
+        "文档核对: 取不到实测值时不再跳过（会瞎报）",
+        CHECK_DOCS,
+        "        actual = stats.get(key)\n"
+        "        if actual is None:\n"
+        "            continue",
+        "        actual = stats.get(key, 0)",
+    ),
+    (
+        "文档核对: 生成块与实测不一致时不报",
+        CHECK_DOCS,
+        "    elif block not in text:\n"
+        '        problems.append("生成块与实测不一致（用 --write 重写）")',
+        "    elif False:\n"
+        '        problems.append("生成块与实测不一致（用 --write 重写）")',
+    ),
+    (
+        "文档核对: 手写数字的不一致被吞掉",
+        CHECK_DOCS,
+        "    problems.extend(hand_written_problems(text, stats))",
+        "    hand_written_problems(text, stats)",
+    ),
+    (
+        "文档核对: 生成块的标记写错（--write 会追加到末尾）",
+        CHECK_DOCS,
+        'BEGIN = "<!-- BEGIN GENERATED STATS -->"',
+        'BEGIN = "<!-- BEGIN GENERATED STAT -->"',
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_CHECK_DOCS_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。

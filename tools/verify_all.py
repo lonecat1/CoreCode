@@ -57,6 +57,7 @@ CHECKS: list[tuple[str, str, bool, bool]] = [
     ("check_orphans.py", "函数与类都有引用", False, False),
     ("check_duplicates.py", "无同名遮蔽的定义", False, False),
     ("file_map.py", "逐文件映射覆盖完整", False, False),
+    ("check_docs.py", "文档里的数字与实测一致", False, False),
     ("e2e_compare.py", "端到端交互与文件结果一致", True, False),
     ("compaction_compare.py", "四级压缩判定一致", True, False),
     ("mcp_compare.py", "MCP 线协议视图一致", True, False),

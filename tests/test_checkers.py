@@ -252,5 +252,125 @@ class FileMapTests(unittest.TestCase):
         self.assertEqual(file_map.audit(), [])
 
 
+class CheckDocsTests(unittest.TestCase):
+    """`check_docs` 的纯函数：生成块与手写数字比对。
+
+    **只测不读源码的那部分。** `collect()` 会跑其它检查器（它们读 `src/`），
+    而变异检查期间 `src/` 正被反复改写——那样的测试会在两小时内随机变红。
+    """
+
+    def _stats(self):
+        import check_docs
+
+        return check_docs
+
+    def test_hand_written_number_is_reported_when_stale(self) -> None:
+        docs = self._stats()
+        problems = docs.hand_written_problems(
+            "全仓 267 个常量，零孤儿", {"constants": 270}
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("267", problems[0])
+        self.assertIn("270", problems[0])
+
+    def test_hand_written_number_passes_when_current(self) -> None:
+        docs = self._stats()
+        problems = docs.hand_written_problems(
+            "全仓 270 个模块级常量，零孤儿", {"constants": 270}
+        )
+        self.assertEqual(problems, [])
+
+    def test_both_spellings_of_the_constant_count_are_checked(self) -> None:
+        """文档里同一个数字有两种写法，两种都要核。
+
+        原先它们各写一遍、各自过期（269 与 267，而实际 270）——这正是问题的
+        来源。两种写法的限定词不同（`个模块级常量` / `个常量，零孤儿`），
+        所以句式也得分两条。
+        """
+        docs = self._stats()
+        text = (
+            "第 84 行说 269 个模块级常量\n"
+            "第 152 行说 267 个常量，零孤儿\n"
+        )
+        problems = docs.hand_written_problems(text, {"constants": 270})
+        self.assertEqual(len(problems), 2, problems)
+        lines = " ".join(problems)
+        self.assertIn("第 1 行", lines)
+        self.assertIn("第 2 行", lines)
+
+    def test_a_single_modules_constant_count_is_not_the_repo_total(self) -> None:
+        """**误报的回归护栏。**
+
+        `| utils/tool-result-storage.ts | 6 个常量 + 预览的… |` 说的是**单个
+        模块**有 6 个常量，不是全仓总数。最初句式写成裸的 `(\\d+) 个常量`，
+        于是它被当成总数、报出一个假的不一致。
+
+        误报比漏报更糟：它会让人开始无视这个检查。
+        """
+        docs = self._stats()
+        self.assertEqual(
+            docs.hand_written_problems(
+                "| `utils/tool-result-storage.ts` | 6 个常量 + 预览规则 |",
+                {"constants": 270},
+            ),
+            [],
+        )
+
+    def test_unknown_stat_is_skipped_rather_than_guessed(self) -> None:
+        """取不到实测值时**跳过**，不能猜一个数字出来。"""
+        docs = self._stats()
+        text = "全仓 999 个模块级常量"
+        self.assertEqual(docs.hand_written_problems(text, {}), [])
+
+    def test_verify_passes_when_block_and_numbers_agree(self) -> None:
+        docs = self._stats()
+        block = docs.generated_block({"constants": 270}, 1594)
+        text = f"全仓 270 个模块级常量\n\n{block}\n"
+        self.assertEqual(docs.verify(text, {"constants": 270}, block), [])
+
+    def test_verify_reports_a_stale_generated_block(self) -> None:
+        """生成块过期必须报出来——它是最容易漂移的那一块。"""
+        docs = self._stats()
+        stale = docs.generated_block({"constants": 1}, 1)
+        fresh = docs.generated_block({"constants": 270}, 1594)
+        text = f"全仓 270 个模块级常量\n\n{stale}\n"
+        problems = docs.verify(text, {"constants": 270}, fresh)
+        self.assertTrue(any("生成块" in item for item in problems), problems)
+
+    def test_verify_reports_missing_markers(self) -> None:
+        docs = self._stats()
+        problems = docs.verify("没有任何标记的文档", {"constants": 270}, "x")
+        self.assertTrue(any("没有生成块" in item for item in problems), problems)
+
+    def test_verify_does_not_swallow_hand_written_problems(self) -> None:
+        """手写数字的不一致必须出现在结果里，不能被吞掉。"""
+        docs = self._stats()
+        block = docs.generated_block({"constants": 270}, 1594)
+        text = f"全仓 269 个模块级常量\n\n{block}\n"
+        problems = docs.verify(text, {"constants": 270}, block)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("269", problems[0])
+
+    def test_generated_block_is_marked(self) -> None:
+        docs = self._stats()
+        block = docs.generated_block({"constants": 270}, 1583)
+        self.assertTrue(block.startswith(docs.BEGIN))
+        self.assertTrue(block.endswith(docs.END))
+        self.assertIn("270", block)
+        self.assertIn("1583", block)
+
+    def test_generated_block_marks_missing_values(self) -> None:
+        docs = self._stats()
+        block = docs.generated_block({}, None)
+        self.assertIn("（取不到）", block)
+
+    def test_the_document_has_a_generated_block(self) -> None:
+        """文档里必须有那对标记，否则 `--write` 会无脑追加到末尾。"""
+        docs = self._stats()
+        content = (docs.REPO / "docs" / "parity.md").read_text(encoding="utf-8")
+        self.assertIn(docs.BEGIN, content)
+        self.assertIn(docs.END, content)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
