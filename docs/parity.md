@@ -33,7 +33,8 @@
 | `utils/context.ts` | 18 条输出上限规则 + 兜底值 |
 | `tools/index.ts` | 4 个注册表集合（12/13/17/6） |
 | `cli-commands.ts` | 29 个命令名 |
-| `utils/web.ts` | 逐函数 + 端点/解析器配对 |
+| `utils/web.ts` | 逐函数 + 端点/解析器配对；**错误码翻译**（9 项映射 + 四条文案分支） |
+| `utils/errors.ts` | `getErrorCode` **不需要照搬**（Python 有 `FileNotFoundError`）；`isEnoentError` 的 6 个调用点逐一核对 |
 | `compact/constants.ts` | 22 个值 + 零引用常量核实 |
 | `utils/token-estimator.ts` | warningLevel 阈值 0.95/0.85/0.50 + `CLEAR_MARKER` + `CHARS_PER_TOKEN` 9 项逐项 + 各 role 的长度取法 |
 | `compact/snipCompact.ts` | `PROTECTED_TOOL_NAMES` / `ERROR_MARKERS` / 子串保护分支 / 边界角色（15 个用例） |
@@ -61,15 +62,46 @@
 | `cli-commands.ts` | `SLASH_COMMANDS` **37 条逐条同序**；`completeSlashCommand` 的两条规则（前缀命中 / 无命中列全部） |
 | `compact/snipCompact.ts` 的边界文本 | `buildAnthropicSnipBoundaryText()` **逐字一致**（4 行，含空行） |
 | `plan/context.ts` 的注入头 | `PLAN_CONTEXT_HEADER` **5 行逐字一致** |
-| **全仓 267 个模块级常量** | `tools/check_constants.py`，零孤儿 |
-| **全仓 589 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
+| `goal/context.ts` | `GOAL_CONTEXT_LINES` **7 条逐字一致**；`formatGoal` 行结构；JSON 省略空值（`tests/test_runtime_context.py`） |
+| loop 上下文 | `LOOP_CONTEXT_LINES` **3 条逐字一致**；快照驼峰且省略 `nextRunAt` / `stopReason` |
+| **全仓 269 个模块级常量** | `tools/check_constants.py`，零孤儿 |
+| **全仓 596 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
 
 **只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
-`utils/*` 里少数工具函数的边界值 · `runtime/*` 的算法内部阈值
+`utils/*` 里少数工具函数的边界值
 
 > 注：`agents/manager.ts`、`mcp/bridge.py`、`runtime/turn-runner.ts`、
-> `runtime/session-runtime.ts`、`utils/token-estimator.ts` 已在本轮完成
-> 数据级比对，从上面的清单移出。
+> `runtime/session-runtime.ts`、`utils/token-estimator.ts`、
+> `runtime/context.py` / `goal/context.ts`、`utils/errors.ts` / `utils/web.ts`
+> 已完成数据级比对，从上面的清单移出。
+
+### 映射表本身也会漏（`utils/errors.ts` 就是）
+
+这张表靠人维护。核对 `utils/` 时才发现 **`utils/errors.ts` 从来没进过表**——
+于是那个模块的 10 个调用点一直没被逐条核过。
+
+事后看它「不需要照搬」（Node 要 `error.code === 'ENOENT'` 是因为没有
+`FileNotFoundError` 这个类，Python 有），但**这个结论是查了才得出的**，
+不是表告诉我的。
+
+于是把表变成**代码**：`tools/file_map.py` 里的 `MAPPING` 字典，跑一次就验证
+三件事——覆盖度（键集合 == TS 实际的 `.ts` 集合）、存在性（映射到的 `.py`
+真的存在）、**反向覆盖**（本实现每个 `.py` 都至少被一个 TS 文件映射到，
+或被登记成「独有」并写明理由）。
+
+当前结果：
+
+| 分类 | 数量 |
+|---|---|
+| TS 文件总数 | **77** |
+| 映射到本实现 | **67** |
+| TUI 排除（`tty-app.ts` + `tui/*` + `ui.ts` 转出桶） | **10** |
+| 未映射 | **0** |
+| 本实现独有（行模式 UI 7 个 + `__main__.py` + `stats.py`） | 9 |
+
+> **这条是补的。** 之前这里写着「77 个文件 → 68 映射 + 9 TUI，0 未映射」——
+> 数字对不上（68+9=77 却漏了 `ui.ts` 这个转出桶），而且当时**没有那张表**，
+> 那句话是不可验证的说法。现在 `tools/file_map.py` 跑一次就有结论。
 
 ### 横切契约：非法 UTF-8（D45）
 
@@ -105,7 +137,9 @@
 | `tools/e2e_compare.py` | **把两边真的跑起来比**：同一场景分别跑 TS 与 Python，diff 输出 **+ 比留下的文件与 home 状态** | 24/24 通过（5 个逐字一致） |
 | `tools/compaction_compare.py` | 四级压缩的**判定**：同一批合成对话，比利用率/级别/是否剪/是否清 | 17/17 完全一致 |
 | `tools/mcp_compare.py` | MCP 桥接：同一台服务器，比摘要/工具表/12 个调用的返回文本 | 2 种线格式全部一致 |
-| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 282 条，0 歧义 0 无效 |
+| `tools/mutation_check.py` | 测试是否真的会变红（并审计变异锚点是否有歧义） | 301 条，0 歧义 0 无效 |
+| `tools/file_map.py` | **逐文件映射**：覆盖度 / 存在性 / 反向覆盖 | 77 = 67 映射 + 10 TUI |
+| `tools/check_duplicates.py` | **同名遮蔽**：同一模块里函数/类被定义两次（前面那个是死代码） | 76 模块，零遮蔽 |
 
 **「伪引用」那一类是这套检查的主要价值**：常量只在注释或 docstring 里被
 提到时，扫一眼会觉得「有引用」，而实际没有任何代码读它。我自己就被骗过一次

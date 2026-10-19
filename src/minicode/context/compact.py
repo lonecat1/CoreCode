@@ -333,11 +333,6 @@ def compact_conversation(
     )
 
 
-def should_auto_compact(messages: list[ChatMessage], model: str) -> bool:
-    stats = compute_context_stats(messages, model)
-    return stats.utilization >= AUTOCOMPACT_UTILIZATION
-
-
 def debug_auto_compact(message: str) -> None:
     """`MINI_CODE_DEBUG_AUTOCOMPACT=1` 时往 **stderr** 打一行调试信息。
 
