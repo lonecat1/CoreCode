@@ -492,7 +492,18 @@ def load_runtime_config(settings_path: Path | None = None) -> RuntimeConfig:
         max_output_tokens=max_output_tokens,
         mcp_servers=load_mcp_servers(cwd=os.getcwd(), settings=settings),
         thinking=thinking,
-        source_summary=f"settings: {settings_path or _settings_path()} > process.env",
+        # 与原版 `config.ts:249` **逐字一致**：
+        #
+        #     `config: ${MINI_CODE_SETTINGS_PATH} > ${CLAUDE_SETTINGS_PATH} > process.env`
+        #
+        # 三段的顺序就是**实际查找顺序**，用户据此判断「我改了为什么不生效」。
+        # 早先这里写的是 `settings: … > process.env`——少了 Claude 回退那一段，
+        # 于是最常见的一种困惑（配置其实来自 Claude 的 settings.json）在
+        # `/status` 里看不出来。
+        source_summary=(
+            f"config: {settings_path or _settings_path()} > "
+            f"{claude_settings_path()} > process.env"
+        ),
     )
 
 

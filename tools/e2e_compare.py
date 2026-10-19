@@ -42,6 +42,9 @@ PY_ROOT = Path(r"D:\CoreCode\minicode-py")
 #: `tsx` 的入口。用 `node_modules\.bin\tsx.cmd` 而不是 `npx`：
 #: Windows 上 `npx` 只有 `.ps1` 包装，`subprocess` 直接调用找不到。
 TSX = str(TS_ROOT / "node_modules" / ".bin" / "tsx.cmd")
+#: `tsx` 的 **mjs 入口**。用 `node <cli.mjs> <script.ts>` 而不是 `.cmd` 包装，
+#: 因为 Windows 上把 `.cmd` 与 `cwd=工作区` 一起用会因路径解析失败。
+TSX_CLI = TS_ROOT / "node_modules" / "tsx" / "dist" / "cli.mjs"
 
 
 def normalize(text: str, ts_home: str, py_home: str) -> str:
@@ -60,26 +63,54 @@ def normalize(text: str, ts_home: str, py_home: str) -> str:
     out = re.sub(r"\d+ 次工具调用", "<N> 次工具调用", out)
     # 4) ANSI 颜色（两边的着色实现不同，但都属于「装饰」）
     out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", out)
+    # 5) 行模式 REPL 的**提示符与提示行**
+    #
+    # 这是**已登记的有意差异**（横幅那条场景的 INTENTIONAL 里有）：原版的
+    # readline 什么提示都不打，本实现打 `› ` 提示符与一行 `输入 /help …`。
+    #
+    # 它属于「外壳」，不属于任何命令的输出。不抹掉的话，每条命令场景都会因为
+    # 这层外壳而无法逐字比较——而真正要看的就是命令输出本身。
+    out = re.sub(r"(?m)^输入 /help[^\n]*\n", "", out)
+    out = re.sub(r"(?m)^› ?", "", out)
     return out
 
 
-def run_ts(args: list[str], cwd: str, home: str, stdin: str | None = None) -> str:
+def run_ts(
+    args: list[str], cwd: str, home: str, stdin: str | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> str:
     # 用**原版拼写** `MINI_CODE_HOME`：两边都认它，隔离才有效。
     # （最初这里写的是 `MINICODE_HOME`，TS 不认，于是它读写真实 home——
     #  diff 里出现的 `C:\Users\...\.mini-code\mcp.json` 就是这么来的。）
-    env = {**os.environ, "MINI_CODE_HOME": home, "NO_COLOR": "1", "FORCE_COLOR": "0"}
+    env = {
+        **os.environ, **(extra_env or {}),
+        "MINI_CODE_HOME": home, "NO_COLOR": "1", "FORCE_COLOR": "0",
+    }
+    # ## `cwd` 必须真的传给 TS
+    #
+    # 原版**没有** `--cwd` 参数，它直接用 `process.cwd()`（`index.ts:37`）。
+    # 所以这里把子进程的 `cwd` 设成场景工作区，并用**绝对路径**调 tsx 与
+    # `src/index.ts`——Node 从**脚本位置**解析 `node_modules`，不看 cwd。
+    #
+    # 早先这个参数被收下却**从未使用**，于是每条场景的 TS 都在仓库目录下跑：
+    # `/memory` 看不到工作区里的 `MINI.md`、`/permissions` 报的 `cwd` 是仓库
+    # 路径。之前所有场景都是 `py_only`（不比 TS），这个 bug 一直没露出来。
     proc = subprocess.run(
-        [TSX, "src/index.ts", *args],
-        cwd=str(TS_ROOT), capture_output=True, text=True,
+        ["node", str(TSX_CLI), str(TS_ROOT / "src" / "index.ts"), *args],
+        cwd=str(cwd), capture_output=True, text=True,
         encoding="utf-8", errors="replace", env=env, timeout=180, shell=True,
         input=stdin if stdin is not None else "",
     )
     return proc.stdout + proc.stderr
 
 
-def run_py(args: list[str], cwd: str, home: str, stdin: str | None = None) -> str:
+def run_py(
+    args: list[str], cwd: str, home: str, stdin: str | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> str:
     env = {
         **os.environ,
+        **(extra_env or {}),
         "MINI_CODE_HOME": home,
         "PYTHONPATH": str(PY_ROOT / "src"),
         "PYTHONIOENCODING": "utf-8",
@@ -117,6 +148,17 @@ SCENARIOS: list[tuple[str, list[str], str | None, str]] = [
     ("REPL: /help", [], "/help\n/exit\n", "intentional"),
     ("REPL: /tools", [], "/tools\n/exit\n", "intentional"),
     ("REPL: 普通问答（mock）", [], "你好\n/exit\n", "intentional"),
+    # ---- 诊断类命令：**输出形状必须逐字一致** ----
+    #
+    # 这四条命令的价值全在「用户能读懂、脚本能 grep」上。形状走样（表格换成
+    # 扁平行、少了冒号、少了字段）不影响程序运行，却让人以为信息丢了。
+    #
+    # 两边的路径都落在临时目录或 home 下，`normalize()` 会抹成 `<TMP>` /
+    # `<HOME>`，所以可以直接比。
+    ("诊断: /status", [], "/status\n/exit\n", "prefix"),
+    ("诊断: /config-paths", [], "/config-paths\n/exit\n", "identical"),
+    ("诊断: /permissions", [], "/permissions\n/exit\n", "identical"),
+    ("诊断: /memory", [], "/memory\n/exit\n", "identical"),
     # ---- 本地工具快捷方式：**原版只在 TUI 里接** ----
     #
     # `index.ts`（普通 readline 路径）**完全不** import `parseLocalToolShortcut`，
@@ -150,6 +192,35 @@ SCENARIOS: list[tuple[str, list[str], str | None, str]] = [
     ("权限: 本回合内允许（选 2）", [], "/edit a.txt::alpha::BETA\n2\n/exit\n", "py_only"),
     ("权限: 始终允许但文件未命中", [], "/edit a.txt::nope::x\n4\n/exit\n", "py_only"),
 ]
+
+#: 场景专属的工作区补充文件：`标签 -> {相对路径: 内容}`。
+#:
+#: `make_workspace()` 造的是**所有场景共用**的那份初始文件（`a.txt` 等）。
+#: 往它里面加东西会改变 `/ls` `/read` 等已有场景的期望，所以额外内容按场景给。
+#:
+#: 需要它的理由：`/memory` 在空工作区下两边都回「没有发现任何指令文件」——
+#: 那就只验证了空分支，形态差异（字段、行数、`preview`）全都没被碰到。这正是
+#: 压缩层踩过的坑：「全绿但什么都没验证」。
+EXTRA_FILES: dict[str, dict[str, str]] = {
+    "诊断: /memory": {
+        "MINI.md": "# 项目说明\n\n这是一个用于对照测试的项目。\n",
+        "sub/CLAUDE.md": "子目录里的补充规则。\n",
+    },
+}
+
+#: 场景专属的环境变量：`标签 -> {变量: 值}`。
+#:
+#: `/status` 需要它。原版在没有凭据时**根本不打那五行**，而是打一句
+#:
+#:     No auth configured. Set ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY …
+#:
+#: 也就是说「五行的形状」只在**已配置**的状态下可见。不给两边塞同一个假 token，
+#: 这条场景比的就不是 `/status` 的输出，而是「谁先发现没凭据」。
+#:
+#: 假 token 不会触发网络请求：`/status` 只是读配置，不跑回合。
+EXTRA_ENV: dict[str, dict[str, str]] = {
+    "诊断: /status": {"ANTHROPIC_AUTH_TOKEN": "test-token-not-used"},
+}
 
 #: `py_only` 场景**期望的文件结果**：`相对路径 -> 内容`。
 #:
@@ -297,7 +368,7 @@ def box_lines(text: str) -> list[str]:
     return [line for line in text.splitlines() if line[:1] in ("╭", "│", "╰")]
 
 
-def make_workspace(base: Path) -> Path:
+def make_workspace(base: Path, extra: dict[str, str] | None = None) -> Path:
     """造一份**独立的**工作目录。
 
     必须独立，而且要**两侧各一份**：`/write` `/edit` `/patch` 会真的改文件。
@@ -310,6 +381,11 @@ def make_workspace(base: Path) -> Path:
     (workspace / "b.txt").write_text("world\n", encoding="utf-8")
     (workspace / "sub").mkdir(exist_ok=True)
     (workspace / "sub" / "c.txt").write_text("nested\n", encoding="utf-8")
+    # 场景专属的额外文件（见 EXTRA_FILES）。放在最后，覆盖得掉上面的初始内容。
+    for relative, content in (extra or {}).items():
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
     return workspace
 
 
@@ -362,11 +438,14 @@ def main() -> int:
             # 直接放行——断言就变成「上一个场景干得好不好」。
             py_case_home = base / f"py-home-{slug}"
             py_case_home.mkdir(parents=True, exist_ok=True)
-            py_ws = make_workspace(base / f"py-ws-{slug}")
+            py_ws = make_workspace(base / f"py-ws-{slug}", EXTRA_FILES.get(label))
             # 权限类场景**不能**加 `--yes`：那会把提示替换成「全部放行」，
             # 测不到「选 4 写了什么规则」。它们靠 stdin 里的答复推进。
             extra = [] if label in NO_AUTO_APPROVE else list(PY_ONLY_ARGS)
-            py_out = run_py([*args, *extra], str(py_ws), str(py_case_home), stdin)
+            py_out = run_py(
+                [*args, *extra], str(py_ws), str(py_case_home), stdin,
+                EXTRA_ENV.get(label),
+            )
             expected = EXPECTED_FILES.get(label)
             actual = snapshot_tree(py_ws)
             if expected is None:
@@ -374,7 +453,9 @@ def main() -> int:
                 print(f"FAIL  {label}  （没写期望的文件结果）")
                 continue
             # 期望里没列的文件，必须保持出厂内容。
-            baseline = snapshot_tree(make_workspace(base / f"base-{slug}"))
+            baseline = snapshot_tree(
+                make_workspace(base / f"base-{slug}", EXTRA_FILES.get(label))
+            )
             want = {**baseline, **expected}
             problems: list[str] = []
             if actual != want:
@@ -402,10 +483,12 @@ def main() -> int:
                 print(f"OK    {label}  （py_only：文件结果符合期望{suffix}）")
             continue
 
-        ts_ws = make_workspace(base / f"ts-ws-{slug}")
-        py_ws = make_workspace(base / f"py-ws-{slug}")
-        ts_out = run_ts(args, str(ts_ws), ts_home, stdin)
-        py_out = run_py(args, str(py_ws), py_home, stdin)
+        extra = EXTRA_FILES.get(label)
+        ts_ws = make_workspace(base / f"ts-ws-{slug}", extra)
+        py_ws = make_workspace(base / f"py-ws-{slug}", extra)
+        scene_env = EXTRA_ENV.get(label)
+        ts_out = run_ts(args, str(ts_ws), ts_home, stdin, scene_env)
+        py_out = run_py(args, str(py_ws), py_home, stdin, scene_env)
 
         # **行为断言：两侧留下的文件必须完全一样。**
         #
@@ -433,7 +516,28 @@ def main() -> int:
             ts_cmp, py_cmp = ts_norm.strip(), py_norm.strip()
         same = ts_cmp == py_cmp
 
-        if expectation in ("identical", "banner_only"):
+        if expectation == "prefix":
+            # 本实现的输出**以原版输出开头**，之后可以有追加内容。
+            #
+            # 用在 `/status`：原版五行必须逐字一致（那是脚本会 grep 的部分），
+            # 本实现随后追加会话/上下文/Goal/Loop 等诊断信息——加法，不是替换。
+            # 用 `identical` 会把那些追加当成失败，用 `intentional` 又会丢掉
+            # 「五行逐字一致」这个真正要守的东西。
+            strictly_total += 1
+            if py_cmp.startswith(ts_cmp):
+                strictly_ok += 1
+                extra = len(py_cmp) - len(ts_cmp)
+                print(f"OK    {label}  （原版输出是前缀，另有 {extra} 字符追加）")
+            else:
+                failures.append(label)
+                print(f"FAIL  {label}  （原版输出**不是**前缀）")
+                import difflib
+                diff = list(difflib.unified_diff(
+                    ts_cmp.splitlines(), py_cmp.splitlines(), "TS", "PY", lineterm=""
+                ))
+                for line in diff[:20]:
+                    print(f"        {line}")
+        elif expectation in ("identical", "banner_only"):
             strictly_total += 1
             if same:
                 strictly_ok += 1

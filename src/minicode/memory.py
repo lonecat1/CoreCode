@@ -69,9 +69,21 @@ class MemoryFile:
 
 
 def _read_if_present(path: Path) -> str | None:
+    """读一个指令文件；不存在或全空白时返回 None。
+
+    ## `newline=""` 是必须的
+
+    默认的通用换行会把 `\\r\\n` 折成 `\\n`，而原版是
+    `readFile(path, 'utf8')`——Node **不做**换行归一化。差一个字符看着无害，
+    但 `/memory` 会显示 `chars:`，它必须与原版的数一致；更实际的是 `\\r` 会
+    跟着内容进系统提示，两边读到的字节不同就谈不上「逐字一致」。
+
+    （同一条规则在 D34 里已经写过：文本模式要保持字节保真就得 `newline=""`。）
+    """
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except (OSError, UnicodeDecodeError):
+        with open(path, encoding="utf-8", errors="replace", newline="") as handle:
+            text = handle.read()
+    except OSError:
         return None
     return text if text.strip() else None
 
@@ -97,7 +109,15 @@ def _resolve_includes(
     **原因说错了**（那不是环，是重复引用），而且**内容静默缺失**。
     """
     lines: list[str] = []
-    for raw in content.splitlines():
+    # **`split("\n")` / `join("\n")`，不是 `splitlines()`。**
+    #
+    # 原版是 `content.split('\n')`（`memory.ts` 的 `resolveIncludes`）。两者的
+    # 差别在**文件末尾的换行**：`"a\n".split('\n')` 得到 `['a', '']`，
+    # 再 `join('\n')` 还原成 `"a\n"`；而 `"a\n".splitlines()` 得到 `['a']`，
+    # join 回去变成 `"a"`——**末尾换行被吃掉了**。
+    #
+    # 影响两处：`/memory` 的 `chars:` 少 1，以及拼进系统提示的内容少一个换行。
+    for raw in content.split("\n"):
         stripped = raw.strip()
         # 见上面 ①：`\S` 而不是「不含字面空格」。
         match = _INCLUDE_LINE_RE.fullmatch(stripped)
@@ -277,32 +297,67 @@ def load_memory(cwd: str, home: Path | None = None) -> str:
 
 
 def describe_memory_files(cwd: str, home: Path | None = None) -> list[dict[str, object]]:
-    """给 `/memory` 用的概要。"""
+    """给 `/memory` 用的概要，**逐字段**对应原版 `describeMemoryFiles()`。
+
+    ## 三个字段的口径很容易写错
+
+    | 字段 | 原版 | 注意 |
+    |---|---|---|
+    | `lines` | `trimmed ? trimmed.split('\\n').length : 0` | **先 trim 再数**——首尾空行不计 |
+    | `chars` | `file.content.length` | **不 trim**，原文长度 |
+    | `preview` | `trimmed.split('\\n')[0] \\|\\| '<empty>'` | trim 后的第一行 |
+
+    `lines` 与 `chars` 的口径不同不是笔误：**行数**回答「这个文件有多少内容要
+    读」，首尾空行没有意义；**字符数**回答「它占多少预算」，必须按原文算。
+    """
     result: list[dict[str, object]] = []
     for item in discover_memory_files(cwd, home):
         try:
             relative = os.path.relpath(item.path, cwd)
         except ValueError:
             relative = item.path
+        trimmed = item.content.strip()
         result.append(
             {
                 "path": relative,
                 "scope": item.scope,
-                "lines": len(item.content.splitlines()),
+                "lines": len(trimmed.split("\n")) if trimmed else 0,
                 "chars": len(item.content),
+                "preview": (trimmed.split("\n")[0] if trimmed else "") or "<empty>",
             }
         )
     return result
 
 
 def render_memory_report(cwd: str, home: Path | None = None) -> str:
+    """`/memory` 的报告，形状照抄原版 `renderMemoryReport()`。
+
+    原版的骨架是：抬头一行 + 空行 + 每个文件**五行**（路径 + 缩进三格的四个
+    字段），块之间用空行分隔（`join('\\n\\n')`）。
+
+    `preview` 那一行不是可有可无的装饰：列表里可能有五六个文件，光看路径
+    分不清哪个是「项目约定」、哪个是「个人习惯」，一行摘要就够了。
+    """
     entries = describe_memory_files(cwd, home)
     if not entries:
-        return "没有发现任何指令文件（MINI.md / CLAUDE.md / .mini-code/rules/*.md）。"
-    lines = [f"已加载 {len(entries)} 个指令文件："]
-    for entry in entries:
-        lines.append(
-            f"  [{entry['scope']}] {entry['path']}  "
-            f"{entry['lines']} 行 / {entry['chars']} 字符"
+        return "No memory files loaded."
+    # **逐字复刻原版的数组构造**：
+    #
+    #     [`Memory files loaded: ${n}`, '', ...infos.map(...)].join('\n\n')
+    #
+    # 那个 `''` 元素不是装饰——`join('\n\n')` 会在它两侧各加一对换行，于是抬头
+    # 与第一个文件之间**隔得比文件之间更宽**。少了它，排版就和原版不一样。
+    parts: list[str] = [f"Memory files loaded: {len(entries)}", ""]
+    for index, entry in enumerate(entries, 1):
+        parts.append(
+            "\n".join(
+                [
+                    f"{index}. {entry['path']}",
+                    f"   scope: {entry['scope']}",
+                    f"   lines: {entry['lines']}",
+                    f"   chars: {entry['chars']}",
+                    f"   preview: {entry['preview']}",
+                ]
+            )
         )
-    return "\n".join(lines)
+    return "\n\n".join(parts)

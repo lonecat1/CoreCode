@@ -271,12 +271,51 @@ class ConfigPathsCommandTests(unittest.TestCase):
         finally:
             shutil.rmtree(deep, ignore_errors=True)
 
-    def test_each_line_fits_the_width(self) -> None:
+    def test_paths_are_never_wrapped_or_truncated(self) -> None:
+        """**长路径就该占满一行，不折行也不截断。**
+
+        这条断言曾经是反的（「每行不超过 80 列」）——那时 `/config-paths` 走
+        表格渲染，超宽会折行。现在四行与原版**逐字一致**：原版直接
+        `join('\\n')` 四行 `label: value`，路径多长就多长。
+
+        为什么这是对的：这条命令的**全部意义**是让用户看到完整路径去复制。
+        折行会把路径劈成两段（复制时要手工接回去），截断则直接毁掉它。
+        """
+        from minicode.config import settings_path
         from minicode.ui.width import string_display_width
 
         output = self._run("/config-paths") or ""
-        for line in output.splitlines():
-            self.assertLessEqual(string_display_width(line), 80, line)
+        expected = str(settings_path())
+        if string_display_width(f"mini-code settings: {expected}") <= 80:
+            self.skipTest("这台机器上的路径不够长，测不出「不折行」")
+
+        # 完整路径必须出现在**同一行**上
+        self.assertTrue(
+            any(line.endswith(expected) for line in output.splitlines()),
+            f"路径被折行或截断了：\n{output}",
+        )
+        self.assertNotIn("...", output, "不该出现截断省略号")
+
+    def test_output_is_four_flat_label_value_lines(self) -> None:
+        """形状是**四行 `label: value`**，没有标题、没有分隔线、没有表格对齐。
+
+        脚本会 `grep 'mini-code mcp'` 找配置在哪，形状一变就 grep 不到。
+        """
+        output = self._run("/config-paths") or ""
+        labelled = [
+            line for line in output.splitlines()
+            if line.startswith(
+                ("mini-code settings:", "mini-code permissions:",
+                 "mini-code mcp:", "compat fallback:")
+            )
+        ]
+        self.assertEqual(len(labelled), 4, output)
+        for line in labelled:
+            with self.subTest(line=line[:40]):
+                self.assertIn(": ", line, "必须是 `label: value` 形状")
+        # 不该有表格化的痕迹（标题行、分隔线）
+        self.assertNotIn("配置路径", output)
+        self.assertNotIn("───", output)
 
 
 class ModelCommandTests(unittest.TestCase):

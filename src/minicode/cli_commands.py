@@ -303,19 +303,52 @@ def _render_tools(host: "SessionHost") -> str:
 
 
 def _render_status(host: "SessionHost") -> str:
+    """`/status`：原版五行**逐字**在前，本实现的补充在后。
+
+    ## 为什么要把原版那五行放在最前
+
+    原版输出是五行扁平的 `label: value`：
+
+        model: claude-sonnet-4
+        baseUrl: https://api.anthropic.com
+        auth: ANTHROPIC_API_KEY
+        mcp servers: 0
+        config: …/settings.json > …/.claude/settings.json > process.env
+
+    这三样东西是**可被脚本读取**的：`minicode <<< /status | grep '^model:'` 是
+    用户真实会做的事。把它换成中文表格（`模型  …`）会让这类用法直接失效。
+
+    所以五行原样保留在**输出开头**，本实现多出来的信息（会话、上下文利用率、
+    Goal、Loop、子 Agent、本会话统计）放在分隔线**之后**——加法，不是替换。
+    """
     from .context.tokens import compute_context_stats
     from .ui import render_key_value, render_separator, render_status_line
 
-    model_name = host.runtime_config.model if host.runtime_config else "（离线 mock）"
+    config = host.runtime_config
+    # 原版五行（`cli-commands.ts:274-283`），逐字照抄。
+    #
+    # 离线 mock 那一路原版**没有**（它会在启动时报「No auth configured」直接
+    # 退出），所以 `(offline mock)` 是本实现自有的占位，不影响对等。
+    original = [
+        f"model: {config.model if config else '(offline mock)'}",
+        f"baseUrl: {config.base_url if config else '(offline mock)'}",
+        "auth: " + (
+            "ANTHROPIC_AUTH_TOKEN"
+            if config and config.auth_token
+            else "ANTHROPIC_API_KEY"
+        ),
+        f"mcp servers: {len(config.mcp_servers) if config else 0}",
+        config.source_summary if config else "config: (offline mock)",
+    ]
+
     rows: list[tuple[str, str]] = [
-        ("模型", model_name),
         ("会话", host.session_id),
         ("目录", host.cwd),
         ("消息", f"{len(host.messages)} 条（已落盘游标 {host.already_saved_count}）"),
     ]
 
-    if host.runtime_config:
-        stats = compute_context_stats(host.messages, host.runtime_config.model)
+    if config:
+        stats = compute_context_stats(host.messages, config.model)
         rows.append(
             (
                 "上下文",
@@ -355,6 +388,7 @@ def _render_status(host: "SessionHost") -> str:
 
     return "\n".join(
         [
+            *original,
             render_status_line(label="会话状态"),
             render_separator(),
             render_key_value(rows),
@@ -475,6 +509,30 @@ def _render_mcp(host: "SessionHost") -> str:
 
 
 def _render_permissions(host: "SessionHost") -> str:
+    """`/permissions`：原版四行**逐字**。
+
+    ## 原版的形状
+
+    `cli-commands.ts` 的 `formatPermissionSummary()` 从一串 `label: value`
+    里取值，拼成四行：
+
+        permission store: {path}
+        cwd: {workspace_root}
+        extra allowed dirs: {…|none}
+        dangerous allowlist: {…|none}
+
+    ## 为什么不用表格
+
+    `get_summary()` 产出的就是这串 `label: value`（系统提示用的也是它）。
+    之前渲染时把它塞进对齐表格，于是：
+
+    - 少了 `permission store:` 这个**路径**（最容易出问题的一项——用户要先找到
+      文件才谈得上改规则）；
+    - 标签变成中文、没有冒号，脚本 grep 不到。
+
+    现在四行原样输出；本实现多出的 `trusted edit targets`（若有）附在末尾——
+    那是原版没有的一类规则（D17），不显示就等于让人以为它不存在。
+    """
     # **用动态访问器，不用导入期快照。**
     #
     # 这里此前用的是 `permissions.PERMISSIONS_PATH`——一个**导入期**求值的
@@ -482,32 +540,43 @@ def _render_permissions(host: "SessionHost") -> str:
     # 位置，于是 `/permissions` 显示的是一个**并不生效**的路径。
     #
     # 与 `/config-paths` 保持一致：那条命令一直用的是动态访问器。
-    # 同一份信息在两处用不同口径取，迟早会给出互相矛盾的结果——而用户会先
-    # 看到路径、再去那个文件里找自己的规则，找不到就以为规则丢了。
     from .permissions import permissions_path
-    from .ui import render_key_value, render_separator, render_status_line
 
-    rows: list[tuple[str, str]] = [("存储", str(permissions_path()))]
     summary = host.permissions.get_summary()
-    if summary:
-        rows.extend((f"规则 {index}", str(item)) for index, item in enumerate(summary, 1))
-    else:
-        rows.append(("规则", "（无）"))
-    return "\n".join(
-        [
-            render_status_line(label="权限"),
-            render_separator(),
-            render_key_value(rows),
-        ]
-    )
+
+    def value_of(label: str) -> str:
+        """原版 `findValue`：找 `label: ` 开头那条，取后面并 trim，缺省 `none`。"""
+        prefix = f"{label}: "
+        for part in summary:
+            if part.startswith(prefix):
+                return part[len(prefix):].strip() or "none"
+        return "none"
+
+    lines = [
+        f"permission store: {permissions_path()}",
+        f"cwd: {value_of('cwd')}",
+        f"extra allowed dirs: {value_of('extra allowed dirs')}",
+        f"dangerous allowlist: {value_of('dangerous allowlist')}",
+    ]
+    # 本实现多出的一类规则（D17）：不显示等于让人以为它不存在。
+    trusted = value_of("trusted edit targets")
+    if trusted != "none":
+        lines.append(f"trusted edit targets: {trusted}")
+    return "\n".join(lines)
 
 
 def _render_config_paths() -> str:
     """显示全部配置文件路径，对应原版 `cli-commands.ts:224-231`。
 
-    原版输出四行，其中最后一行是 **Claude Code 的兼容回退路径**。那一项不是
-    装饰：配置加载确实会读它（见 `config.load_effective_settings`），把它显示
-    出来用户才知道「为什么我没配却能跑」或「为什么改了不生效」。
+    **逐字照抄原版**的四行 `label: value`——不加标题、不加分隔线、不做表格
+    对齐。理由有两条：
+
+    1. 这四条路径的意义就是让人**复制**去改，任何截断或折行都会毁掉它；
+    2. 用户会 `grep 'mini-code mcp'` 来找配置在哪。形状一变就 grep 不到。
+
+    最后一行是 **Claude Code 的兼容回退路径**。那一项不是装饰：配置加载确实
+    会读它（见 `config.load_effective_settings`），把它显示出来用户才知道
+    「为什么我没配却能跑」或「为什么改了不生效」。
     """
     from .config import (
         claude_settings_path,
@@ -515,21 +584,13 @@ def _render_config_paths() -> str:
         permissions_path,
         settings_path,
     )
-    from .ui import render_key_value, render_separator, render_status_line
 
-    rows = [
-        ("mini-code settings", str(settings_path())),
-        ("mini-code permissions", str(permissions_path())),
-        ("mini-code mcp", str(mcp_path())),
-        ("compat fallback", str(claude_settings_path())),
-    ]
     return "\n".join(
         [
-            render_status_line(label="配置路径"),
-            render_separator(),
-            # `wrap_values=True`：这条命令的全部意义是让用户看到**完整**路径
-            # 去复制，截断会让它彻底没用。
-            render_key_value(rows, wrap_values=True),
+            f"mini-code settings: {settings_path()}",
+            f"mini-code permissions: {permissions_path()}",
+            f"mini-code mcp: {mcp_path()}",
+            f"compat fallback: {claude_settings_path()}",
         ]
     )
 

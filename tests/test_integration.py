@@ -138,7 +138,11 @@ class CliWiringTests(IntegrationTestCase):
     def test_status_reports_real_state(self) -> None:
         code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/status"])
         self.assertEqual(code, 0)
-        self.assertIn("离线 mock", output)
+        # 原版那五行逐字在前（`model:` 这一行可被脚本 grep）
+        self.assertIn("model: (offline mock)", output)
+        self.assertIn("baseUrl: (offline mock)", output)
+        self.assertIn("mcp servers: 0", output)
+        # 本实现的补充在分隔线之后
         self.assertIn("子 Agent", output)
 
     def test_local_commands_are_not_sent_to_the_model(self) -> None:
@@ -553,7 +557,7 @@ class Utf8OutputTests(IntegrationTestCase):
             env={**os.environ, "PYTHONPATH": os.path.join(os.path.dirname(_HERE), "src")},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("离线 mock", result.stdout)
+        self.assertIn("model: (offline mock)", result.stdout)
 
     def test_all_tools_share_the_same_helper(self) -> None:
         """三个开发工具都必须接入，否则工具输出仍然乱码。"""

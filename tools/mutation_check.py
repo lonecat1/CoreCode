@@ -795,7 +795,7 @@ MUTATIONS = [
     (
         "配置路径: 不显示 Claude 兼容回退（用户不知道配置从哪来）",
         CLI_COMMANDS,
-        '        ("compat fallback", str(claude_settings_path())),\n',
+        '            f"compat fallback: {claude_settings_path()}",\n',
         "",
     ),
     (
@@ -2285,6 +2285,138 @@ _CHECKER_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_CHECKER_MUTATIONS]
+
+
+#: 四条诊断命令的输出形状（`tests/test_command_output.py`）。
+#:
+#: 形状走样不影响任何程序运行，所以普通测试不会发现——但用户会以为信息丢了，
+#: 脚本也 grep 不到。每一条形状约束都要有测试盯着。
+_DIAGNOSTIC_SHAPE_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "形状: /config-paths 退成表格（带标题与分隔线）",
+        CLI_COMMANDS,
+        '    return "\\n".join(\n        [\n            f"mini-code settings: {settings_path()}",',
+        '    from .ui import render_separator, render_status_line\n'
+        '    return "\\n".join(\n        [\n            render_status_line(label="配置路径"),\n'
+        '            render_separator(),\n'
+        '            f"mini-code settings: {settings_path()}",',
+    ),
+    (
+        "形状: /config-paths 少一行（丢掉 permissions）",
+        CLI_COMMANDS,
+        '            f"mini-code permissions: {permissions_path()}",\n',
+        "",
+    ),
+    (
+        "形状: /config-paths 用缩进表格而不是 label: value",
+        CLI_COMMANDS,
+        '            f"mini-code settings: {settings_path()}",',
+        '            f"  mini-code settings   {settings_path()}",',
+    ),
+    (
+        "形状: /status 不再输出原版五行",
+        CLI_COMMANDS,
+        "    original = [\n"
+        '        f"model: {config.model if config else \'(offline mock)\'}",',
+        "    original = [\n"
+        '        f"模型: {config.model if config else \'(offline mock)\'}",',
+    ),
+    (
+        "形状: /status 的 auth 行恒为 API_KEY",
+        CLI_COMMANDS,
+        '            "ANTHROPIC_AUTH_TOKEN"\n'
+        "            if config and config.auth_token\n"
+        '            else "ANTHROPIC_API_KEY"',
+        '            "ANTHROPIC_API_KEY"',
+    ),
+    (
+        "形状: /status 的 mcp servers 计数写死 0",
+        CLI_COMMANDS,
+        '        f"mcp servers: {len(config.mcp_servers) if config else 0}",',
+        '        f"mcp servers: 0",',
+    ),
+    (
+        "形状: /permissions 少了 permission store 那行",
+        CLI_COMMANDS,
+        '        f"permission store: {permissions_path()}",\n',
+        "",
+    ),
+    (
+        "形状: /permissions 不再解析 summary（全部 none）",
+        CLI_COMMANDS,
+        "        for part in summary:\n"
+        "            if part.startswith(prefix):\n"
+        "                return part[len(prefix):].strip() or \"none\"",
+        "        for part in []:\n"
+        "            if part.startswith(prefix):\n"
+        "                return part[len(prefix):].strip() or \"none\"",
+    ),
+    (
+        "形状: /memory 去掉 preview 字段",
+        MEMORY,
+        '                    f"   preview: {entry[\'preview\']}",\n',
+        "",
+    ),
+    (
+        "形状: /memory 的 lines 不再先 trim",
+        MEMORY,
+        "        trimmed = item.content.strip()\n"
+        "        result.append(\n"
+        "            {\n"
+        '                "path": relative,\n'
+        '                "scope": item.scope,\n'
+        '                "lines": len(trimmed.split("\\n")) if trimmed else 0,',
+        "        trimmed = item.content.strip()\n"
+        "        result.append(\n"
+        "            {\n"
+        '                "path": relative,\n'
+        '                "scope": item.scope,\n'
+        '                "lines": len(item.content.split("\\n")),',
+    ),
+    (
+        "形状: /memory 的 chars 写成 trim 后的长度",
+        MEMORY,
+        '                "chars": len(item.content),',
+        '                "chars": len(item.content.strip()),',
+    ),
+    (
+        # 早先这里写的是「预览不再回退到 `<empty>`」——那条**无法被杀死**，
+        # 因为该回退分支在原版与本实现里**都不可达**（内容 trim 后非空，第一行
+        # 就不可能是空；全空白的文件在读入阶段已被判为不存在）。留一条永远存活
+        # 的变异会污染「0 存活」这个信号，所以换成一条真正可观测的。
+        "形状: /memory 的预览取最后一行而不是第一行",
+        MEMORY,
+        '                "preview": (trimmed.split("\\n")[0] if trimmed else "") or "<empty>",',
+        '                "preview": (trimmed.split("\\n")[-1] if trimmed else "") or "<empty>",',
+    ),
+    (
+        "读取: 指令文件不用 newline=\"\"（CRLF 被折成 LF，chars 变少）",
+        MEMORY,
+        '        with open(path, encoding="utf-8", errors="replace", newline="") as handle:',
+        '        with open(path, encoding="utf-8", errors="replace") as handle:',
+    ),
+    (
+        "读取: 用 splitlines 而不是 split(\"\\n\")（吃掉尾部换行）",
+        MEMORY,
+        '    for raw in content.split("\\n"):',
+        "    for raw in content.splitlines():",
+    ),
+    (
+        "形状: /memory 抬头与条目之间少一层空行",
+        MEMORY,
+        '    parts: list[str] = [f"Memory files loaded: {len(entries)}", ""]',
+        '    parts: list[str] = [f"Memory files loaded: {len(entries)}"]',
+    ),
+    (
+        "形状: 来源摘要缺 Claude 回退那一段",
+        CONFIG,
+        '            f"config: {settings_path or _settings_path()} > "\n'
+        '            f"{claude_settings_path()} > process.env"',
+        '            f"config: {settings_path or _settings_path()} > process.env"',
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_DIAGNOSTIC_SHAPE_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。

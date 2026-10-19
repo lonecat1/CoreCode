@@ -761,6 +761,22 @@ def _run_tool_shortcut(host: SessionHost, line: str, ui: "ConsoleUI") -> bool:
     return True
 
 
+def _write_command_output(ui: "ConsoleUI", text: str) -> None:
+    """本地命令的输出排版：**前后各一个空行**。
+
+    对应原版 `index.ts:220`：
+
+        console.log(`\\n${runtimeReply}\\n`)
+
+    那一对空行不是为了好看——它把命令输出与上一条输入/回答隔开，否则连续敲
+    几条命令时输出会糊成一片。少了前置空行，第一条命令的输出会紧贴启动横幅
+    的底边（这正是逐字对照第一次失败的原因：TS 两行空、本实现一行）。
+    """
+    ui.blank()
+    ui.write(text)
+    ui.blank()
+
+
 def _dispatch(host: SessionHost, line: str, ui: "ConsoleUI") -> None:
     """一条输入的分派顺序。
 
@@ -774,14 +790,12 @@ def _dispatch(host: SessionHost, line: str, ui: "ConsoleUI") -> None:
     """
     reply = host.runtime.command(line)
     if reply is not None:
-        ui.write(reply)
-        ui.blank()
+        _write_command_output(ui, reply)
         return
 
     local = handle_local_command(host, line)
     if local is not None:
-        ui.write(local)
-        ui.blank()
+        _write_command_output(ui, local)
         return
 
     if _run_tool_shortcut(host, line, ui):
