@@ -925,8 +925,9 @@ MUTATIONS = [
     (
         "web: 超时不再算可重试的网络错误",
         WEB_UTILS,
-        "    if isinstance(error, (socket.timeout, TimeoutError)):\n        return True",
-        "    if False:\n        return True",
+        "    if is_timeout_error(error):\n        return True\n"
+        "    code = node_error_code(error)",
+        "    code = node_error_code(error)",
     ),
     (
         "web: 状态码重试的退避不翻倍（固定间隔，限流时雪上加霜）",
@@ -2117,6 +2118,109 @@ _CONTEXT_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_CONTEXT_MUTATIONS]
+
+
+#: 网络错误码与文案（`tests/test_web.py` 的 NodeErrorCodeTests 等）。
+#:
+#: 这一层把 Python 的异常翻译成 **Node 风格的错误码**。它存在的唯一理由是
+#: 用户看到的文案要与原版一致——所以每一条映射和分支顺序都要有测试盯着。
+_ERROR_CODE_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "错误码: 临时 DNS 故障不再映射成 EAI_AGAIN",
+        WEB_UTILS,
+        '            if getattr(candidate, "errno", None) == socket.EAI_AGAIN:\n'
+        '                return "EAI_AGAIN"\n',
+        "            if False:\n"
+        '                return "EAI_AGAIN"\n',
+    ),
+    (
+        "错误码: 域名解析失败一律算 ENOTFOUND（丢掉 EAI_AGAIN）",
+        WEB_UTILS,
+        '            if getattr(candidate, "errno", None) == socket.EAI_AGAIN:\n'
+        '                return "EAI_AGAIN"\n'
+        '            return "ENOTFOUND"',
+        '            return "ENOTFOUND"',
+    ),
+    (
+        "错误码: 不再按类型识别连接被拒",
+        WEB_UTILS,
+        '            (ConnectionRefusedError, "ECONNREFUSED"),\n',
+        "",
+    ),
+    (
+        "错误码: 不再解开 URLError 的 reason",
+        WEB_UTILS,
+        '        reason = getattr(candidate, "reason", None)\n'
+        "        candidate = reason if isinstance(reason, BaseException) else candidate.__cause__\n"
+        "\n    return None",
+        "        candidate = None\n"
+        "\n    return None",
+    ),
+    (
+        "文案: 超时不再优先（落进「有码」分支）",
+        WEB_UTILS,
+        '    if is_timeout_error(error):\n'
+        '        return f"request timed out after {timeout_ms}ms for {url}"\n\n'
+        "    code = node_error_code(error)\n"
+        "    if code is not None:\n"
+        '        return f"request failed ({code}) for {url}"',
+        "    code = node_error_code(error)\n"
+        "    if code is not None:\n"
+        '        return f"request failed ({code}) for {url}"',
+    ),
+    (
+        "文案: 有码时不写码",
+        WEB_UTILS,
+        '        return f"request failed ({code}) for {url}"',
+        '        return f"request failed for {url}"',
+    ),
+    (
+        "文案: 去掉最内层 message 分支",
+        WEB_UTILS,
+        "    message = _innermost_message(error)\n"
+        "    if message:\n"
+        '        return f"{message} ({url})"',
+        "    message = _innermost_message(error)\n"
+        "    if False:\n"
+        '        return f"{message} ({url})"',
+    ),
+    (
+        "文案: 兜底不写 URL",
+        WEB_UTILS,
+        '    return f"request failed for {url}"',
+        '    return "request failed"',
+    ),
+    (
+        "重试: 判据退回只看码而不管超时",
+        WEB_UTILS,
+        "    if is_timeout_error(error):\n        return True\n"
+        "    code = node_error_code(error)",
+        "    code = node_error_code(error)",
+    ),
+    (
+        "重试: is_timeout_error 不再解包 reason",
+        WEB_UTILS,
+        '        reason = getattr(candidate, "reason", None)\n'
+        "        candidate = reason if isinstance(reason, BaseException) else candidate.__cause__\n"
+        "    return False",
+        "        candidate = None\n"
+        "    return False",
+    ),
+    (
+        "错误码: 不剥 Windows 的 WSA 前缀（整张表在 Windows 上落空）",
+        WEB_UTILS,
+        '            if name.startswith("WSA"):\n                name = name[3:]',
+        "            if False:\n                name = name",
+    ),
+    (
+        "错误码: 映射表少一项 EHOSTUNREACH",
+        WEB_UTILS,
+        '    "EHOSTUNREACH": "EHOSTUNREACH",\n',
+        "",
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_ERROR_CODE_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。

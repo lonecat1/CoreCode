@@ -29,6 +29,7 @@ docs.python.org 里找」。匹配含**子域**（`host == domain` 或
 
 from __future__ import annotations
 
+import errno
 import html as html_module
 import os
 import re
@@ -292,37 +293,188 @@ def is_retryable_status(status: int) -> bool:
     return status == 429 or 500 <= status < 600
 
 
-def is_retryable_network_error(error: BaseException) -> bool:
-    """网络抖动可重试。超时也算。"""
-    if isinstance(error, (socket.timeout, TimeoutError)):
-        return True
-    code = getattr(error, "errno", None)
-    name = getattr(error, "reason", None)
-    for candidate in (code, name):
-        if isinstance(candidate, str) and candidate in _RETRYABLE_ERROR_CODES:
+#: Python 的 `errno` 名字 → Node 的 `error.code`。
+#:
+#: 只列**两边都有**的那些：Node 侧的错误码是 `getErrorCode(error)` 从
+#: `error.code` 读出来的字符串，Python 侧是 `errno` 整数或异常类型。名字对得上
+#: 的直接透传，对不上的单独处理（见 `node_error_code`）。
+_NODE_CODE_BY_ERRNO_NAME = {
+    "ECONNREFUSED": "ECONNREFUSED",
+    "ECONNRESET": "ECONNRESET",
+    "ETIMEDOUT": "ETIMEDOUT",
+    "EHOSTUNREACH": "EHOSTUNREACH",
+    "ENETUNREACH": "ENETUNREACH",
+    "ENETDOWN": "ENETDOWN",
+    "EPIPE": "EPIPE",
+    "EAI_AGAIN": "EAI_AGAIN",
+    "ENOTFOUND": "ENOTFOUND",
+}
+
+
+def node_error_code(error: BaseException | None) -> str | None:
+    """把 Python 的网络异常翻译成 **Node 风格的错误码**。
+
+    ## 为什么需要这个函数
+
+    原版的错误文案是 `request failed (${code}) for ${url}`，`code` 来自
+    `getErrorCode(error)`——Node 在 `error.code` 上放 `'ECONNREFUSED'` 这类
+    字符串。Python 没有 `.code`：信息散在**异常类型**、`errno` 整数、以及
+    `URLError.reason` 里。
+
+    不做这层翻译，用户看到的就是 `URLError: <urlopen error [Errno 11001]
+    getaddrinfo failed>`——把 Python 内部细节漏给了用户，而且与原版对不上。
+
+    ## 映射规则
+
+    | Python | Node |
+    |---|---|
+    | `socket.gaierror` 且 `errno == EAI_AGAIN` | `EAI_AGAIN` |
+    | 其余 `socket.gaierror` | `ENOTFOUND` |
+    | 其它按 `errno.errorcode[errno]` 的名字查表 | 同名 |
+
+    **按名字而不是按数字**：`ECONNREFUSED` 在 Windows 是 10061、在 Linux 是
+    111，写死数字会在另一个平台上全错。
+    """
+    seen: set[int] = set()
+    candidate: Any = error
+    while isinstance(candidate, BaseException) and id(candidate) not in seen:
+        seen.add(id(candidate))
+
+        # 域名解析失败：Node 分 ENOTFOUND（名字不存在）与 EAI_AGAIN（临时故障）
+        if isinstance(candidate, socket.gaierror):
+            if getattr(candidate, "errno", None) == socket.EAI_AGAIN:
+                return "EAI_AGAIN"
+            return "ENOTFOUND"
+
+        number = getattr(candidate, "errno", None)
+        if isinstance(number, int):
+            name = errno.errorcode.get(number) or ""
+            # **Windows 上是 `WSAEHOSTUNREACH` 这类名字**（`errno.errorcode`
+            # 原样返回 Winsock 的拼法），不剥掉前缀会让下面整张表在 Windows
+            # 上全部落空——`EHOSTUNREACH` / `ENETUNREACH` / `ENETDOWN` 一个都
+            # 映射不出来。POSIX 上本来就没有这个前缀，剥了也无害。
+            if name.startswith("WSA"):
+                name = name[3:]
+            if name in _NODE_CODE_BY_ERRNO_NAME:
+                return _NODE_CODE_BY_ERRNO_NAME[name]
+
+        # 异常类型本身就是线索（`ConnectionRefusedError` 的 errno 有时是 None）
+        #
+        # **超时不在这里映射成 `ETIMEDOUT`。** Node 的超时是 `AbortError`，
+        # 它**没有** `code`，于是原版走的是「带时长」那条文案：
+        # `request timed out after {N}ms for {url}`。给它塞一个码会把时长丢掉，
+        # 那是**信息更少**的结果。`format_web_error_message` 因此先判超时。
+        for kind, code in (
+            (ConnectionRefusedError, "ECONNREFUSED"),
+            (ConnectionResetError, "ECONNRESET"),
+            (ConnectionAbortedError, "ECONNABORTED"),
+            (BrokenPipeError, "EPIPE"),
+        ):
+            if isinstance(candidate, kind):
+                return code
+
+        # `URLError` 把真实原因藏在 `.reason` 里；`__cause__` 同理
+        reason = getattr(candidate, "reason", None)
+        candidate = reason if isinstance(reason, BaseException) else candidate.__cause__
+
+    return None
+
+
+def is_timeout_error(error: BaseException | None) -> bool:
+    """是否是一次**超时**（含被 `URLError` 包起来的）。
+
+    等价于 Node 侧的 `error.name === 'AbortError'`——原版用它区分「超时」与
+    「带了错误码的网络故障」，两者的文案不同。
+    """
+    seen: set[int] = set()
+    candidate = error
+    while isinstance(candidate, BaseException) and id(candidate) not in seen:
+        seen.add(id(candidate))
+        if isinstance(candidate, (socket.timeout, TimeoutError)):
             return True
-    reason = getattr(error, "reason", None)
-    if isinstance(reason, BaseException):
-        return is_retryable_network_error(reason)
-    # urllib 的网络错误字符串里通常带错误码。
+        reason = getattr(candidate, "reason", None)
+        candidate = reason if isinstance(reason, BaseException) else candidate.__cause__
+    return False
+
+
+def is_retryable_network_error(error: BaseException) -> bool:
+    """网络抖动可重试。超时也算。
+
+    **判据是 `node_error_code()`**，不是对 `str(error)` 做子串匹配。早先的实现
+    把 `errno` 当字符串查表（实际是整数，永远不命中），于是完全靠子串兜底——
+    而 Windows 上 `gaierror(EAI_AGAIN)` 的文本是
+    `[Errno 11002] getaddrinfo failed`，**不含 `EAI_AGAIN`**，临时 DNS 故障
+    因此不会被重试。
+    """
+    if is_timeout_error(error):
+        return True
+    code = node_error_code(error)
+    if code is not None:
+        return code in _RETRYABLE_ERROR_CODES
+    # 取不到码时退回字符串检查：有些环境下错误是手工构造的（测试、包装层）。
     text = str(error)
-    return any(code in text for code in _RETRYABLE_ERROR_CODES)
+    return any(candidate in text for candidate in _RETRYABLE_ERROR_CODES)
 
 
 def format_web_error_message(url: str, error: BaseException | None, timeout_ms: int) -> str:
     """结构化的错误信息。原版 `formatWebErrorMessage`。
 
-    刻意带上 URL 与超时值：只说「请求失败」时，用户无法判断是地址写错了、
-    站点挂了、还是超时太短。
+    分支与原版**逐条对应**，只是判断顺序按 Python 的现实重排：
+
+    | 原版 | 本实现 |
+    |---|---|
+    | `code` 存在 → `request failed (CODE) for URL` | 同（`node_error_code`） |
+    | `AbortError` → `request timed out after {N}ms for URL` | 超时优先判 |
+    | `error.message` → `{message} (URL)` | 同（`_innermost_message`） |
+    | 都没有 → `request failed for URL` | 同 |
+
+    **为什么超时要先判、而不是让它落进「有码」分支**：Node 的超时是
+    `AbortError`，它没有 `code`，所以原版走的是「带时长」那句；而时长恰恰是
+    用户排查超时时最需要的信息。给超时塞一个 `ETIMEDOUT` 码会让文案**信息更少**。
     """
-    if isinstance(error, (socket.timeout, TimeoutError)):
+    if is_timeout_error(error):
         return f"request timed out after {timeout_ms}ms for {url}"
-    reason = getattr(error, "reason", None)
-    if isinstance(reason, BaseException):
-        return f"{type(reason).__name__}: {reason} ({url})"
-    if error is not None:
-        return f"{type(error).__name__}: {error} ({url})"
+
+    code = node_error_code(error)
+    if code is not None:
+        return f"request failed ({code}) for {url}"
+
+    # 原版取 `error.message`；Python 侧的等价物是「最内层原因」的文字。
+    message = _innermost_message(error)
+    if message:
+        return f"{message} ({url})"
+
     return f"request failed for {url}"
+
+
+def _innermost_message(error: BaseException | None) -> str:
+    """取最内层异常的文字，但不把 Python 的类名漏出去。
+
+    `URLError` 的 `str()` 是 `<urlopen error [Errno 11001] getaddrinfo failed>`
+    ——尖括号与 `urlopen` 都是实现细节。原版的 `error.message` 是干净的描述，
+    所以这里优先用 `.reason`，并把 `str()` 里的外层包装剥掉。
+    """
+    candidate = error
+    seen: set[int] = set()
+    while isinstance(candidate, BaseException) and id(candidate) not in seen:
+        seen.add(id(candidate))
+        reason = getattr(candidate, "reason", None)
+        if isinstance(reason, BaseException):
+            candidate = reason
+            continue
+        break
+    if candidate is None:
+        return ""
+    text = str(candidate).strip()
+    if not text:
+        return ""
+    # 去掉 `<urlopen error ...>` 这种外层包装
+    if text.startswith("<") and text.endswith(">"):
+        text = text[1:-1].strip()
+        for prefix in ("urlopen error ", "error "):
+            if text.startswith(prefix):
+                text = text[len(prefix):].strip()
+    return text
 
 
 def _sleep_ms(milliseconds: float) -> None:

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import io
+import errno
 import os
 import socket
 import sys
@@ -45,6 +46,7 @@ from minicode.utils.web import (  # noqa: E402
     is_retryable_network_error,
     is_retryable_status,
     matches_domain,
+    node_error_code,
     normalize_domain_list,
     normalize_duckduckgo_link,
     normalize_sogou_link,
@@ -192,6 +194,187 @@ class ErrorMessageTests(unittest.TestCase):
 
     def test_no_error_still_mentions_url(self) -> None:
         self.assertIn("https://x", format_web_error_message("https://x", None, 1000))
+
+
+class NodeErrorCodeTests(unittest.TestCase):
+    """Python 的异常 → **Node 风格的错误码**。
+
+    ## 为什么这层翻译必须存在
+
+    原版的文案是 `request failed (${code}) for ${url}`，`code` 来自
+    `getErrorCode(error)`——Node 把 `'ECONNREFUSED'` 这类字符串放在
+    `error.code` 上。Python 没有 `.code`：信息散在异常类型、`errno` 整数、
+    以及 `URLError.reason` 里。
+
+    不翻译的直接后果是用户看到
+    `URLError: <urlopen error [Errno 11001] getaddrinfo failed> (https://…)`
+    ——把 Python 内部细节漏出来，且与原版对不上。
+    """
+
+    def test_dns_failures_map_to_enotfound_or_eai_again(self) -> None:
+        self.assertEqual(
+            node_error_code(socket.gaierror(socket.EAI_NONAME, "x")), "ENOTFOUND"
+        )
+        self.assertEqual(
+            node_error_code(socket.gaierror(socket.EAI_AGAIN, "x")), "EAI_AGAIN"
+        )
+
+    def test_connection_errors_map_by_exception_type(self) -> None:
+        """按**类型**而不是按数字：`ECONNREFUSED` 在 Windows 是 10061、Linux 是 111。"""
+        self.assertEqual(
+            node_error_code(ConnectionRefusedError(111, "refused")), "ECONNREFUSED"
+        )
+        self.assertEqual(
+            node_error_code(ConnectionResetError(104, "reset")), "ECONNRESET"
+        )
+        self.assertEqual(node_error_code(BrokenPipeError(32, "pipe")), "EPIPE")
+
+    def test_url_error_is_unwrapped(self) -> None:
+        """`urllib` 把真实原因包在 `URLError.reason` 里。"""
+        wrapped_dns = urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "x"))
+        self.assertEqual(node_error_code(wrapped_dns), "ENOTFOUND")
+        wrapped_refused = urllib.error.URLError(ConnectionRefusedError(111, "x"))
+        self.assertEqual(node_error_code(wrapped_refused), "ECONNREFUSED")
+
+    def test_winsock_prefixed_errno_names_are_normalized(self) -> None:
+        """**Windows 上 `errno.errorcode` 给的是 `WSAEHOSTUNREACH`。**
+
+        不剥掉 `WSA` 前缀，整张名字映射表在 Windows 上全部落空——
+        `EHOSTUNREACH` / `ENETUNREACH` / `ENETDOWN` 一个都映射不出来，
+        用户看到的就是 `[Errno 10065] …`。
+
+        这几个码**没有**对应的 Python 异常子类（`OSError(10065)` 就是普通
+        `OSError`），所以只能靠名字查表——表格里这几项不是冗余的。
+        """
+        for name, expected in (
+            ("EHOSTUNREACH", "EHOSTUNREACH"),
+            ("ENETUNREACH", "ENETUNREACH"),
+            ("ENETDOWN", "ENETDOWN"),
+        ):
+            number = getattr(errno, name, None)
+            if number is None:
+                self.skipTest(f"本平台没有 {name}")
+            error = OSError(number, "boom")
+            with self.subTest(name=name, number=number):
+                self.assertEqual(node_error_code(error), expected)
+                self.assertIn(
+                    f"({expected})",
+                    format_web_error_message("https://x", error, 1000),
+                )
+
+    def test_timeout_has_no_code(self) -> None:
+        """**超时不给码。** Node 的超时是 `AbortError`，它没有 `code`。
+
+        给它塞一个 `ETIMEDOUT` 会让文案从「带时长」退化成「只有码」——信息更少。
+        """
+        self.assertIsNone(node_error_code(TimeoutError("timed out")))
+        self.assertIsNone(node_error_code(socket.timeout("timed out")))
+        self.assertIsNone(node_error_code(urllib.error.URLError(TimeoutError("x"))))
+
+    def test_unknown_errors_have_no_code(self) -> None:
+        self.assertIsNone(node_error_code(None))
+        self.assertIsNone(node_error_code(ValueError("bad")))
+        self.assertIsNone(node_error_code(OSError(5, "input/output error")))
+
+    def test_self_referential_error_does_not_loop(self) -> None:
+        """异常链可能自引用——不设防会死循环。"""
+        error = OSError(5, "loop")
+        error.__cause__ = error
+        self.assertIsNone(node_error_code(error))
+
+
+class FormatBranchesTests(unittest.TestCase):
+    """四条分支的**顺序**与原版对应（原版：码 → AbortError → message → 兜底）。"""
+
+    def test_coded_error_shows_the_code(self) -> None:
+        message = format_web_error_message(
+            "https://x.test/p", ConnectionRefusedError(111, "refused"), 5000
+        )
+        self.assertEqual(message, "request failed (ECONNREFUSED) for https://x.test/p")
+
+    def test_dns_error_shows_enotfound(self) -> None:
+        message = format_web_error_message(
+            "https://x.test/p", socket.gaierror(socket.EAI_NONAME, "x"), 5000
+        )
+        self.assertEqual(message, "request failed (ENOTFOUND) for https://x.test/p")
+
+    def test_timeout_wins_over_the_code_branch(self) -> None:
+        """超时优先——原版 `AbortError` 也没有码，所以走的是带时长那句。"""
+        message = format_web_error_message(
+            "https://x.test/p", urllib.error.URLError(TimeoutError("t")), 7000
+        )
+        self.assertEqual(message, "request timed out after 7000ms for https://x.test/p")
+
+    def test_uncoded_error_shows_its_message(self) -> None:
+        message = format_web_error_message("https://x.test/p", ValueError("bad"), 5000)
+        self.assertEqual(message, "bad (https://x.test/p)")
+
+    def test_no_error_falls_back(self) -> None:
+        self.assertEqual(
+            format_web_error_message("https://x.test/p", None, 5000),
+            "request failed for https://x.test/p",
+        )
+
+    def test_python_class_names_do_not_leak(self) -> None:
+        """用户不该看到 `URLError:` / `<urlopen error …>` 这类实现细节。"""
+        for error in (
+            urllib.error.URLError(ConnectionRefusedError(111, "refused")),
+            OSError(5, "input/output error"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                message = format_web_error_message("https://x.test/p", error, 5000)
+                self.assertNotIn("urlopen", message)
+                self.assertNotIn("URLError", message)
+
+
+class RetryClassificationTests(unittest.TestCase):
+    """重试判据必须是**错误码**，不是对错误文本做子串匹配。"""
+
+    def test_temp_dns_failure_is_retryable(self) -> None:
+        """**这条曾经是错的。**
+
+        旧实现把 `errno` 当字符串查表（实际是整数，永远不命中），于是完全靠
+        `str(error)` 子串兜底——而 Windows 上 `gaierror(EAI_AGAIN)` 的文本是
+        `[Errno 11002] getaddrinfo failed`，**不含 `EAI_AGAIN`**，临时 DNS
+        故障因此不会被重试。Node 会把它映射成 `EAI_AGAIN` → 可重试。
+        """
+        error = socket.gaierror(socket.EAI_AGAIN, "x")
+        self.assertEqual(node_error_code(error), "EAI_AGAIN")
+        self.assertTrue(is_retryable_network_error(error))
+
+    def test_connection_errors_are_retryable(self) -> None:
+        for error in (
+            ConnectionRefusedError(111, "x"),
+            ConnectionResetError(104, "x"),
+            urllib.error.URLError(ConnectionResetError(104, "x")),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.assertTrue(is_retryable_network_error(error))
+
+    def test_timeouts_are_retryable(self) -> None:
+        for error in (TimeoutError("t"), socket.timeout("t"),
+                      urllib.error.URLError(TimeoutError("t"))):
+            with self.subTest(error=type(error).__name__):
+                self.assertTrue(is_retryable_network_error(error))
+
+    def test_non_network_errors_are_not_retryable(self) -> None:
+        for error in (ValueError("bad"), OSError(5, "input/output error")):
+            with self.subTest(error=type(error).__name__):
+                self.assertFalse(is_retryable_network_error(error))
+
+    def test_retryable_codes_match_the_original_list(self) -> None:
+        """原版逐个列举的 8 个码，这里必须齐。"""
+        from minicode.utils.web import _RETRYABLE_ERROR_CODES
+
+        self.assertEqual(
+            _RETRYABLE_ERROR_CODES,
+            frozenset({
+                "ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "ENOTFOUND",
+                "ECONNREFUSED", "UND_ERR_CONNECT_TIMEOUT",
+                "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT",
+            }),
+        )
+
 
 
 def _fake_response(status: int = 200, body: bytes = b"ok", content_type: str = "text/html"):
