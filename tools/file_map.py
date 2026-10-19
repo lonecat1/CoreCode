@@ -69,8 +69,14 @@ PY_ONLY: dict[str, str] = {
     "ui/caps.py": "终端能力探测（颜色/交互）",
     "ui/console.py": "行模式的输出与提示（原版在 tty-app.ts 里）",
     "ui/render.py": "行模式渲染：横幅/面板/表格（原版在 tui/chrome.ts 里）",
-    "ui/startup.py": "启动时的欢迎与提示",
-    "ui/theme.py": "颜色主题",
+    "ui/startup.py": (
+        "启动时的欢迎语与就绪提示。原版这段在 `tty-app.ts` 的初始化流程里，"
+        "与全屏终端状态耦合；行模式没有那套状态，得单独实现。"
+    ),
+    "ui/theme.py": (
+        "颜色与样式常量。原版散在 `tui/chrome.ts` 的绘制代码里；行模式把它们"
+        "集中成一张表，方便 `NO_COLOR` 与非 TTY 场景统一降级。"
+    ),
     "ui/width.py": "显示宽度计算（东亚宽字符）",
 }
 

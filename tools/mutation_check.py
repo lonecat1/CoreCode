@@ -58,6 +58,9 @@ MCP_BRIDGE = os.path.join(REPO, "src", "minicode", "mcp", "bridge.py")
 PIPELINE = os.path.join(REPO, "src", "minicode", "context", "pipeline.py")
 CONSTANTS = os.path.join(REPO, "src", "minicode", "context", "constants.py")
 RUNTIME_CONTEXT = os.path.join(REPO, "src", "minicode", "runtime", "context.py")
+CHECK_CONSTANTS = os.path.join(REPO, "tools", "check_constants.py")
+CHECK_DUPLICATES = os.path.join(REPO, "tools", "check_duplicates.py")
+FILE_MAP = os.path.join(REPO, "tools", "file_map.py")
 LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
 TOOLS_GOAL = os.path.join(REPO, "src", "minicode", "tools", "goal.py")
 PLAN = os.path.join(REPO, "src", "minicode", "runtime", "plan.py")
@@ -2221,6 +2224,67 @@ _ERROR_CODE_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_ERROR_CODE_MUTATIONS]
+
+
+#: 检查器**本身**的逻辑（`tests/test_checkers.py`）。
+#:
+#: 检查器是「其它代码是否可信」的依据。它们判断错了，结论就是错的，而且错得很
+#: 安静——一个永远回「全部通过」的检查器看起来和健康的一模一样。
+_CHECKER_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "检查器: 伪引用检测不再区分 docstring（注释提及算引用）",
+        CHECK_CONSTANTS,
+        "    if doc_ranges_by_path is None:\n"
+        "        doc_ranges_by_path = docstring_ranges(sources)",
+        "    doc_ranges_by_path = {path: [] for path in sources}",
+    ),
+    (
+        "检查器: docstring 区间一律为空",
+        CHECK_CONSTANTS,
+        "        ranges[path] = spans\n    return ranges",
+        "        ranges[path] = []\n    return ranges",
+    ),
+    (
+        "检查器: `#` 注释不再算注释",
+        CHECK_CONSTANTS,
+        '            is_comment = stripped.startswith("#") or in_doc',
+        "            is_comment = in_doc",
+    ),
+    (
+        "检查器: 不再识别遮蔽的 def（只记第一个）",
+        CHECK_DUPLICATES,
+        "        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):\n"
+        "            bindings.append((node.name, node.lineno, \"def\"))",
+        "        if False:\n"
+        "            bindings.append((node.name, node.lineno, \"def\"))",
+    ),
+    (
+        "检查器: 把函数体内的 def 也算作模块级（误报）",
+        CHECK_DUPLICATES,
+        "    for node in tree.body:",
+        "    for node in ast.walk(tree):",
+    ),
+    (
+        "映射: 表里漏掉一个 TS 文件",
+        FILE_MAP,
+        '    "abort.ts": ("abort.py",),\n',
+        "",
+    ),
+    (
+        "映射: TUI 排除清单漏掉 ui.ts 转出桶",
+        FILE_MAP,
+        '    "ui.ts": "TUI 的纯转出桶（28 行 export … from \'./tui/index.js\'）",\n',
+        "",
+    ),
+    (
+        "映射: 映射到一个不存在的 .py 也能通过",
+        FILE_MAP,
+        '            if not (PY_ROOT / target).exists():',
+        "            if False:",
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_CHECKER_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。
