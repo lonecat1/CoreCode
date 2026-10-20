@@ -43,10 +43,18 @@ def resolve_tool_path(
 
 
 def _escapes(root: str, target: str) -> bool:
-    root_abs = os.path.abspath(root)
-    relative = os.path.relpath(target, root_abs)
-    return (
-        relative == ".."
-        or relative.startswith(f"..{os.sep}")
-        or os.path.isabs(relative)
-    )
+    """`target` 是否越出 `root`——**委托**给 `permissions.is_within_directory`。
+
+    ## 为什么不各写一份
+
+    这里原来是一份手写的反面判断，用 `os.path.relpath`。而 Windows 上
+    `relpath` 跨盘符**抛 `ValueError`**，于是「工作目录在 C:、目标在 D:」时
+    这条边界检查会**崩**而不是返回「越界」。`permissions.is_within_directory`
+    已经处理了那个陷阱；两处各写一遍必然漂移，所以合并成一处。
+
+    依赖方向是安全的：`permissions` 不 import `workspace`（它只依赖
+    `abort` 与 `config`），所以这里反向导入不会形成环。
+    """
+    from .permissions import is_within_directory
+
+    return not is_within_directory(root, target)

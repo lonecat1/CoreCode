@@ -201,11 +201,36 @@ def normalize_path(target: str) -> str:
 
 
 def is_within_directory(root: str, target: str) -> bool:
+    """`target` 是否在 `root` 之内（含 `root` 本身）。
+
+    ## 跨盘符必须返回 `False`，不能抛
+
+    Windows 上 `os.path.relpath(r"C:\\a", r"D:\\b")` **抛 `ValueError`**
+    （"path is on mount 'D:', start on mount 'C:'"）。原版用的是 Node 的
+    `path.relative`，它遇到不同盘符时返回**一个绝对路径**，于是
+    `path.isAbsolute(relative)` 为真、函数返回 `false`——**不抛异常**。
+
+    这个差别会造成用户可见的故障：工作目录在 C:，让 agent 读 D: 上的文件时，
+
+        原版：判为「不在 cwd 内」→ 走批准流程（或按无提示器给出明确拒绝）
+        本实现：`ValueError: path is on mount 'D:'` 直接冒到工具层
+
+    用户看到的是「D 盘不在授权的工作目录中」这类**看不懂的拒绝**，而不是一次
+    可以批准的询问。
+
+    `root == target` 时 `relpath` 返回 `"."`，不算 `..`、也不是绝对路径，
+    因此返回 `True`——与原版的 `relative === ''` 分支等价。
+    """
     root_abs = os.path.abspath(root)
-    relative = os.path.relpath(target, root_abs)
+    try:
+        relative = os.path.relpath(target, root_abs)
+    except ValueError:
+        # 不同盘符 / 不同挂载点：不在同一个目录树里。
+        return False
     return not (
         relative == ".."
         or relative.startswith(f"..{os.sep}")
+        or relative.startswith("../")  # 正斜杠形式，POSIX 与 Windows 都认
         or os.path.isabs(relative)
     )
 
@@ -336,6 +361,26 @@ class PermissionManager:
             target, self._allowed_dirs
         ):
             return
+
+        # **没有提示器时给一句能行动的话。**
+        #
+        # 原版（`permissions.ts`）在同样位置有这么一段：
+        #
+        #     if (!this.prompt) {
+        #       throw new Error(
+        #         `Path ${normalizedTarget} is outside cwd ${this.workspaceRoot}. ` +
+        #         `Start minicode in TTY mode to approve it.`,
+        #       )
+        #     }
+        #
+        # 本实现早先直接去调提示器，由 `_request_approval` 抛一句泛化的
+        # 「当前不是交互模式，无法请求批准」——里面**没有路径，也没有 cwd**，
+        # 用户无从判断是哪个操作被拒。
+        if self._prompt is None:
+            raise PermissionDenied(
+                f"路径 {target} 不在当前工作目录 {self.workspace_root} 之内，"
+                "需要以交互模式启动才能批准。"
+            )
 
         # 授权的粒度：列目录/作为命令 cwd 时按目录授权，读写时按文件所在目录授权。
         scope = (

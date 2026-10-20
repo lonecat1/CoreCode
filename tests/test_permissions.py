@@ -90,6 +90,51 @@ class PathHelpersTests(unittest.TestCase):
         self.assertFalse(is_within_directory(root, os.path.join(root, "..", "out.txt")))
         self.assertFalse(is_within_directory(root, os.path.dirname(root)))
 
+    def test_prefix_sharing_is_not_containment(self) -> None:
+        """`root\\a` 不包含 `root\\ab\\x`——前缀相同不等于在目录内。"""
+        root = os.path.join(_TMP_ROOT, "d")
+        self.assertFalse(
+            is_within_directory(os.path.join(root, "a"), os.path.join(root, "ab", "x"))
+        )
+
+    @unittest.skipUnless(os.name == "nt", "跨盘符是 Windows 特有的")
+    def test_cross_drive_returns_false_instead_of_raising(self) -> None:
+        """**跨盘符必须返回 `False`，不能抛 `ValueError`。**
+
+        ## 这是用户报过来的真实故障
+
+        Node 的 `path.relative('C:\\\\a', 'D:\\\\b')` 返回**一个绝对路径**（不抛），
+        于是原版的 `path.isAbsolute(relative)` 为真、`isWithinDirectory` 返回
+        `false`。而 Python 的 `os.path.relpath` 遇到不同盘符**直接抛**
+        `ValueError: path is on mount 'D:', start on mount 'C:'`。
+
+        症状：工作目录在 C: 时让 agent 读 D: 上的文件，工具层收到的是一个
+        异常，而不是「不在 cwd 内、要不要批准？」——用户看到的是「D 盘不在
+        授权的工作目录中」这种看不懂的拒绝。
+
+        `os.path.relpath` 抛不抛取决于盘符是否存在，所以这里只断言
+        **不抛、且结果为 False**。
+        """
+        self.assertFalse(is_within_directory(r"C:\Windows", r"D:\CoreCode"))
+        self.assertFalse(is_within_directory(r"D:\CoreCode", r"C:\Windows"))
+
+    @unittest.skipUnless(os.name == "nt", "跨盘符是 Windows 特有的")
+    def test_cross_drive_target_can_still_be_read_with_approval(self) -> None:
+        """跨盘符的目标**要能走到批准流程**，而不是在边界检查里崩掉。
+
+        这条走 `PermissionManager` 的真实路径：给一个「永远同意」的提示器，
+        跨盘符的读取应当被放行（并记进会话允许集合）。
+        """
+        from minicode.permissions import PathIntent, PermissionManager, PermissionPromptResult
+
+        def always_allow(request, signal):  # noqa: ANN001, ARG001
+            return PermissionPromptResult(decision="allow_once", feedback=None)
+
+        manager = PermissionManager(r"C:\Windows", always_allow)
+        target = r"D:\CoreCode\minicode-py\README.md"
+        manager.ensure_path_access(target, PathIntent.READ)  # 不抛即通过
+        self.assertIn(target, manager._session_allowed_paths)
+
 
 class PermissionManagerTests(unittest.TestCase):
     def setUp(self) -> None:

@@ -48,6 +48,7 @@ GREP_FILES = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
 MCP_STATUS = os.path.join(REPO, "src", "minicode", "mcp", "status.py")
 CLI_COMMANDS = os.path.join(REPO, "src", "minicode", "cli_commands.py")
 PERMISSIONS = os.path.join(REPO, "src", "minicode", "permissions.py")
+WORKSPACE = os.path.join(REPO, "src", "minicode", "workspace.py")
 REPO_INIT = os.path.join(REPO, "src", "minicode", "repo_init.py")
 HISTORY = os.path.join(REPO, "src", "minicode", "history.py")
 WEB_UTILS = os.path.join(REPO, "src", "minicode", "utils", "web.py")
@@ -2588,6 +2589,51 @@ _LAUNCHER_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_LAUNCHER_MUTATIONS]
+
+
+#: 跨盘符的路径判断（`tests/test_permissions.py` 的 `PathHelpersTests`）。
+#:
+#: 防的是「Python 与 Node 语义不同」这一类陷阱：Node 的 `path.relative` 跨盘符
+#: 返回绝对路径（不抛），Python 的 `os.path.relpath` **抛 ValueError**。不处理
+#: 的话，工作目录在 C: 时读 D: 的文件会在边界检查里崩掉，而不是走批准流程。
+_CROSS_DRIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "路径: 跨盘符时不再吞掉 ValueError（D 盘文件直接崩）",
+        PERMISSIONS,
+        "    except ValueError:\n"
+        "        # 不同盘符 / 不同挂载点：不在同一个目录树里。\n"
+        "        return False",
+        "    except ValueError:\n"
+        "        raise",
+    ),
+    (
+        "路径: 正斜杠形式的 `..` 不再识别（POSIX 上越界被判为在内）",
+        PERMISSIONS,
+        '        or relative.startswith("../")  # 正斜杠形式，POSIX 与 Windows 都认',
+        "        or False",
+    ),
+    (
+        "路径: workspace 的越界判断不再委托（自己那份没处理跨盘符）",
+        WORKSPACE,
+        "    from .permissions import is_within_directory\n\n"
+        "    return not is_within_directory(root, target)",
+        "    relative = os.path.relpath(target, os.path.abspath(root))\n"
+        "    return relative == \"..\" or os.path.isabs(relative)",
+    ),
+    (
+        "路径: 没有提示器时不再给出可行动的消息",
+        PERMISSIONS,
+        "        if self._prompt is None:\n"
+        "            raise PermissionDenied(\n"
+        "                f\"路径 {target} 不在当前工作目录 {self.workspace_root} 之内，\"\n"
+        "                \"需要以交互模式启动才能批准。\"\n"
+        "            )",
+        "        if self._prompt is None:\n"
+        "            pass",
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_CROSS_DRIVE_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。
