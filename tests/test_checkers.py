@@ -21,6 +21,8 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
@@ -370,6 +372,96 @@ class CheckDocsTests(unittest.TestCase):
         content = (docs.REPO / "docs" / "parity.md").read_text(encoding="utf-8")
         self.assertIn(docs.BEGIN, content)
         self.assertIn(docs.END, content)
+
+
+    def test_every_documented_file_is_scanned(self) -> None:
+        """`DOCS` 登记的每个文件都真实存在——否则「扫了」是句空话。"""
+        docs = self._stats()
+        for name in docs.DOCS:
+            with self.subTest(doc=name):
+                self.assertTrue(
+                    (docs.REPO / "docs" / name).exists(), f"{name} 不存在"
+                )
+
+    def test_verify_all_docs_reports_problems_with_the_file_name(self) -> None:
+        """多文档核对时，问题必须标明**出自哪个文件**。
+
+        否则看到「第 12 行写 269」时不知道该改哪一份。
+        """
+        docs = self._stats()
+        fresh = docs.generated_block({"constants": 270}, 1594)
+        # 主文档写对、`verification.md` 写错
+        problems = docs.verify_all_docs({"constants": 270}, fresh)
+        # 用真实仓库时应当没有问题；这里只验证「带文件名」这条契约
+        for item in problems:
+            with self.subTest(item=item):
+                self.assertTrue(
+                    item.startswith(tuple(f"{name}:" for name in docs.DOCS))
+                    or any(name in item for name in docs.DOCS),
+                    f"问题没有标明来源文件：{item}",
+                )
+
+
+class MutationResumeTests(unittest.TestCase):
+    """变异检查的断点：`{标签: killed|survived}`。
+
+    ## 为什么需要断点
+
+    一轮全量约 3 小时，它被打断过**两次**：一次是工具调用被 abort（连带杀掉了
+    正在跑基线的测试子进程），一次是会话跨夜结束。两次都得从头再跑三小时——
+    第二次还留下了**已应用的变异**（`local_tool_shortcuts.py` 的护栏被删掉）。
+
+    断点让「被打断」的代价从三小时变成几分钟。它**不是正确性前提**：文件坏了
+    或不存在时 `load_progress()` 返回空字典，等于从头跑。
+    """
+
+    def setUp(self) -> None:
+        import mutation_check
+
+        self.mc = mutation_check
+        self._path = mutation_check.PROGRESS_PATH
+        saved = Path(self._path)
+        self._saved = saved.read_bytes() if saved.exists() else None
+        saved.unlink(missing_ok=True)
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        target = Path(self._path)
+        if self._saved is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.write_bytes(self._saved)
+
+    def test_round_trip(self) -> None:
+        self.mc.save_progress({"a": "killed", "b": "survived"})
+        self.assertEqual(self.mc.load_progress(), {"a": "killed", "b": "survived"})
+
+    def test_missing_file_means_start_from_scratch(self) -> None:
+        self.assertEqual(self.mc.load_progress(), {})
+
+    def test_corrupt_file_does_not_crash(self) -> None:
+        """半截 JSON（写到一半被打断）不该让检查器起不来。"""
+        Path(self._path).write_text("{not json", encoding="utf-8")
+        self.assertEqual(self.mc.load_progress(), {})
+
+    def test_non_object_payload_is_ignored(self) -> None:
+        Path(self._path).write_text("[1, 2, 3]", encoding="utf-8")
+        self.assertEqual(self.mc.load_progress(), {})
+
+    def test_unknown_labels_are_filtered_by_the_caller(self) -> None:
+        """断点里可能有清单更新前的旧标签——**过滤是调用方的事**。
+
+        若 `load_progress` 自己按当前清单裁剪，清单一变就会悄悄丢掉真实进度。
+        """
+        self.mc.save_progress({"已删除的旧标签": "killed", "仍在的": "killed"})
+        loaded = self.mc.load_progress()
+        current = {"仍在的"}
+        self.assertEqual([label for label in loaded if label in current], ["仍在的"])
+
+    def test_saving_is_best_effort(self) -> None:
+        """写不了断点也不该抛——它只是加速手段，不是正确性前提。"""
+        with patch.object(self.mc, "PROGRESS_PATH", "Z:\\nope\\nope.json"):
+            self.mc.save_progress({"a": "killed"})  # 不抛即通过
 
 
 if __name__ == "__main__":

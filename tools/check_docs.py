@@ -41,6 +41,12 @@ REPO = Path(__file__).resolve().parent.parent
 PY = sys.executable
 DOC = REPO / "docs" / "parity.md"
 
+#: 会被扫「手写数字」的全部文档。
+#:
+#: 生成块只写进 `DOC`（`parity.md`），但**每个**文档里手写的数字都要核对——
+#: `verification.md` 里就写着「28 个场景」「330 条」这类数字，它们同样会漂。
+DOCS = ["parity.md", "verification.md", "divergences.md"]
+
 BEGIN = "<!-- BEGIN GENERATED STATS -->"
 END = "<!-- END GENERATED STATS -->"
 
@@ -168,7 +174,7 @@ def hand_written_problems(text: str, stats: dict[str, int]) -> list[str]:
 
 
 def verify(text: str, stats: dict[str, int], block: str) -> list[str]:
-    """把文档正文与实测数字比对，返回问题列表。
+    """把**主文档**正文与实测数字比对，返回问题列表。
 
     ## 为什么单独抽出来
 
@@ -185,6 +191,27 @@ def verify(text: str, stats: dict[str, int], block: str) -> list[str]:
     elif block not in text:
         problems.append("生成块与实测不一致（用 --write 重写）")
     problems.extend(hand_written_problems(text, stats))
+    return problems
+
+
+def verify_all_docs(stats: dict[str, int], block: str) -> list[str]:
+    """核对 `DOCS` 里的**每一个**文档：主文档还要比对生成块。
+
+    早先只扫 `parity.md`，于是 `verification.md` 里「28 个场景」「330 条」这类
+    数字无人看管——写它的当天是对的，之后就没人管了。
+    """
+    problems: list[str] = []
+    for name in DOCS:
+        path = REPO / "docs" / name
+        if not path.exists():
+            problems.append(f"{name} 不存在（DOCS 里登记了它）")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if name == DOC.name:
+            found = verify(text, stats, block)
+        else:
+            found = hand_written_problems(text, stats)
+        problems.extend(f"{name}: {item}" for item in found)
     return problems
 
 
@@ -214,7 +241,7 @@ def main(argv: list[str]) -> int:
             print(f"  tests = {tests}")
         return 0
 
-    problems = verify(text, stats, block)
+    problems = verify_all_docs(stats, block)
 
     print(f"核对 {DOC.relative_to(REPO)} …")
     for key in sorted(stats):

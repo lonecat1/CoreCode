@@ -6,6 +6,7 @@ covering it is decorative.
 
 Every mutation is applied in memory to a copy of the file, then restored from git.
 """
+import json
 import os
 import re
 import subprocess
@@ -2568,7 +2569,42 @@ def audit_anchors() -> list[str]:
     return problems
 
 
-def main() -> int:
+#: 断点文件：`{变异标签: "killed" | "survived"}`。
+#:
+#: ## 为什么需要它
+#:
+#: 一轮全量约 3 小时。它被打断过**两次**——一次是工具调用被 abort（把正在跑基线
+#: 的测试子进程一起杀了），一次是会话跨夜结束。两次都得从头再跑三小时，而第二次
+#: 甚至留下了**已应用的变异**（`local_tool_shortcuts.py` 的护栏被删掉）。
+#:
+#: 有了断点文件，重跑会跳过已完成的条目，于是「被打断」的代价变成几分钟。
+PROGRESS_PATH = os.path.join(REPO, "tests", ".mutation_progress.json")
+
+
+def load_progress() -> dict[str, str]:
+    try:
+        with open(PROGRESS_PATH, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): str(value) for key, value in payload.items()}
+
+
+def save_progress(progress: dict[str, str]) -> None:
+    """写断点。**失败不影响检查**——它只是加速手段，不是正确性前提。"""
+    try:
+        with open(PROGRESS_PATH, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(progress, handle, ensure_ascii=False, indent=1, sort_keys=True)
+    except OSError:
+        pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(argv or [])
+    reset = "--reset" in argv
+
     healed = heal_leftovers()
     if healed:
         print(f"已从上次中断中恢复：{', '.join(healed)}")
@@ -2581,18 +2617,41 @@ def main() -> int:
             print("  -", item)
         return 1
 
-    baseline, baseline_timeout = run_suite()
-    print(f"baseline: {'PASS' if baseline else 'FAIL'}")
-    if not baseline:
-        print("基线不通过，无法做变异检查。" + ("（基线超时）" if baseline_timeout else ""))
-        return 1
+    progress = {} if reset else load_progress()
+    if reset:
+        try:
+            os.remove(PROGRESS_PATH)
+        except OSError:
+            pass
 
-    survived: list[str] = []
-    for label, path, old, new in MUTATIONS:
+    # 断点只对**当前清单里仍存在**的标签有效：清单改过之后，旧标签会失效。
+    labels = {label for label, _path, _old, _new in MUTATIONS}
+    done = {label: verdict for label, verdict in progress.items() if label in labels}
+    remaining = [item for item in MUTATIONS if item[0] not in done]
+
+    if done:
+        print(
+            f"从断点继续：已完成 {len(done)} 条，剩余 {len(remaining)} 条"
+            "（`--reset` 从头跑）"
+        )
+
+    # 只有还有剩余时才需要基线；全部做完就直接汇总。
+    if remaining:
+        baseline, baseline_timeout = run_suite()
+        print(f"baseline: {'PASS' if baseline else 'FAIL'}")
+        if not baseline:
+            print("基线不通过，无法做变异检查。" + ("（基线超时）" if baseline_timeout else ""))
+            return 1
+
+    survived: list[str] = [label for label, verdict in done.items() if verdict != "killed"]
+
+    for label, path, old, new in remaining:
         original = open(path, encoding="utf-8").read()
         if old not in original:
             print(f"  SKIP  {label}  (未找到待变异的代码片段)")
             survived.append(label + " [片段不匹配]")
+            done[label] = "survived"
+            save_progress(done)
             continue
 
         mutated = original.replace(old, new, 1)
@@ -2602,6 +2661,8 @@ def main() -> int:
             # 替换后那一段与原来**完全等价**。
             print(f"  ERROR {label}  (变异是空操作，检查配置有误)")
             survived.append(label + " [空操作变异]")
+            done[label] = "survived"
+            save_progress(done)
             continue
 
         try:
@@ -2625,17 +2686,25 @@ def main() -> int:
             print(f"  {'KILLED' if killed else 'SURVIVED'}  {label}")
         if not killed:
             survived.append(label)
+        done[label] = "killed" if killed else "survived"
+        save_progress(done)
 
     print()
-    print(f"变异检查：{len(MUTATIONS) - len(survived)}/{len(MUTATIONS)} 被测试杀死")
+    total = len(MUTATIONS)
+    print(f"变异检查：{total - len(survived)}/{total} 被测试杀死")
     if survived:
         print("存活（说明对应测试形同虚设）：")
         for item in survived:
             print("  -", item)
         return 1
+    # 全绿时清掉断点，下次从头来（清单可能已经变了）。
+    try:
+        os.remove(PROGRESS_PATH)
+    except OSError:
+        pass
     return 0
 
 
 if __name__ == "__main__":
     force_utf8_output()
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

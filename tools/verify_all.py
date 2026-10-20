@@ -151,12 +151,24 @@ def main(argv: list[str]) -> int:
 
     # --full 之后清点残留
     if full:
+        # 备份残留 = 变异检查被中断，源码可能还停在某个变异版本上。
         leftovers = list(REPO.rglob("*.mutation-backup"))
         if leftovers:
             print(f"\n⚠ 变异检查留下了 {len(leftovers)} 个备份文件：")
             for item in leftovers:
                 print(f"    {item}")
+            print("  源码可能仍处于变异状态；再跑一次 `mutation_check.py`")
+            print("  会自动从备份恢复（`heal_leftovers()`）。")
             return 1
+
+        # 断点残留说明上一轮没跑完。**不算失败**，但要说清楚——否则「全绿」
+        # 会被误读成「所有变异刚刚全部重跑过」。
+        progress = REPO / "tests" / ".mutation_progress.json"
+        if progress.exists():
+            print(
+                f"\n注：存在变异断点 {progress.name}——本轮复用了已完成的条目。"
+                "要完整重跑请加 `--reset`。"
+            )
 
     print("\n全部通过。")
     return 0
