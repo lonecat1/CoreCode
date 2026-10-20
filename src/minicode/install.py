@@ -86,28 +86,57 @@ def has_path_entry(target: Path) -> bool:
 def launcher_scripts(repo_root: Path) -> dict[str, str]:
     """生成启动器脚本。返回 `{文件名: 内容}`。
 
-    ## 启动器指向哪里
+    ## 启动器必须自己设 `PYTHONPATH`
 
-    原版指向仓库里的 `bin/minicode`（一个 bash 入口）。本项目没有那个文件
-    ——入口由 `pyproject.toml` 的 `[project.scripts]` 声明
-    （`minicode = "minicode.cli:main"`），`pip install` 后由 setuptools 生成。
+    本项目是 `src/` 布局，只有两种情况下 `-m minicode.cli` 能找到包：
+    ① `pip install` 过；② 调用时 `PYTHONPATH` 里有 `src/`。
 
-    因此这里用 `python -m minicode.cli`：它在「已安装」与「设了 PYTHONPATH」
-    两种情况下都能跑，而直接指向某个 `.py` 文件只在其中一种情况下成立。
+    早先生成的脚本**两样都没做**——`repo_root` 参数收下了却**从未使用**。
+    于是从源码使用时，启动器一执行就是：
+
+        ModuleNotFoundError: No module named 'minicode'
+
+    这个错误的可诊断性极差：用户会以为「没装」，实际装的是**启动器有问题**。
+
+    现在三个脚本都显式把 `<repo_root>/src` 放到 `PYTHONPATH` **最前面**
+    ——前面而不是后面：仓库里的代码应当优先于任何已安装的同名包。
 
     Windows 上同时给 `.cmd` 与 `.ps1`：`cmd.exe` 只认 `.cmd`，PowerShell
     更愿意执行 `.ps1`，两者都放才能「在任意终端输入 minicode 启动」。
     """
-    entry = f'"{sys.executable}" -m minicode.cli'
+    src_dir = repo_root / "src"
+    python = f'"{sys.executable}"'
 
-    posix = "#!/usr/bin/env sh\nset -eu\n" + f'exec "{sys.executable}" -m minicode.cli "$@"\n'
-    cmd = f"@echo off\r\n{entry} %*\r\n"
+    # 三个脚本的路径分隔符不同：Windows 用 `;`，POSIX 用 `:`。
+    posix = (
+        "#!/usr/bin/env sh\n"
+        "set -eu\n"
+        f'PYTHONPATH="{src_dir}${{PYTHONPATH:+:$PYTHONPATH}}"\n'
+        "export PYTHONPATH\n"
+        f'exec {python} -m minicode.cli "$@"\n'
+    )
+    # `setlocal` 让 PYTHONPATH 只在这次调用里生效，不污染用户的终端。
+    cmd = (
+        "@echo off\r\n"
+        "setlocal\r\n"
+        f'set "PYTHONPATH={src_dir};%PYTHONPATH%"\r\n'
+        f"{python} -m minicode.cli %*\r\n"
+    )
     # **注释刻意用 ASCII。**
     #
     # Windows PowerShell 5.1 读取**无 BOM** 的 UTF-8 文件时按 ANSI 解码，
     # 非 ASCII 字符会变成乱码。注释乱码本身不影响执行，但一旦有人把非 ASCII
     # 写进**代码**（比如路径），就会真的出问题。launcher 保持纯 ASCII 最稳。
-    ps1 = f"# MiniCode launcher (PowerShell)\n& {entry} @args\n"
+    ps1 = (
+        "# MiniCode launcher (PowerShell)\n"
+        f'$env:PYTHONPATH = "{src_dir};" + $env:PYTHONPATH\n'
+        f"& {python} -m minicode.cli @args\n"
+        "$code = $LASTEXITCODE\n"
+        # **显式传递退出码。** PowerShell 里 `&` 之后脚本会继续往下走；
+        # 若最后不是 `exit`，`$LASTEXITCODE` 会被后续语句吞掉，于是
+        # `minicode --help; echo $LASTEXITCODE` 恒为 0，脚本无法判断成败。
+        "exit $code\n"
+    )
     return {"minicode": posix, "minicode.cmd": cmd, "minicode.ps1": ps1}
 
 

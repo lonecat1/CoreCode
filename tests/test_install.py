@@ -23,6 +23,7 @@ import json
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -187,9 +188,20 @@ class LauncherTests(unittest.TestCase):
         self.assertTrue(scripts["minicode"].startswith("#!/usr/bin/env sh"))
 
     def test_cmd_launcher_uses_crlf(self) -> None:
-        """`.cmd` 的行尾必须是 CRLF，否则某些 cmd 版本会解析异常。"""
-        scripts = launcher_scripts(Path(tempfile.gettempdir()))
-        self.assertIn("\r\n", scripts["minicode.cmd"])
+        """`.cmd` 的**每一行**都必须是 CRLF，不能有孤立的 LF。
+
+        早先这里只断言「内容里有 `\\r\\n`」——太弱：把其中一行改成 LF，其余行
+        仍然带 `\\r\\n`，断言照样通过。而 `.cmd` 的解析器对混合行尾很敏感：
+        被拆开的那一行可能被当成两条命令。
+
+        判据改成「不存任何**前面不是 `\\r`** 的 `\\n`」。
+        """
+        content = launcher_scripts(Path(tempfile.gettempdir()))["minicode.cmd"]
+        stray = [
+            index for index, char in enumerate(content)
+            if char == "\n" and (index == 0 or content[index - 1] != "\r")
+        ]
+        self.assertEqual(stray, [], f"第 {stray} 个字符处的换行不是 CRLF")
 
     def test_launchers_run_the_module_entry(self) -> None:
         """**指向 `python -m minicode.cli` 而不是某个 `.py` 文件。**
@@ -217,6 +229,97 @@ class LauncherTests(unittest.TestCase):
         for name, content in launcher_scripts(Path(tempfile.gettempdir())).items():
             with self.subTest(launcher=name):
                 content.encode("ascii")  # 抛 UnicodeEncodeError 即失败
+
+    # ------------------------------------------------------------------
+    # 启动器必须自己设 `PYTHONPATH`
+    #
+    # **这一组是补的，因为真实发生过事故**：早先 `launcher_scripts(repo_root)`
+    # 收下了 `repo_root` 却**从未使用**，生成的脚本里只有
+    # `python -m minicode.cli`。本项目是 `src/` 布局，从源码使用时一执行就是：
+    #
+    #     ModuleNotFoundError: No module named 'minicode'
+    #
+    # 而这个错误的可诊断性极差——用户会以为「没装」，实际装的是**启动器有问题**。
+    # ------------------------------------------------------------------
+
+    def test_every_launcher_puts_src_on_pythonpath(self) -> None:
+        repo = Path(tempfile.gettempdir()) / "fake-repo"
+        scripts = launcher_scripts(repo)
+        expected = str(repo / "src")
+        for name, content in scripts.items():
+            with self.subTest(launcher=name):
+                self.assertIn("PYTHONPATH", content, name)
+                self.assertIn(expected, content, name)
+
+    def test_pythonpath_stays_visible_to_the_interpreter(self) -> None:
+        """变量必须真的被**导出**。
+
+        POSIX 脚本里少一句 `export`，子进程就看不到它——那是「写进文本但没生效」
+        的典型形态，光断言字符串存在查不出来。
+        """
+        scripts = launcher_scripts(Path(tempfile.gettempdir()))
+        self.assertIn("export PYTHONPATH", scripts["minicode"])
+        self.assertIn("setlocal", scripts["minicode.cmd"])
+        self.assertIn("$env:PYTHONPATH", scripts["minicode.ps1"])
+
+    def test_repo_src_wins_over_existing_pythonpath(self) -> None:
+        """仓库的 `src/` 必须排在**前面**。
+
+        排在后面时，任何已安装的同名包会先命中——用户改了仓库代码却看不到效果，
+        而且不会有任何报错。
+        """
+        repo = Path(tempfile.gettempdir()) / "fake-repo"
+        src = str(repo / "src")
+        scripts = launcher_scripts(repo)
+        self.assertLess(
+            scripts["minicode"].index(src),
+            scripts["minicode"].index("${PYTHONPATH"),
+        )
+        self.assertLess(
+            scripts["minicode.cmd"].index(src),
+            scripts["minicode.cmd"].index("%PYTHONPATH%"),
+        )
+        # ps1 里 `$env:PYTHONPATH` 在赋值**左边**也出现一次，位置更靠前。
+        # 要比较的是右值那一处（`+ $env:PYTHONPATH`），否则这条断言恒假。
+        self.assertLess(
+            scripts["minicode.ps1"].index(src),
+            scripts["minicode.ps1"].index("+ $env:PYTHONPATH"),
+        )
+
+    def test_ps1_propagates_the_exit_code(self) -> None:
+        """PowerShell 里 `&` 之后脚本会继续走；不显式 `exit`，退出码会被吞掉。
+
+        后果很具体：`minicode --help; echo $LASTEXITCODE` 恒为 0，
+        CI 判断不出成败。
+        """
+        scripts = launcher_scripts(Path(tempfile.gettempdir()))
+        self.assertIn("$LASTEXITCODE", scripts["minicode.ps1"])
+        self.assertIn("exit $code", scripts["minicode.ps1"])
+
+    @unittest.skipUnless(os.name == "nt", "只有 Windows 需要验 .cmd")
+    def test_generated_cmd_actually_runs_from_source(self) -> None:
+        """**端到端**：把生成的 `.cmd` 真的跑起来。
+
+        这条直接复现用户遇到的场景——环境里**没有** `PYTHONPATH`，只有启动器
+        自己补的那一份。跑 `--help`，不进入 REPL、不读用户配置。
+        """
+        repo_root = Path(__file__).resolve().parent.parent
+        scripts = launcher_scripts(repo_root)
+        with tempfile.TemporaryDirectory(prefix="launcher-e2e-") as tmp:
+            target = Path(tmp) / "minicode.cmd"
+            target.write_text(scripts["minicode.cmd"], encoding="utf-8", newline="")
+            env = {k: v for k, v in os.environ.items() if k.upper() != "PYTHONPATH"}
+            proc = subprocess.run(
+                ["cmd", "/c", str(target), "--help"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                env=env, timeout=120,
+            )
+        combined = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, combined[:600])
+        self.assertNotIn("No module named", combined)
+        # `--help` 在原版里由管理子命令拦截（`maybeHandleManagementCommand`），
+        # 所以输出是管理命令清单，不是主 CLI 帮助。
+        self.assertIn("minicode mcp", combined)
 
 
 class InstallFlowTests(InstallTestCase):

@@ -1244,22 +1244,25 @@ MUTATIONS = [
         "            f'$env:Path = \"{bin_dir};\" + $env:Path\\n'\n        )",
     ),
     (
+        # 锚点刻意选**不含转义序列**的短片段。上一版把整行写进锚点，里面
+        # 有 `\r\n` / `\n`——在 `mutation_check.py` 这一层再转义一次极易出错，
+        # 实际结果就是三条锚点全部失效（[未找到]）。短片段同样唯一，且不用转义。
         "安装: 启动器不指向模块入口（指向不存在的文件）",
         INSTALL,
-        '    posix = "#!/usr/bin/env sh\\nset -eu\\n" + f\'exec "{sys.executable}" -m minicode.cli "$@"\\n\'',
-        '    posix = "#!/usr/bin/env sh\\nset -eu\\n" + f\'exec "{sys.executable}" "minicode.py" "$@"\\n\'',
+        ' -m minicode.cli "$@"',
+        ' "minicode.py" "$@"',
     ),
     (
         "安装: .cmd 用 LF（某些 cmd 版本解析异常）",
         INSTALL,
-        '    cmd = f"@echo off\\r\\n{entry} %*\\r\\n"',
-        '    cmd = f"@echo off\\n{entry} %*\\n"',
+        r'        "@echo off\r\n"',
+        r'        "@echo off\n"',
     ),
     (
         "安装: 启动器写入非 ASCII 注释（PowerShell 5.1 乱码）",
         INSTALL,
-        '    ps1 = f"# MiniCode launcher (PowerShell)\\n& {entry} @args\\n"',
-        '    ps1 = f"# MiniCode 启动器\\n& {entry} @args\\n"',
+        "# MiniCode launcher (PowerShell)",
+        "# MiniCode 启动器",
     ),
     (
         "安装: 不创建启动器目录",
@@ -2536,6 +2539,55 @@ _ADAPTER_NETWORK_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_ADAPTER_NETWORK_MUTATIONS]
+
+
+#: 启动器脚本（`tests/test_install.py` 的 `LauncherTests`）。
+#:
+#: 这一组防的是一个**真的发布出去过**的缺陷：`launcher_scripts(repo_root)` 收下
+#: `repo_root` 却从未使用，生成的脚本不设 `PYTHONPATH`。从源码使用时一执行就是
+#: `ModuleNotFoundError: No module named 'minicode'`——而用户会以为「没装」。
+_LAUNCHER_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "启动器: 不设 PYTHONPATH（从源码运行时找不到包）",
+        INSTALL,
+        '        f\'PYTHONPATH="{src_dir}${{PYTHONPATH:+:$PYTHONPATH}}"\\n\'\n'
+        '        "export PYTHONPATH\\n"',
+        '        f\'PYTHONPATH=""\\n\'\n'
+        '        "export PYTHONPATH\\n"',
+    ),
+    (
+        "启动器: cmd 版不设 PYTHONPATH",
+        INSTALL,
+        '        f\'set "PYTHONPATH={src_dir};%PYTHONPATH%"\\r\\n\'',
+        '        "set \\"PYTHONPATH=%PYTHONPATH%\\"\\r\\n"',
+    ),
+    (
+        "启动器: ps1 版不设 PYTHONPATH",
+        INSTALL,
+        '        f\'$env:PYTHONPATH = "{src_dir};" + $env:PYTHONPATH\\n\'',
+        '        "$env:PYTHONPATH = $env:PYTHONPATH\\n"',
+    ),
+    (
+        "启动器: src 排在已有 PYTHONPATH 之后（已安装的包先命中）",
+        INSTALL,
+        '        f\'PYTHONPATH="{src_dir}${{PYTHONPATH:+:$PYTHONPATH}}"\\n\'',
+        '        f\'PYTHONPATH="${{PYTHONPATH:+$PYTHONPATH:}}{src_dir}"\\n\'',
+    ),
+    (
+        "启动器: posix 版忘记 export（子进程看不到 PYTHONPATH）",
+        INSTALL,
+        '        "export PYTHONPATH\\n"',
+        '        ": PYTHONPATH\\n"',
+    ),
+    (
+        "启动器: ps1 不传退出码（失败看起来像成功）",
+        INSTALL,
+        '        "$code = $LASTEXITCODE\\n"',
+        '        "$code = 0\\n"',
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_LAUNCHER_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。
