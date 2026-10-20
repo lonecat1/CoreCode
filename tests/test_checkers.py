@@ -464,5 +464,69 @@ class MutationResumeTests(unittest.TestCase):
             self.mc.save_progress({"a": "killed"})  # 不抛即通过
 
 
+class RealHomeGuardTests(unittest.TestCase):
+    """变异检查必须**在动到真实家目录时立即中止**。
+
+    ## 这条防线的由来（一次真实事故）
+
+    变异清单里有一条把 `minicode_home()` 从「读环境变量」改成硬编码
+    `Path.home() / ".mini-code"`，标签写着「测试隔离失效」。没人想到它的
+    破坏性后果：那 20 秒里，所有**写配置**的测试都落到了用户的真实家目录。
+
+    `tests/test_install.py` 的答案是 `["m", "https://x", "t"]`，于是真实的
+    `~/.mini-code/settings.json` 被写成了 `model: "m"`、
+    `ANTHROPIC_BASE_URL: "https://x"`、`ANTHROPIC_AUTH_TOKEN: "t"`。
+    此后每次运行都因为 `https://x` 解析不了而报 `getaddrinfo failed`。
+
+    **变异检查的目的是「让测试变红」，不是「让测试去改用户的机器」。**
+    """
+
+    def setUp(self) -> None:
+        import mutation_check
+
+        self.mc = mutation_check
+
+    def test_no_change_returns_empty(self) -> None:
+        fingerprint = {"settings.json": (274, 100), "permissions.json": (218, 200)}
+        self.assertEqual(self.mc.home_changes(fingerprint, dict(fingerprint)), [])
+
+    def test_modified_file_is_detected(self) -> None:
+        before = {"settings.json": (274, 100)}
+        after = {"settings.json": (274, 999)}  # 大小没变，mtime 变了
+        self.assertEqual(self.mc.home_changes(before, after), ["settings.json"])
+
+    def test_size_change_is_detected(self) -> None:
+        before = {"settings.json": (274, 100)}
+        after = {"settings.json": (300, 100)}
+        self.assertEqual(self.mc.home_changes(before, after), ["settings.json"])
+
+    def test_new_file_is_detected(self) -> None:
+        before = {"settings.json": (274, 100)}
+        after = {"settings.json": (274, 100), "sessions.json": (10, 1)}
+        self.assertEqual(self.mc.home_changes(before, after), ["sessions.json"])
+
+    def test_deleted_file_is_detected(self) -> None:
+        before = {"settings.json": (274, 100), "gone.json": (5, 1)}
+        after = {"settings.json": (274, 100)}
+        self.assertEqual(self.mc.home_changes(before, after), ["gone.json"])
+
+    def test_fingerprint_shape_is_stable(self) -> None:
+        """指纹必须是 `{相对路径: (大小, mtime_ns)}`——比较逻辑依赖这个形状。"""
+        fingerprint = self.mc._real_home_fingerprint()
+        self.assertIsInstance(fingerprint, dict)
+        for name, value in list(fingerprint.items())[:5]:
+            with self.subTest(name=name):
+                self.assertIsInstance(name, str)
+                self.assertIsInstance(value, tuple)
+                self.assertEqual(len(value), 2)
+                self.assertTrue(all(isinstance(part, int) for part in value))
+
+    def test_fingerprint_is_stable_when_nothing_changes(self) -> None:
+        """连续两次取指纹必须一致——否则每一轮都会误报「家目录被改」。"""
+        first = self.mc._real_home_fingerprint()
+        second = self.mc._real_home_fingerprint()
+        self.assertEqual(self.mc.home_changes(first, second), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

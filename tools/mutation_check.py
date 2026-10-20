@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 from _shared import force_utf8_output
 
@@ -761,14 +762,23 @@ MUTATIONS = [
         'def permissions_path() -> Path:\n    return Path.home() / ".mini-code" / "permissions.json"',
     ),
     (
-        "配置: minicode_home 忽略 MINICODE_HOME（测试隔离与运行时改配置失效）",
+        # **这条变异已删除。** 它把 `minicode_home()` 改成硬编码
+        # `Path.home() / ".mini-code"`，于是写配置的测试会**写到用户的真实
+        # 家目录**——`tests/test_install.py` 的答案 `["m", "https://x", "t"]`
+        # 曾经真的覆盖过 `~/.mini-code/settings.json`，导致之后每次运行都因
+        # `https://x` 解析不了而报 `getaddrinfo failed`。
+        #
+        # 变异检查的目的是「让测试变红」，不是「让测试改用户的机器」。
+        # 现在 `_real_home_fingerprint()` 会在任何变异改动真实家目录时立即中止
+        # （退出码 2），但这一条**必然**触发它，跑不了，所以从清单里去掉。
+        #
+        # 留了一个**等价但安全**的替代：只认一种环境变量拼写。它同样让
+        # 「家目录可重定向」这条契约失效（D47），但只在临时目录之间走错，
+        # 不会越界到用户的真实家目录。
+        "配置: 家目录只认 MINICODE_HOME（不认原版拼写 MINI_CODE_HOME）",
         CONFIG,
-        "def minicode_home() -> Path:\n"
-        '    """当前生效的家目录。每次调用重新读取环境变量。"""\n'
-        "    return _home_dir()",
-        "def minicode_home() -> Path:\n"
-        '    """当前生效的家目录。每次调用重新读取环境变量。"""\n'
-        "    return Path.home() / \".mini-code\"",
+        '    override = env_value("HOME")',
+        '    override = os.environ.get("MINICODE_HOME")',
     ),
     (
         "MCP: 未知状态被算作 connected（数字看起来正常但是错的）",
@@ -2639,6 +2649,59 @@ def audit_anchors() -> list[str]:
 PROGRESS_PATH = os.path.join(REPO, "tests", ".mutation_progress.json")
 
 
+def home_changes(
+    before: dict[str, tuple[int, int]], after: dict[str, tuple[int, int]]
+) -> list[str]:
+    """两份指纹之间**变了**的文件名（新增、删除、内容或 mtime 变化）。
+
+    抽成独立函数是为了可测：abort 那条路径要跑完整一轮变异才触发，测不到；
+    而「比较逻辑本身对不对」是这条防线唯一会出错的地方。
+    """
+    changed = set(after) ^ set(before)
+    changed |= {
+        name
+        for name in set(after) & set(before)
+        if after[name] != before[name]
+    }
+    return sorted(changed)
+
+
+def _real_home_fingerprint() -> dict[str, tuple[int, int]]:
+    """真实 `~/.mini-code` 的指纹：`{文件名: (大小, mtime_ns)}`。
+
+    ## 为什么需要它（一次真实事故）
+
+    变异里有这一条：
+
+        "配置: minicode_home 忽略 MINICODE_HOME（测试隔离与运行时改配置失效）"
+        `return _home_dir()`  →  `return Path.home() / ".mini-code"`
+
+    名字里写着「测试隔离失效」，但**没有人想到它的破坏性后果**：在那 20 秒里，
+    所有写配置的测试都落到了**用户的真实家目录**。
+
+    `tests/test_install.py` 的答案是 `["m", "https://x", "t"]`，于是真实的
+    `~/.mini-code/settings.json` 被写成了 `model: "m"`、`ANTHROPIC_BASE_URL:
+    "https://x"`、`ANTHROPIC_AUTH_TOKEN: "t"`——用户的真实配置被测试夹具覆盖，
+    而之后每次运行都会因为 `https://x` 解析不了而报 `getaddrinfo failed`。
+
+    **变异检查的目的只是「让测试变红」，不是「让测试去改用户的机器」。**
+    这个指纹就是那道闸：变异跑完发现真实家目录变了，立即中止，而不是继续跑
+    剩下的两小时。
+    """
+    home = Path(os.path.expanduser("~")) / ".mini-code"
+    if not home.is_dir():
+        return {}
+    fingerprint: dict[str, tuple[int, int]] = {}
+    for path in home.rglob("*"):
+        if path.is_file():
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            fingerprint[str(path.relative_to(home))] = (stat.st_size, stat.st_mtime_ns)
+    return fingerprint
+
+
 def load_progress() -> dict[str, str]:
     try:
         with open(PROGRESS_PATH, encoding="utf-8") as handle:
@@ -2729,14 +2792,33 @@ def main(argv: list[str] | None = None) -> int:
             with open(backup_path(path), "w", encoding="utf-8", newline="\n") as handle:
                 handle.write(original)
             open(path, "w", encoding="utf-8", newline="\n").write(mutated)
+            home_before = _real_home_fingerprint()
             passed, timed_out = run_suite()
             killed = not passed
+            home_after = _real_home_fingerprint()
         finally:
             open(path, "w", encoding="utf-8", newline="\n").write(original)
             try:
                 os.remove(backup_path(path))
             except OSError:
                 pass
+
+        # **真实家目录被改过就立即中止。** 见 `_real_home_fingerprint` 的说明：
+        # 那条「minicode_home 忽略 MINICODE_HOME」的变异会让写配置的测试落到
+        # 用户的真实 `~/.mini-code` 上，把 `settings.json` 覆盖成测试夹具的值。
+        # 这不是「变异存活」，是沙箱逃逸——继续跑剩下几百条只会扩大破坏。
+        if home_after != home_before:
+            changed = home_changes(home_before, home_after)
+            print()
+            print("!! 中止：这条变异改动了**真实家目录** ~/.mini-code")
+            print(f"!! 变异: {label}")
+            print(f"!! 被改动的文件: {', '.join(changed) or '（新增/删除）'}")
+            print()
+            print("   这不是「变异存活」，是**沙箱逃逸**：测试本该只写临时目录。")
+            print("   继续跑剩下的条目只会扩大破坏。请先：")
+            print("     1. 从 tests/_tmp/real-home-backup/ 恢复被覆盖的配置")
+            print("     2. 修好隔离（或删掉这条变异）后再跑")
+            return 2
 
         if timed_out:
             print(f"  KILLED  {label}  (超时——测试发现该变异会阻塞)")
