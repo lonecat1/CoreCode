@@ -92,13 +92,27 @@
 | **全仓 270 个模块级常量** | `tools/check_constants.py`，零孤儿 |
 | **全仓 606 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
 
-**只做过逐行阅读、尚未做数据级比对的模块**（**已知剩余工作**）：
-`utils/*` 里少数工具函数的边界值
+**整个 `utils/` 都已做过数据级比对**（六个文件逐一）：
 
-> 注：`agents/manager.ts`、`mcp/bridge.py`、`runtime/turn-runner.ts`、
-> `runtime/session-runtime.ts`、`utils/token-estimator.ts`、
-> `runtime/context.py` / `goal/context.ts`、`utils/errors.ts` / `utils/web.ts`
-> 已完成数据级比对，从上面的清单移出。
+| 文件 | 比对了什么 |
+|---|---|
+| `utils/web.ts` | 逐函数 + 端点/解析器配对 + 错误码翻译（9 项映射 + 四条文案分支） |
+| `utils/errors.ts` | `isEnoentError` 的 6 个调用点；`getErrorCode` 的等价物 `node_error_code()` |
+| `utils/model-context.ts` | 22 条规则逐条（模式列表 / 窗口 / 预留 / 顺序） |
+| `utils/token-estimator.ts` | warningLevel 阈值 + `CLEAR_MARKER` + `CHARS_PER_TOKEN` 9 项 |
+| `utils/tool-result-storage.ts` | 6 个常量 + 预览的「最后一个换行超过 50% 才切」规则 |
+| `utils/context.ts` | 18 条输出上限规则 + 兜底值 |
+
+> 早先这里写的是「`utils/*` 里少数工具函数的边界值**尚未**做数据级比对」。
+> 那句话在写完 `utils/errors.ts` 那一轮之后就已经不准确了——六个文件都有了
+> 比对记录，只是没人回来改这句总结。
+>
+> **「已知剩余工作」这一栏同样是会过期的断言**，它的准确性不比数字高；只是
+> 数字现在有 `check_docs.py` 看着，而这句话没有。
+
+**真正还没核的部分**只剩「本来就不可核」的那些（见
+`docs/verification.md` 的「已知的验证盲区」）：真实模型 API、真实 MCP 服务器、
+极端终端、长时间运行的累积状态。
 
 ### 映射表本身也会漏（`utils/errors.ts` 就是）
 
