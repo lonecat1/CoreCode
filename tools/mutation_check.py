@@ -63,6 +63,9 @@ CHECK_CONSTANTS = os.path.join(REPO, "tools", "check_constants.py")
 CHECK_DUPLICATES = os.path.join(REPO, "tools", "check_duplicates.py")
 FILE_MAP = os.path.join(REPO, "tools", "file_map.py")
 CHECK_DOCS = os.path.join(REPO, "tools", "check_docs.py")
+ANTHROPIC_ADAPTER = os.path.join(
+    REPO, "src", "minicode", "adapters", "anthropic.py"
+)
 LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
 TOOLS_GOAL = os.path.join(REPO, "src", "minicode", "tools", "goal.py")
 PLAN = os.path.join(REPO, "src", "minicode", "runtime", "plan.py")
@@ -2468,6 +2471,61 @@ _CHECK_DOCS_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_CHECK_DOCS_MUTATIONS]
+
+
+#: 网络错误的处理（`tests/test_adapters.py` 的 `NetworkErrorTests`）。
+#:
+#: 这一组防的是两个具体缺陷：**重试一次 DNS 失败**（白等约 9 秒，而原版根本不
+#: 重试网络错误），以及**把 Python 内部包装漏给用户**
+#: （`<urlopen error [Errno 11001] getaddrinfo failed>`，没有地址也没有码）。
+_ADAPTER_NETWORK_MUTATIONS: list[tuple[str, str, str, str]] = [
+    (
+        "适配器: 网络错误又变成「重试到上限」",
+        ANTHROPIC_ADAPTER,
+        "            except (urllib.error.URLError, OSError) as error:\n"
+        "                # **不重试，翻译后直接抛出。** 见上面 docstring 里的原版对照。",
+        "            except (urllib.error.URLError, OSError) as error:\n"
+        "                if attempt < self._max_retries:\n"
+        "                    _sleep_interruptible(retry_delay_seconds(attempt + 1, None), signal)\n"
+        "                    continue\n"
+        "                # **不重试，翻译后直接抛出。** 见上面 docstring 里的原版对照。",
+    ),
+    (
+        "适配器: 网络错误不翻译（直接抛 Python 原始异常）",
+        ANTHROPIC_ADAPTER,
+        "                raise AnthropicNetworkError(\n"
+        "                    format_web_error_message(url, error, 600_000),",
+        "                raise error from error\n"
+        "                raise AnthropicNetworkError(\n"
+        "                    format_web_error_message(url, error, 600_000),",
+    ),
+    (
+        "适配器: 只捕 URLError（裸 socket.timeout 逃出去）",
+        ANTHROPIC_ADAPTER,
+        "            except (urllib.error.URLError, OSError) as error:",
+        "            except urllib.error.URLError as error:",
+    ),
+    (
+        "适配器: 错误消息不带 URL",
+        ANTHROPIC_ADAPTER,
+        "                raise AnthropicNetworkError(\n"
+        "                    format_web_error_message(url, error, 600_000),\n"
+        "                    code=node_error_code(error),\n"
+        "                    url=url,",
+        "                raise AnthropicNetworkError(\n"
+        "                    format_web_error_message(\"\", error, 600_000),\n"
+        "                    code=node_error_code(error),\n"
+        "                    url=url,",
+    ),
+    (
+        "适配器: 超时不标记（timed_out 恒 False）",
+        ANTHROPIC_ADAPTER,
+        "                    timed_out=is_timeout_error(error),",
+        "                    timed_out=False,",
+    ),
+]
+
+MUTATIONS = [*MUTATIONS, *_ADAPTER_NETWORK_MUTATIONS]
 
 
 #: 单次跑测试的上限（秒）。

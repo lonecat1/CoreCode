@@ -240,6 +240,201 @@ class RetryPolicyTests(unittest.TestCase):
             self.assertGreater(delay, 0)
 
 
+class _AlwaysFailingOpener:
+    """每次 `open()` 都抛同一个异常，并记下被调了几次。"""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+        self.calls = 0
+
+    def open(self, request, timeout=None):  # noqa: ANN001, ARG002
+        self.calls += 1
+        raise self.error
+
+
+class _OkResponse:
+    status = 200
+    headers: dict[str, str] = {}
+
+    def read(self) -> bytes:
+        return b'{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}'
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):  # noqa: ANN002
+        return False
+
+    def __iter__(self):
+        return iter(())
+
+
+class _StatusThenOkOpener:
+    """前 `failures` 次返回给定状态码，之后成功。"""
+
+    def __init__(self, status: int, failures: int) -> None:
+        self.status = status
+        self.failures = failures
+        self.calls = 0
+
+    def open(self, request, timeout=None):  # noqa: ANN001, ARG002
+        import io
+        import urllib.error
+
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise urllib.error.HTTPError(
+                "https://x", self.status, "err",
+                {"content-type": "application/json"},
+                io.BytesIO(b'{"error":{"message":"boom"}}'),
+            )
+        return _OkResponse()
+
+
+def _adapter_with_opener(opener, *, max_retries: int | None = 4):  # noqa: ANN001
+    """造一个适配器，配置固定（不读环境变量），opener 可控。"""
+    from minicode.adapters.anthropic import AnthropicModelAdapter
+    from minicode.config import RuntimeConfig
+
+    config = RuntimeConfig(
+        model="claude-sonnet-4",
+        base_url="https://no-such-host.invalid",
+        auth_token="t",
+    )
+    return AnthropicModelAdapter(lambda: config, max_retries=max_retries, opener=opener)
+
+
+class NetworkErrorTests(unittest.TestCase):
+    """网络错误：**不重试**，且消息要说清「连哪个地址失败了」。
+
+    ## 这两条都是真实缺陷的回归护栏
+
+    早先 `_post_with_retry` 对 `urllib.error.URLError` **无条件重试**
+    （`max_retries=4` + 指数退避），而原版不重试：它的 `for` 循环里
+    `await fetch(...)` **没有 try/catch**，异常直接冒泡
+    （`anthropic-adapter.ts:344-362`）。
+
+    代价很具体：一次 DNS 解析失败要白等 **4 次退避、约 9 秒**才报错——而重试
+    一个「hostname 解析不了」不会有任何机会成功。
+
+    消息也一样：原来冒泡的是 `<urlopen error [Errno 11001] getaddrinfo failed>`，
+    既没说是哪个地址，也把 Python 的内部包装漏给了用户。
+
+    **这一组是补的**：改完之后跑全量 1606 项全绿——说明这条重试路径从来没有
+    被测试覆盖过。
+    """
+
+    def _dns_error(self):
+        import socket
+        import urllib.error
+
+        return urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "x"))
+
+    def test_dns_failure_is_not_retried(self) -> None:
+        from minicode.adapters.anthropic import AnthropicNetworkError
+
+        opener = _AlwaysFailingOpener(self._dns_error())
+        adapter = _adapter_with_opener(opener)
+        with self.assertRaises(AnthropicNetworkError):
+            adapter.next([{"role": "user", "content": "hi"}])
+        self.assertEqual(opener.calls, 1, "网络错误不该重试（原版也不重试）")
+
+    def test_connection_refused_is_not_retried(self) -> None:
+        import urllib.error
+
+        from minicode.adapters.anthropic import AnthropicNetworkError
+
+        opener = _AlwaysFailingOpener(
+            urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+        )
+        adapter = _adapter_with_opener(opener)
+        with self.assertRaises(AnthropicNetworkError):
+            adapter.next([{"role": "user", "content": "hi"}])
+        self.assertEqual(opener.calls, 1)
+
+    def test_message_names_the_code_and_the_url(self) -> None:
+        """`request failed (ENOTFOUND) for https://…/v1/messages`。
+
+        两样缺一不可：**码**说明是什么故障，**URL** 说明连的是哪个地址
+        （用户最常见的错误是 `ANTHROPIC_BASE_URL` 写错一个字母）。
+        """
+        from minicode.adapters.anthropic import AnthropicNetworkError
+
+        opener = _AlwaysFailingOpener(self._dns_error())
+        adapter = _adapter_with_opener(opener)
+        with self.assertRaises(AnthropicNetworkError) as caught:
+            adapter.next([{"role": "user", "content": "hi"}])
+        error = caught.exception
+        self.assertIn("ENOTFOUND", str(error))
+        self.assertIn("no-such-host.invalid", str(error))
+        self.assertIn("/v1/messages", str(error))
+        self.assertEqual(error.code, "ENOTFOUND")
+        self.assertFalse(error.timed_out)
+        self.assertNotIn("urlopen", str(error), "不该漏出 Python 的内部包装")
+
+    def test_carries_structured_fields(self) -> None:
+        """除了字符串，还要有结构化字段——测试与未来的界面都要用。"""
+        import urllib.error
+
+        from minicode.adapters.anthropic import AnthropicNetworkError
+
+        opener = _AlwaysFailingOpener(
+            urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+        )
+        adapter = _adapter_with_opener(opener)
+        with self.assertRaises(AnthropicNetworkError) as caught:
+            adapter.next([{"role": "user", "content": "hi"}])
+        error = caught.exception
+        self.assertEqual(error.code, "ECONNREFUSED")
+        self.assertEqual(error.url, "https://no-such-host.invalid/v1/messages")
+
+    def test_timeout_is_flagged_and_not_retried(self) -> None:
+        import socket
+
+        from minicode.adapters.anthropic import AnthropicNetworkError
+
+        opener = _AlwaysFailingOpener(socket.timeout("timed out"))
+        adapter = _adapter_with_opener(opener)
+        with self.assertRaises(AnthropicNetworkError) as caught:
+            adapter.next([{"role": "user", "content": "hi"}])
+        self.assertTrue(caught.exception.timed_out)
+        self.assertIn("timed out after", str(caught.exception))
+        self.assertEqual(opener.calls, 1)
+
+    def test_http_status_errors_are_still_retried(self) -> None:
+        """**回归护栏**：改网络错误路径时不能把 HTTP 状态码重试弄丢。
+
+        原版对 429/5xx 是重试的（`shouldRetryStatus`），那是行为契约。
+        """
+        opener = _StatusThenOkOpener(503, failures=2)
+        adapter = _adapter_with_opener(opener, max_retries=4)
+        result = adapter.next([{"role": "user", "content": "hi"}])
+        self.assertEqual(opener.calls, 3, "503 应当重试到成功")
+        self.assertEqual(result.content, "ok")
+
+    def test_permanent_http_error_is_not_retried(self) -> None:
+        import io
+        import urllib.error
+
+        from minicode.adapters.anthropic import AnthropicHttpError
+
+        class _Permanent:
+            calls = 0
+
+            def open(self, request, timeout=None):  # noqa: ANN001, ARG002
+                _Permanent.calls += 1
+                raise urllib.error.HTTPError(
+                    "https://x", 400, "bad",
+                    {"content-type": "application/json"},
+                    io.BytesIO(b'{"error":{"message":"invalid"}}'),
+                )
+
+        adapter = _adapter_with_opener(_Permanent())
+        with self.assertRaises(AnthropicHttpError):
+            adapter.next([{"role": "user", "content": "hi"}])
+        self.assertEqual(_Permanent.calls, 1, "400 不该重试")
+
+
 class MaxOutputTokensTests(unittest.TestCase):
     """逐条对应原版 `utils/context.ts` 的 `MODEL_MAX_OUTPUT_TOKEN_RULES`。
 

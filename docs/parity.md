@@ -38,9 +38,9 @@
 | 未映射 | 0 |
 | Python 模块 | 78 |
 | 模块级常量 | 270 |
-| 模块级函数/类 | 606 |
-| 变异用例 | 330 |
-| 单元测试 | 1606 |
+| 模块级函数/类 | 607 |
+| 变异用例 | 335 |
+| 单元测试 | 1613 |
 
 <!-- END GENERATED STATS -->
 
@@ -90,7 +90,7 @@
 | `goal/context.ts` | `GOAL_CONTEXT_LINES` **7 条逐字一致**；`formatGoal` 行结构；JSON 省略空值（`tests/test_runtime_context.py`） |
 | loop 上下文 | `LOOP_CONTEXT_LINES` **3 条逐字一致**；快照驼峰且省略 `nextRunAt` / `stopReason` |
 | **全仓 270 个模块级常量** | `tools/check_constants.py`，零孤儿 |
-| **全仓 606 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
+| **全仓 607 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
 
 **整个 `utils/` 都已做过数据级比对**（六个文件逐一）：
 

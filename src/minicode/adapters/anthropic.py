@@ -311,6 +311,38 @@ class AnthropicHttpError(Exception):
         self.status = status
 
 
+class AnthropicNetworkError(Exception):
+    """连不上（DNS 解析失败 / 连接被拒 / 超时 / TLS 失败）。
+
+    ## 为什么要单独一个类型
+
+    1. **消息是翻译过的**：`request failed (ENOTFOUND) for https://…`。原始的
+       `urllib.error.URLError` 说 `<urlopen error [Errno 11001] getaddrinfo
+       failed>`——既没说是哪个地址，也把 Python 的内部包装漏给用户。
+    2. **它不被重试**（与原版一致，见 `_post_with_retry` 的 docstring）。单独一个
+       类型让「这是网络层失败，不该重试」变成代码里看得见的事实，而不是靠
+       `except URLError` 的位置约定。
+    3. **`code` / `url` / `timed_out` 是结构化字段**：命令行之外（测试、未来的
+       界面）也想知道「是 DNS 还是超时」，而不是去 parse 字符串。
+
+    这是一处有意差异（D51）：原版抛的是 Node 的 `TypeError: fetch failed`，
+    那句话信息更少。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        url: str = "",
+        timed_out: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.url = url
+        self.timed_out = timed_out
+
+
 class AnthropicModelAdapter:
     """通过 HTTP 调用 Anthropic 兼容的 `/v1/messages`。
 
@@ -630,9 +662,42 @@ class AnthropicModelAdapter:
     def _post_with_retry(
         self, config: RuntimeConfig, body: dict[str, Any], signal: Any | None
     ) -> dict[str, Any]:
+        """发一次请求，**只在 HTTP 状态码可重试时**重试。
+
+        ## 网络错误不重试（与原版一致）
+
+        原版的重试循环是这样的（`anthropic-adapter.ts:344-362`）：
+
+            for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+              response = await fetch(url, {...})       // ← 没有 try/catch
+              if (response.ok) break
+              if (!shouldRetryStatus(response.status) || attempt >= maxRetries) break
+              await abortableDelay(...)
+            }
+
+        `fetch` 抛异常（DNS 失败、连接被拒、超时）时**没有任何 catch**，直接冒泡。
+        所以原版只重试 HTTP 状态码，不重试网络错误。
+
+        本实现早先无条件重试 `URLError`——DNS 解析失败会白等 **4 次退避、约 9 秒**
+        才报错，而重试一个「hostname 解析不了」不会有任何机会成功。
+
+        ## 错误消息也翻译过
+
+        原版冒泡出来的是 Node 的 `TypeError: fetch failed`；本实现原来冒泡的是
+        Python 的 `<urlopen error [Errno 11001] getaddrinfo failed>`——两者都**不
+        告诉用户它在连哪个地址**。这里改成 `request failed (ENOTFOUND) for {url}`：
+        沿用 `utils/web.py` 那套 `node_error_code()` 翻译，code 与 URL 都给出来。
+
+        这是一处**有意差异**（D51）：原版那句话信息更少。
+        """
+        from ..utils.web import (
+            format_web_error_message,
+            is_timeout_error,
+            node_error_code,
+        )
+
         url = config.messages_endpoint()
         encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        last_error: Exception | None = None
 
         for attempt in range(self._max_retries + 1):
             throw_if_aborted(signal)
@@ -646,19 +711,27 @@ class AnthropicModelAdapter:
                 detail = _read_error_body(error)
                 if not should_retry_status(error.code) or attempt == self._max_retries:
                     raise AnthropicHttpError(error.code, detail) from error
-                last_error = AnthropicHttpError(error.code, detail)
                 delay = retry_delay_seconds(
                     attempt + 1, parse_retry_after(error.headers.get("retry-after"))
                 )
-            except urllib.error.URLError as error:
-                last_error = error
-                if attempt == self._max_retries:
-                    raise
-                delay = retry_delay_seconds(attempt + 1, None)
+            except (urllib.error.URLError, OSError) as error:
+                # **不重试，翻译后直接抛出。** 见上面 docstring 里的原版对照。
+                #
+                # 捕获范围是 `URLError` **加上** `OSError`：`socket.timeout` 与
+                # `ConnectionResetError` 这类异常**不一定**被 urllib 包成
+                # `URLError`——读响应体时超时就是一个裸 `socket.timeout`。
+                # 只写 `except URLError` 会让这类错误原样冒泡，
+                # 用户看到的又是一句没有地址、没有码的 Python 内部信息。
+                raise AnthropicNetworkError(
+                    format_web_error_message(url, error, 600_000),
+                    code=node_error_code(error),
+                    url=url,
+                    timed_out=is_timeout_error(error),
+                ) from error
 
             _sleep_interruptible(delay, signal)
 
-        raise last_error or RuntimeError("请求失败且没有记录到错误")
+        raise RuntimeError("请求失败且没有记录到错误")
 
 
 def _iter_sse_events(response: Any) -> Iterator[dict[str, Any]]:
