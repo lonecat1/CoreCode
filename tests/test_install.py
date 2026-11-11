@@ -1,7 +1,5 @@
 """本地安装器（`install.ts`）的测试。
 
-对应原版 `MiniCode/src/install.ts`（126 行，通过 `npm run install-local` 运行）。
-
 ## 测什么
 
 安装器的价值在「**不用手写 JSON**」——键名、嵌套结构、以及「模型名要写两处」
@@ -11,9 +9,6 @@
 
 ## 一个直接的教训
 
-原版用 `process.env.PATH.split(':')` 判断目录是否已在 `PATH` 里。在 Windows 上
-`PATH` 用 `;` 分隔，那个判断**永远返回 false**——用户明明加过了，却每次都被
-提示「还没加进 PATH」。这里用 `os.pathsep`，并且有测试钉住。
 """
 
 from __future__ import annotations
@@ -32,7 +27,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.install import (  # noqa: E402
+from corecode.install import (  # noqa: E402
     ask_required,
     default_bin_dir,
     has_path_entry,
@@ -40,13 +35,12 @@ from minicode.install import (  # noqa: E402
     launcher_scripts,
 )
 
-
 class InstallTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.home = Path(tempfile.mkdtemp(prefix="minicode-install-home-"))
-        self.bin_dir = Path(tempfile.mkdtemp(prefix="minicode-install-bin-"))
+        self.home = Path(tempfile.mkdtemp(prefix="corecode-install-home-"))
+        self.bin_dir = Path(tempfile.mkdtemp(prefix="corecode-install-bin-"))
         self._env = patch.dict(
-            os.environ, {"MINICODE_HOME": str(self.home), "PATH": ""}, clear=False
+            os.environ, {"CORECODE_HOME": str(self.home), "PATH": ""}, clear=False
         )
         self._env.start()
 
@@ -74,7 +68,6 @@ class InstallTestCase(unittest.TestCase):
             **kwargs,
         )
         return result, stream.getvalue()
-
 
 class AskRequiredTests(unittest.TestCase):
     def _ask(self, answers: list[str], default: str = "") -> str:
@@ -120,7 +113,6 @@ class AskRequiredTests(unittest.TestCase):
             ask_required(lambda: "x", "Label", stream=stream)
         self.assertNotIn("[", stream.getvalue())
 
-
 class PathEntryTests(unittest.TestCase):
     def test_detects_present_entry(self) -> None:
         target = Path(tempfile.gettempdir())
@@ -138,8 +130,6 @@ class PathEntryTests(unittest.TestCase):
     def test_uses_the_platform_separator(self) -> None:
         """**必须用 `os.pathsep`，不能写死 `:`。**
 
-        原版是 `PATH.split(':')`——在 Windows 上 `PATH` 用 `;` 分隔，那个判断
-        永远返回 false，于是每次安装都提示「还没加进 PATH」，而用户明明加过了。
         """
         first = tempfile.gettempdir()
         second = str(Path(first) / "second")
@@ -160,16 +150,14 @@ class PathEntryTests(unittest.TestCase):
         with patch.dict(os.environ, {"PATH": str(target).upper()}):
             self.assertTrue(has_path_entry(target))
 
-
 class DefaultBinDirTests(unittest.TestCase):
     def test_env_override_wins(self) -> None:
         custom = Path(tempfile.gettempdir()) / "custom-bin"
-        with patch.dict(os.environ, {"MINICODE_BIN_DIR": str(custom)}):
+        with patch.dict(os.environ, {"CORECODE_BIN_DIR": str(custom)}):
             self.assertEqual(default_bin_dir(), custom.resolve())
 
     def test_platform_default(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("MINICODE_BIN_DIR", None)
             result = default_bin_dir()
         self.assertTrue(result.is_absolute())
         if platform.system() == "Windows":
@@ -177,15 +165,14 @@ class DefaultBinDirTests(unittest.TestCase):
         else:
             self.assertEqual(result, Path.home() / ".local" / "bin")
 
-
 class LauncherTests(unittest.TestCase):
     def test_generates_three_files(self) -> None:
         scripts = launcher_scripts(Path(tempfile.gettempdir()))
-        self.assertEqual(set(scripts), {"minicode", "minicode.cmd", "minicode.ps1"})
+        self.assertEqual(set(scripts), {"corecode", "corecode.cmd", "corecode.ps1"})
 
     def test_posix_launcher_is_a_shell_script(self) -> None:
         scripts = launcher_scripts(Path(tempfile.gettempdir()))
-        self.assertTrue(scripts["minicode"].startswith("#!/usr/bin/env sh"))
+        self.assertTrue(scripts["corecode"].startswith("#!/usr/bin/env sh"))
 
     def test_cmd_launcher_uses_crlf(self) -> None:
         """`.cmd` 的**每一行**都必须是 CRLF，不能有孤立的 LF。
@@ -196,7 +183,7 @@ class LauncherTests(unittest.TestCase):
 
         判据改成「不存任何**前面不是 `\\r`** 的 `\\n`」。
         """
-        content = launcher_scripts(Path(tempfile.gettempdir()))["minicode.cmd"]
+        content = launcher_scripts(Path(tempfile.gettempdir()))["corecode.cmd"]
         stray = [
             index for index, char in enumerate(content)
             if char == "\n" and (index == 0 or content[index - 1] != "\r")
@@ -204,20 +191,17 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(stray, [], f"第 {stray} 个字符处的换行不是 CRLF")
 
     def test_launchers_run_the_module_entry(self) -> None:
-        """**指向 `python -m minicode.cli` 而不是某个 `.py` 文件。**
+        """**指向 `python -m corecode.cli` 而不是某个 `.py` 文件。**
 
-        本项目没有原版那样的 `bin/minicode` 入口脚本；入口由 pyproject 的
-        `[project.scripts]` 声明。`python -m` 在「已安装」与「设了 PYTHONPATH」
-        两种情况下都能跑。
         """
         scripts = launcher_scripts(Path(tempfile.gettempdir()))
         for name, content in scripts.items():
-            self.assertIn("-m minicode.cli", content, name)
+            self.assertIn("-m corecode.cli", content, name)
 
     def test_launchers_quote_the_interpreter(self) -> None:
         """解释器路径可能含空格（Windows 的 `Program Files`）。"""
         scripts = launcher_scripts(Path(tempfile.gettempdir()))
-        self.assertIn(f'"{sys.executable}"', scripts["minicode"])
+        self.assertIn(f'"{sys.executable}"', scripts["corecode"])
 
     def test_launchers_are_pure_ascii(self) -> None:
         """**启动器必须纯 ASCII。**
@@ -235,9 +219,9 @@ class LauncherTests(unittest.TestCase):
     #
     # **这一组是补的，因为真实发生过事故**：早先 `launcher_scripts(repo_root)`
     # 收下了 `repo_root` 却**从未使用**，生成的脚本里只有
-    # `python -m minicode.cli`。本项目是 `src/` 布局，从源码使用时一执行就是：
+    # `python -m corecode.cli`。本项目是 `src/` 布局，从源码使用时一执行就是：
     #
-    #     ModuleNotFoundError: No module named 'minicode'
+    #     ModuleNotFoundError: No module named 'corecode'
     #
     # 而这个错误的可诊断性极差——用户会以为「没装」，实际装的是**启动器有问题**。
     # ------------------------------------------------------------------
@@ -258,9 +242,9 @@ class LauncherTests(unittest.TestCase):
         的典型形态，光断言字符串存在查不出来。
         """
         scripts = launcher_scripts(Path(tempfile.gettempdir()))
-        self.assertIn("export PYTHONPATH", scripts["minicode"])
-        self.assertIn("setlocal", scripts["minicode.cmd"])
-        self.assertIn("$env:PYTHONPATH", scripts["minicode.ps1"])
+        self.assertIn("export PYTHONPATH", scripts["corecode"])
+        self.assertIn("setlocal", scripts["corecode.cmd"])
+        self.assertIn("$env:PYTHONPATH", scripts["corecode.ps1"])
 
     def test_repo_src_wins_over_existing_pythonpath(self) -> None:
         """仓库的 `src/` 必须排在**前面**。
@@ -272,29 +256,29 @@ class LauncherTests(unittest.TestCase):
         src = str(repo / "src")
         scripts = launcher_scripts(repo)
         self.assertLess(
-            scripts["minicode"].index(src),
-            scripts["minicode"].index("${PYTHONPATH"),
+            scripts["corecode"].index(src),
+            scripts["corecode"].index("${PYTHONPATH"),
         )
         self.assertLess(
-            scripts["minicode.cmd"].index(src),
-            scripts["minicode.cmd"].index("%PYTHONPATH%"),
+            scripts["corecode.cmd"].index(src),
+            scripts["corecode.cmd"].index("%PYTHONPATH%"),
         )
         # ps1 里 `$env:PYTHONPATH` 在赋值**左边**也出现一次，位置更靠前。
         # 要比较的是右值那一处（`+ $env:PYTHONPATH`），否则这条断言恒假。
         self.assertLess(
-            scripts["minicode.ps1"].index(src),
-            scripts["minicode.ps1"].index("+ $env:PYTHONPATH"),
+            scripts["corecode.ps1"].index(src),
+            scripts["corecode.ps1"].index("+ $env:PYTHONPATH"),
         )
 
     def test_ps1_propagates_the_exit_code(self) -> None:
         """PowerShell 里 `&` 之后脚本会继续走；不显式 `exit`，退出码会被吞掉。
 
-        后果很具体：`minicode --help; echo $LASTEXITCODE` 恒为 0，
+        后果很具体：`corecode --help; echo $LASTEXITCODE` 恒为 0，
         CI 判断不出成败。
         """
         scripts = launcher_scripts(Path(tempfile.gettempdir()))
-        self.assertIn("$LASTEXITCODE", scripts["minicode.ps1"])
-        self.assertIn("exit $code", scripts["minicode.ps1"])
+        self.assertIn("$LASTEXITCODE", scripts["corecode.ps1"])
+        self.assertIn("exit $code", scripts["corecode.ps1"])
 
     @unittest.skipUnless(os.name == "nt", "只有 Windows 需要验 .cmd")
     def test_generated_cmd_actually_runs_from_source(self) -> None:
@@ -306,8 +290,8 @@ class LauncherTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parent.parent
         scripts = launcher_scripts(repo_root)
         with tempfile.TemporaryDirectory(prefix="launcher-e2e-") as tmp:
-            target = Path(tmp) / "minicode.cmd"
-            target.write_text(scripts["minicode.cmd"], encoding="utf-8", newline="")
+            target = Path(tmp) / "corecode.cmd"
+            target.write_text(scripts["corecode.cmd"], encoding="utf-8", newline="")
             env = {k: v for k, v in os.environ.items() if k.upper() != "PYTHONPATH"}
             proc = subprocess.run(
                 ["cmd", "/c", str(target), "--help"],
@@ -317,10 +301,8 @@ class LauncherTests(unittest.TestCase):
         combined = proc.stdout + proc.stderr
         self.assertEqual(proc.returncode, 0, combined[:600])
         self.assertNotIn("No module named", combined)
-        # `--help` 在原版里由管理子命令拦截（`maybeHandleManagementCommand`），
         # 所以输出是管理命令清单，不是主 CLI 帮助。
-        self.assertIn("minicode mcp", combined)
-
+        self.assertIn("corecode mcp", combined)
 
 class InstallFlowTests(InstallTestCase):
     def test_writes_model_and_env(self) -> None:
@@ -410,7 +392,7 @@ class InstallFlowTests(InstallTestCase):
         if platform.system() == "Windows":
             self.skipTest("Windows 不靠权限位")
         result, _ = self.run_install(["m", "https://x", "t"])
-        posix = [p for p in result["launchers"] if p.endswith("minicode")][0]
+        posix = [p for p in result["launchers"] if p.endswith("corecode")][0]
         self.assertTrue(os.access(posix, os.X_OK))
 
     def test_can_skip_launchers(self) -> None:
@@ -440,7 +422,6 @@ class InstallFlowTests(InstallTestCase):
         _, output = self.run_install(["m", "https://x", "new"])
         self.assertIn("[saved]", output)
 
-
 class PathHintTests(InstallTestCase):
     def test_hint_is_shown_when_not_on_path(self) -> None:
         with patch.dict(os.environ, {"PATH": ""}):
@@ -461,7 +442,6 @@ class PathHintTests(InstallTestCase):
             self.assertIn("PowerShell", output)
         else:
             self.assertIn("bashrc", output)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

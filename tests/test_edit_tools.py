@@ -1,7 +1,5 @@
 """编辑工具测试：`edit_file` / `patch_file` / `modify_file`。
 
-对应原版 `edit-file.ts` · `patch-file.ts` · `modify-file.ts`。
-
 ## 测试为什么要建**仓库外**的临时目录
 
 这些工具会**真的写文件**。历史上我因为在仓库内建临时工作区，被自己测试里的
@@ -19,9 +17,9 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.permissions import PermissionManager, PermissionPromptResult  # noqa: E402
-from minicode.tooling import ToolContext  # noqa: E402
-from minicode.tools.edit import (  # noqa: E402
+from corecode.permissions import PermissionManager, PermissionPromptResult  # noqa: E402
+from corecode.tooling import ToolContext  # noqa: E402
+from corecode.tools.edit import (  # noqa: E402
     apply_replacement,
     edit_file_tool,
     modify_file_tool,
@@ -30,10 +28,9 @@ from minicode.tools.edit import (  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-
 class EditToolTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = tempfile.mkdtemp(prefix="minicode-edit-")
+        self.root = tempfile.mkdtemp(prefix="corecode-edit-")
         self.context = ToolContext(cwd=self.root, permissions=None, signal=None)
 
     def tearDown(self) -> None:
@@ -50,11 +47,9 @@ class EditToolTestCase(unittest.TestCase):
         with open(os.path.join(self.root, name), encoding="utf-8", newline="") as handle:
             return handle.read()
 
-
 # ---------------------------------------------------------------------------
 # 替换语义
 # ---------------------------------------------------------------------------
-
 
 class ApplyReplacementTests(unittest.TestCase):
     """替换语义是最容易搞错的地方，单独测。"""
@@ -75,9 +70,6 @@ class ApplyReplacementTests(unittest.TestCase):
     def test_dollar_signs_are_literal(self) -> None:
         """**D33 的护栏。**
 
-        原版用 JS `String.replace`，它会把 `$&` 解释成「匹配到的原文」。
-        本实现刻意**不做**这个展开：含 `$` 的替换（f-string、shell 变量、
-        正则）必须原样写入，否则代码会被悄悄改坏。
         """
         for replacement in ("$&", "$1", "$$", "${x}", "a$&b"):
             result = apply_replacement("KEY", "KEY", replacement, False)
@@ -105,11 +97,9 @@ class ApplyReplacementTests(unittest.TestCase):
         """
         self.assertEqual(apply_replacement("ab", "", "-", False), "-ab")
 
-
 # ---------------------------------------------------------------------------
 # edit_file
 # ---------------------------------------------------------------------------
-
 
 class EditFileTests(EditToolTestCase):
     def test_replaces_text(self) -> None:
@@ -131,8 +121,6 @@ class EditFileTests(EditToolTestCase):
     def test_missing_file_is_a_failure(self) -> None:
         """`edit_file` 直接读文件，因此对不存在的文件**失败**。
 
-        这是与原版一致的行为（它用 `readFile`）。与 `modify_file` 不同——
-        后者走审查路径，不存在的文件被视为空内容，因此可以创建文件。
         """
         result = edit_file_tool.run(
             {"path": "nope.txt", "search": "a", "replace": "b"}, self.context
@@ -171,11 +159,9 @@ class EditFileTests(EditToolTestCase):
         )
         self.assertEqual(self.read("a.txt"), "PRICE = ${amount}\n")
 
-
 # ---------------------------------------------------------------------------
 # patch_file
 # ---------------------------------------------------------------------------
-
 
 class PatchFileTests(EditToolTestCase):
     def test_applies_multiple_replacements_in_order(self) -> None:
@@ -195,7 +181,6 @@ class PatchFileTests(EditToolTestCase):
         self.assertEqual(self.read("a.txt"), "1 2 3\n")
 
     def test_success_message_lists_each_replacement(self) -> None:
-        """**输出格式与原版一致**：`#1 replaceOnce, #2 replaceAll`。"""
         self.write("a.txt", "a b b\n")
         result = patch_file_tool.run(
             {
@@ -265,11 +250,9 @@ class PatchFileTests(EditToolTestCase):
         )
         self.assertTrue(result.ok)
 
-
 # ---------------------------------------------------------------------------
 # modify_file
 # ---------------------------------------------------------------------------
-
 
 class ModifyFileTests(EditToolTestCase):
     def test_replaces_file_content(self) -> None:
@@ -283,8 +266,6 @@ class ModifyFileTests(EditToolTestCase):
     def test_creates_a_new_file(self) -> None:
         """**与 `edit_file` 的关键差别**：不存在的文件被视为空内容。
 
-        因此 `modify_file` 可以创建文件——这是原版就有的行为（它走
-        `applyReviewedFileChange`，那里对 ENOENT 返回空串）。
         """
         result = modify_file_tool.run(
             {"path": "sub/new.txt", "content": "created\n"}, self.context
@@ -300,11 +281,9 @@ class ModifyFileTests(EditToolTestCase):
         self.assertTrue(result.ok)
         self.assertIn("无需修改", result.output)
 
-
 # ---------------------------------------------------------------------------
 # 权限集成
 # ---------------------------------------------------------------------------
-
 
 class EditPermissionTests(EditToolTestCase):
     """权限拒绝时的行为。
@@ -328,7 +307,7 @@ class EditPermissionTests(EditToolTestCase):
         return PermissionManager(self.root, prompt, store_path=store)
 
     def _execute(self, tool, data: dict, manager):  # noqa: ANN001
-        from minicode.tooling import ToolRegistry
+        from corecode.tooling import ToolRegistry
 
         context = ToolContext(cwd=self.root, permissions=manager, signal=None)
         registry = ToolRegistry([tool])
@@ -375,14 +354,9 @@ class EditPermissionTests(EditToolTestCase):
         self.assertFalse(result.ok)
         self.assertEqual(self.read("a.txt"), "original\n")
 
-
 class LineEndingFidelityTests(EditToolTestCase):
     """换行必须按字节保真。
 
-    Python 的文本模式默认会转换换行（Windows 上 `\\n` → `\\r\\n`），而原版
-    Node 的 `readFile`/`writeFile` 是字节级的。不显式关掉转换，一次编辑就会
-    把整个 LF 文件改写成 CRLF——diff 里「每一行都变了」，用户看到文件被无端
-    重写。这几条测试钉住 `newline=""`。
     """
 
     def _write_bytes(self, name: str, data: bytes) -> None:
@@ -447,7 +421,7 @@ class LineEndingFidelityTests(EditToolTestCase):
 
         这条直接断言读取结果，从读取侧钉住 `newline=""`。
         """
-        from minicode.file_review import load_existing_file
+        from corecode.file_review import load_existing_file
 
         self._write_bytes("a.txt", b"one\r\ntwo\r\n")
         self.assertEqual(
@@ -476,11 +450,9 @@ class LineEndingFidelityTests(EditToolTestCase):
         self.assertIn("无需修改", result.output)
         self.assertEqual(self._read_bytes("a.txt"), b"same\n")
 
-
 # ---------------------------------------------------------------------------
 # 校验与 schema
 # ---------------------------------------------------------------------------
-
 
 class EditSchemaTests(unittest.TestCase):
     def test_edit_file_schema(self) -> None:
@@ -494,8 +466,6 @@ class EditSchemaTests(unittest.TestCase):
     def test_edit_file_rejects_empty_search(self) -> None:
         """`search` 必须是**非空**字符串。
 
-        空 search 在 Python 里会变成「插入到开头」，几乎不会是用户想要的。
-        原版的 zod schema 也是 `.min(1)`。
         """
         with self.assertRaises(ValueError):
             edit_file_tool.validator({"path": "a", "search": "", "replace": "x"})
@@ -569,15 +539,13 @@ class EditSchemaTests(unittest.TestCase):
             "Replace a file with reviewed content so the user can approve the diff first.",
         )
 
-
 # ---------------------------------------------------------------------------
 # 注册表
 # ---------------------------------------------------------------------------
 
-
 class RegistryTests(unittest.TestCase):
     def test_all_three_tools_are_registered(self) -> None:
-        from minicode.tools import create_default_registry
+        from corecode.tools import create_default_registry
 
         names = {t.name for t in create_default_registry(REPO).list()}
         self.assertIn("edit_file", names)
@@ -591,36 +559,34 @@ class RegistryTests(unittest.TestCase):
         注册，而系统提示每个回合都在让模型「用 update_plan 跟踪多步工作」。
         模型一调就得到「Unknown tool: update_plan」，Plan 功能实际不可用。
         """
-        from minicode.runtime.plan import PlanManager
-        from minicode.tools import create_default_registry
+        from corecode.runtime.plan import PlanManager
+        from corecode.tools import create_default_registry
 
         registry = create_default_registry(REPO, PlanManager("probe"))
         self.assertIn("update_plan", {t.name for t in registry.list()})
 
     def test_update_plan_is_absent_without_a_plan(self) -> None:
-        """没给 plan 时不该凭空多出一个写工具（与原版一致）。"""
-        from minicode.tools import create_default_registry
+        from corecode.tools import create_default_registry
 
         registry = create_default_registry(REPO)
         self.assertNotIn("update_plan", {t.name for t in registry.list()})
 
     def test_root_registry_forwards_plan(self) -> None:
-        from minicode.runtime.plan import PlanManager
-        from minicode.tools import create_root_registry
+        from corecode.runtime.plan import PlanManager
+        from corecode.tools import create_root_registry
 
         registry = create_root_registry(cwd=REPO, plan=PlanManager("probe"))
         self.assertIn("update_plan", {t.name for t in registry.list()})
 
     def test_subagents_still_cannot_see_edit_tools(self) -> None:
         """**子 Agent 只能拿到只读子集**——编辑工具绝不能出现在里面。"""
-        from minicode.tools import create_default_registry, create_worker_registry
+        from corecode.tools import create_default_registry, create_worker_registry
 
         registry = create_default_registry(REPO)
         worker = create_worker_registry(registry)
         names = {t.name for t in worker.list()}
         for forbidden in ("edit_file", "patch_file", "modify_file", "write_file", "run_command"):
             self.assertNotIn(forbidden, names, f"子 Agent 不该看到 {forbidden}")
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

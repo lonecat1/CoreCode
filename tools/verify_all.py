@@ -10,13 +10,10 @@
 | `check_constants.py` | 每个常量都有人用吗？（含**伪引用**：只在注释里出现） |
 | `check_orphans.py` | 每个函数/类都有人调吗？ |
 | `check_duplicates.py` | 有没有同名定义被遮蔽（前面那个是死代码）？ |
-| `file_map.py` | 每个 TS 文件都有对应实现吗？有没有凭空多出的模块？ |
-| `e2e_compare.py` | 真实交互下两边行为一样吗？ |
-| `compaction_compare.py` | 四级压缩的判定一样吗？ |
-| `mcp_compare.py` | MCP 线协议下两边的视图一样吗？ |
+| `check_docs.py` | 文档里的数字与实测一致吗？ |
 | `mutation_check.py` | 测试真的会变红吗？ |
 
-手动跑一遍要记 9 条命令，还容易漏。这个脚本把它们串起来，**失败就停**，
+手动跑一遍要记 6 条命令，还容易漏。这个脚本把它们串起来，**失败就停**，
 并给出统一的摘要。
 
 ## 三档
@@ -24,7 +21,7 @@
 `--fast` 只跑**不依赖 TS 仓库**的那些（常量/孤儿/遮蔽/映射/单元测试），
 十几秒出结果，适合每次改完代码。
 
-默认再加**三组跨实现对照**——它们需要 `D:\\CoreCode\\MiniCode` 在场，
+默认再加**三组跨实现对照**——它们需要 `D:\\CoreCode\\CoreCode` 在场，
 慢一些但这才是「是否真的一样」的证据。
 
 `--full` 再加**变异检查**（约 1.5 小时）。它默认不跑，因为它会**改写源码**，
@@ -56,11 +53,7 @@ CHECKS: list[tuple[str, str, bool, bool]] = [
     ("check_constants.py", "常量都有引用（含伪引用检查）", False, False),
     ("check_orphans.py", "函数与类都有引用", False, False),
     ("check_duplicates.py", "无同名遮蔽的定义", False, False),
-    ("file_map.py", "逐文件映射覆盖完整", False, False),
     ("check_docs.py", "文档里的数字与实测一致", False, False),
-    ("e2e_compare.py", "端到端交互与文件结果一致", True, False),
-    ("compaction_compare.py", "四级压缩判定一致", True, False),
-    ("mcp_compare.py", "MCP 线协议视图一致", True, False),
     ("mutation_check.py", "变异全部被测试杀死", False, True),
 ]
 

@@ -19,59 +19,58 @@ from _shared import force_utf8_output
 #: 而且失败方式很隐蔽（会去改一个不存在的路径）。
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
-SESSION = os.path.join(REPO, "src", "minicode", "runtime", "session.py")
-GOAL_CTRL = os.path.join(REPO, "src", "minicode", "runtime", "goal_controller.py")
-AGENTS_MANAGER = os.path.join(REPO, "src", "minicode", "agents", "manager.py")
-AGENTS_TYPES = os.path.join(REPO, "src", "minicode", "agents", "types.py")
-SKILLS = os.path.join(REPO, "src", "minicode", "skills.py")
-TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
-MCP_STDIO = os.path.join(REPO, "src", "minicode", "mcp", "stdio_client.py")
-MCP_JSONRPC = os.path.join(REPO, "src", "minicode", "mcp", "jsonrpc.py")
-CONFIG = os.path.join(REPO, "src", "minicode", "config.py")
-TOOLS_FILES = os.path.join(REPO, "src", "minicode", "tools", "files.py")
-TOOLS_GREP = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
-UI_THEME = os.path.join(REPO, "src", "minicode", "ui", "theme.py")
-UI_RENDER = os.path.join(REPO, "src", "minicode", "ui", "render.py")
-SESSION_STORE = os.path.join(REPO, "src", "minicode", "session", "store.py")
-UI_CONSOLE = os.path.join(REPO, "src", "minicode", "ui", "console.py")
-UI_CAPS = os.path.join(REPO, "src", "minicode", "ui", "caps.py")
-UI_ANIMATE = os.path.join(REPO, "src", "minicode", "ui", "animate.py")
-UI_STARTUP = os.path.join(REPO, "src", "minicode", "ui", "startup.py")
-CLI = os.path.join(REPO, "src", "minicode", "cli.py")
-RUN_COMMAND = os.path.join(REPO, "src", "minicode", "tools", "run_command.py")
-BACKGROUND_TASKS = os.path.join(REPO, "src", "minicode", "background_tasks.py")
-EDIT_TOOLS = os.path.join(REPO, "src", "minicode", "tools", "edit.py")
-TOOLS_INIT = os.path.join(REPO, "src", "minicode", "tools", "__init__.py")
-FILE_REVIEW = os.path.join(REPO, "src", "minicode", "file_review.py")
-SHORTCUTS = os.path.join(REPO, "src", "minicode", "local_tool_shortcuts.py")
-GREP_FILES = os.path.join(REPO, "src", "minicode", "tools", "grep_files.py")
-MCP_STATUS = os.path.join(REPO, "src", "minicode", "mcp", "status.py")
-CLI_COMMANDS = os.path.join(REPO, "src", "minicode", "cli_commands.py")
-PERMISSIONS = os.path.join(REPO, "src", "minicode", "permissions.py")
-WORKSPACE = os.path.join(REPO, "src", "minicode", "workspace.py")
-REPO_INIT = os.path.join(REPO, "src", "minicode", "repo_init.py")
-HISTORY = os.path.join(REPO, "src", "minicode", "history.py")
-WEB_UTILS = os.path.join(REPO, "src", "minicode", "utils", "web.py")
-WEB_TOOLS = os.path.join(REPO, "src", "minicode", "tools", "web.py")
-MANAGE_CLI = os.path.join(REPO, "src", "minicode", "manage_cli.py")
-INSTALL = os.path.join(REPO, "src", "minicode", "install.py")
-MEMORY = os.path.join(REPO, "src", "minicode", "memory.py")
-MCP_HTTP = os.path.join(REPO, "src", "minicode", "mcp", "http_client.py")
-MCP_BRIDGE = os.path.join(REPO, "src", "minicode", "mcp", "bridge.py")
-PIPELINE = os.path.join(REPO, "src", "minicode", "context", "pipeline.py")
-CONSTANTS = os.path.join(REPO, "src", "minicode", "context", "constants.py")
-RUNTIME_CONTEXT = os.path.join(REPO, "src", "minicode", "runtime", "context.py")
+SESSION = os.path.join(REPO, "src", "corecode", "runtime", "session.py")
+GOAL_CTRL = os.path.join(REPO, "src", "corecode", "runtime", "goal_controller.py")
+AGENTS_MANAGER = os.path.join(REPO, "src", "corecode", "agents", "manager.py")
+AGENTS_TYPES = os.path.join(REPO, "src", "corecode", "agents", "types.py")
+SKILLS = os.path.join(REPO, "src", "corecode", "skills.py")
+TOOLS_INIT = os.path.join(REPO, "src", "corecode", "tools", "__init__.py")
+MCP_STDIO = os.path.join(REPO, "src", "corecode", "mcp", "stdio_client.py")
+MCP_JSONRPC = os.path.join(REPO, "src", "corecode", "mcp", "jsonrpc.py")
+CONFIG = os.path.join(REPO, "src", "corecode", "config.py")
+TOOLS_FILES = os.path.join(REPO, "src", "corecode", "tools", "files.py")
+TOOLS_GREP = os.path.join(REPO, "src", "corecode", "tools", "grep_files.py")
+UI_THEME = os.path.join(REPO, "src", "corecode", "ui", "theme.py")
+UI_RENDER = os.path.join(REPO, "src", "corecode", "ui", "render.py")
+SESSION_STORE = os.path.join(REPO, "src", "corecode", "session", "store.py")
+UI_CONSOLE = os.path.join(REPO, "src", "corecode", "ui", "console.py")
+UI_CAPS = os.path.join(REPO, "src", "corecode", "ui", "caps.py")
+UI_ANIMATE = os.path.join(REPO, "src", "corecode", "ui", "animate.py")
+UI_STARTUP = os.path.join(REPO, "src", "corecode", "ui", "startup.py")
+CLI = os.path.join(REPO, "src", "corecode", "cli.py")
+RUN_COMMAND = os.path.join(REPO, "src", "corecode", "tools", "run_command.py")
+BACKGROUND_TASKS = os.path.join(REPO, "src", "corecode", "background_tasks.py")
+EDIT_TOOLS = os.path.join(REPO, "src", "corecode", "tools", "edit.py")
+TOOLS_INIT = os.path.join(REPO, "src", "corecode", "tools", "__init__.py")
+FILE_REVIEW = os.path.join(REPO, "src", "corecode", "file_review.py")
+SHORTCUTS = os.path.join(REPO, "src", "corecode", "local_tool_shortcuts.py")
+GREP_FILES = os.path.join(REPO, "src", "corecode", "tools", "grep_files.py")
+MCP_STATUS = os.path.join(REPO, "src", "corecode", "mcp", "status.py")
+CLI_COMMANDS = os.path.join(REPO, "src", "corecode", "cli_commands.py")
+PERMISSIONS = os.path.join(REPO, "src", "corecode", "permissions.py")
+WORKSPACE = os.path.join(REPO, "src", "corecode", "workspace.py")
+REPO_INIT = os.path.join(REPO, "src", "corecode", "repo_init.py")
+HISTORY = os.path.join(REPO, "src", "corecode", "history.py")
+WEB_UTILS = os.path.join(REPO, "src", "corecode", "utils", "web.py")
+WEB_TOOLS = os.path.join(REPO, "src", "corecode", "tools", "web.py")
+MANAGE_CLI = os.path.join(REPO, "src", "corecode", "manage_cli.py")
+INSTALL = os.path.join(REPO, "src", "corecode", "install.py")
+MEMORY = os.path.join(REPO, "src", "corecode", "memory.py")
+MCP_HTTP = os.path.join(REPO, "src", "corecode", "mcp", "http_client.py")
+MCP_BRIDGE = os.path.join(REPO, "src", "corecode", "mcp", "bridge.py")
+PIPELINE = os.path.join(REPO, "src", "corecode", "context", "pipeline.py")
+CONSTANTS = os.path.join(REPO, "src", "corecode", "context", "constants.py")
+RUNTIME_CONTEXT = os.path.join(REPO, "src", "corecode", "runtime", "context.py")
 CHECK_CONSTANTS = os.path.join(REPO, "tools", "check_constants.py")
 CHECK_DUPLICATES = os.path.join(REPO, "tools", "check_duplicates.py")
-FILE_MAP = os.path.join(REPO, "tools", "file_map.py")
 CHECK_DOCS = os.path.join(REPO, "tools", "check_docs.py")
 ANTHROPIC_ADAPTER = os.path.join(
-    REPO, "src", "minicode", "adapters", "anthropic.py"
+    REPO, "src", "corecode", "adapters", "anthropic.py"
 )
-LOOP = os.path.join(REPO, "src", "minicode", "runtime", "loop.py")
-TOOLS_GOAL = os.path.join(REPO, "src", "minicode", "tools", "goal.py")
-PLAN = os.path.join(REPO, "src", "minicode", "runtime", "plan.py")
-GOAL_RUNTIME = os.path.join(REPO, "src", "minicode", "runtime", "goal.py")
+LOOP = os.path.join(REPO, "src", "corecode", "runtime", "loop.py")
+TOOLS_GOAL = os.path.join(REPO, "src", "corecode", "tools", "goal.py")
+PLAN = os.path.join(REPO, "src", "corecode", "runtime", "plan.py")
+GOAL_RUNTIME = os.path.join(REPO, "src", "corecode", "runtime", "goal.py")
 
 # (label, file, old, new) — each should make at least one test fail.
 MUTATIONS = [
@@ -111,25 +110,25 @@ MUTATIONS = [
     ),
     (
         "Goal: 不再要求 completed 与标准数匹配",
-        os.path.join(REPO, "src", "minicode", "runtime", "goal.py"),
+        os.path.join(REPO, "src", "corecode", "runtime", "goal.py"),
         "        if len(checks) != len(goal.completion_criteria):",
         "        if False:",
     ),
     (
         "Goal: 允许模型改目标（放开 action 白名单）",
-        os.path.join(REPO, "src", "minicode", "runtime", "goal.py"),
+        os.path.join(REPO, "src", "corecode", "runtime", "goal.py"),
         'VALID_ACTIONS = frozenset({ACTION_SET_CRITERIA, ACTION_BLOCKED, ACTION_COMPLETED})',
         'VALID_ACTIONS = frozenset({ACTION_SET_CRITERIA, ACTION_BLOCKED, ACTION_COMPLETED, "change_objective"})',
     ),
     (
         "Plan: 不再限制最多一个 in_progress",
-        os.path.join(REPO, "src", "minicode", "runtime", "plan.py"),
+        os.path.join(REPO, "src", "corecode", "runtime", "plan.py"),
         "        if in_progress > 1:",
         "        if False:",
     ),
     (
         "Plan: 接受未知 id 当作新增",
-        os.path.join(REPO, "src", "minicode", "runtime", "plan.py"),
+        os.path.join(REPO, "src", "corecode", "runtime", "plan.py"),
         "                if todo_id not in existing_ids:\n"
         "                    raise PlanError(\n"
         "                        f\"未知的 Todo id：{todo_id!r}。新增条目请省略 id。\"\n"
@@ -149,7 +148,7 @@ MUTATIONS = [
     ),
     (
         "TurnRunner: 去掉单飞拒绝",
-        os.path.join(REPO, "src", "minicode", "runtime", "turn.py"),
+        os.path.join(REPO, "src", "corecode", "runtime", "turn.py"),
         "        if self._controller is not None:\n"
         "            raise TurnBusyError(\"A root turn is still running.\")",
         "        if False:\n"
@@ -525,7 +524,7 @@ MUTATIONS = [
         "    if False:",
     ),
     (
-        "run_command: 非零退出不标记 fatal（与原版语义不符）",
+        "run_command: 非零退出不标记 fatal",
         RUN_COMMAND,
         '            fatal=True,\n        )\n\n    return ToolResult.success(body or "(no output)")',
         '            fatal=False,\n        )\n\n    return ToolResult.success(body or "(no output)")',
@@ -591,7 +590,7 @@ MUTATIONS = [
         "    return content.replace(search, replace, 1)",
     ),
     (
-        "edit: 默认替换全部（与原版「只替换第一处」不符）",
+        "edit: 默认替换全部",
         EDIT_TOOLS,
         "    return content.replace(search, replace, 1)",
         "    return content.replace(search, replace)",
@@ -743,30 +742,30 @@ MUTATIONS = [
         "    merged = merge_settings({}, {\"mcpServers\": global_mcp})",
     ),
     (
-        "配置: Claude 路径跟随 MINICODE_HOME（自我引用 / 破坏隔离）",
+        "配置: Claude 路径跟随 CORECODE_HOME（自我引用 / 破坏隔离）",
         CONFIG,
         '    return Path.home() / ".claude" / "settings.json"\n\n\n'
         "#: Claude Code 的配置文件路径快照。",
-        '    return minicode_home() / ".claude" / "settings.json"\n\n\n'
+        '    return corecode_home() / ".claude" / "settings.json"\n\n\n'
         "#: Claude Code 的配置文件路径快照。",
     ),
     (
-        "配置: settings_path 返回固定路径（MINICODE_HOME 变化后失效）",
+        "配置: settings_path 返回固定路径（CORECODE_HOME 变化后失效）",
         CONFIG,
-        'def settings_path() -> Path:\n    return minicode_home() / "settings.json"',
-        'def settings_path() -> Path:\n    return Path.home() / ".mini-code" / "settings.json"',
+        'def settings_path() -> Path:\n    return corecode_home() / "settings.json"',
+        'def settings_path() -> Path:\n    return Path.home() / ".corecode" / "settings.json"',
     ),
     (
         "配置: permissions_path 返回固定路径（授权规则静默失效）",
         CONFIG,
-        'def permissions_path() -> Path:\n    return minicode_home() / "permissions.json"',
-        'def permissions_path() -> Path:\n    return Path.home() / ".mini-code" / "permissions.json"',
+        'def permissions_path() -> Path:\n    return corecode_home() / "permissions.json"',
+        'def permissions_path() -> Path:\n    return Path.home() / ".corecode" / "permissions.json"',
     ),
     (
-        # **这条变异已删除。** 它把 `minicode_home()` 改成硬编码
-        # `Path.home() / ".mini-code"`，于是写配置的测试会**写到用户的真实
+        # **这条变异已删除。** 它把 `corecode_home()` 改成硬编码
+        # `Path.home() / ".corecode"`，于是写配置的测试会**写到用户的真实
         # 家目录**——`tests/test_install.py` 的答案 `["m", "https://x", "t"]`
-        # 曾经真的覆盖过 `~/.mini-code/settings.json`，导致之后每次运行都因
+        # 曾经真的覆盖过 `~/.corecode/settings.json`，导致之后每次运行都因
         # `https://x` 解析不了而报 `getaddrinfo failed`。
         #
         # 变异检查的目的是「让测试变红」，不是「让测试改用户的机器」。
@@ -776,10 +775,10 @@ MUTATIONS = [
         # 留了一个**等价但安全**的替代：只认一种环境变量拼写。它同样让
         # 「家目录可重定向」这条契约失效（D47），但只在临时目录之间走错，
         # 不会越界到用户的真实家目录。
-        "配置: 家目录只认 MINICODE_HOME（不认原版拼写 MINI_CODE_HOME）",
+        "配置: 家目录只认 CORECODE_HOME",
         CONFIG,
         '    override = env_value("HOME")',
-        '    override = os.environ.get("MINICODE_HOME")',
+        '    override = os.environ.get("CORECODE_HOME")',
     ),
     (
         "MCP: 未知状态被算作 connected（数字看起来正常但是错的）",
@@ -816,7 +815,6 @@ MUTATIONS = [
     ),
     (
         # 这里原本有一条「`wrap_values` 被忽略」的变异。`/config-paths` 改成
-        # 逐字输出原版四行之后，`wrap_values=True` 再无调用者，那条变异**永远
         # 杀不死**（324/325 就是它）。死代码已删除，变异随之删除。
         # 留着一条恒定存活的变异会污染「0 存活」这个信号——它看起来像一个漏洞，
         # 实际是一个不该存在的检查项。
@@ -832,7 +830,7 @@ MUTATIONS = [
         "",
     ),
     (
-        "init: MINI.md 用覆盖写（用户的项目说明被模板冲掉）",
+        "init: CORECODE.md 用覆盖写（用户的项目说明被模板冲掉）",
         REPO_INIT,
         '        with open(file_path, "x", encoding="utf-8", newline="") as handle:\n'
         "            handle.write(content)\n        return \"created\"\n"
@@ -849,7 +847,7 @@ MUTATIONS = [
         "    current = []\n    changed = True",
     ),
     (
-        "init: .mini-code 已存在为文件时不报错（静默覆盖）",
+        "init: .corecode 已存在为文件时不报错（静默覆盖）",
         REPO_INIT,
         "        if not os.path.isdir(dir_path):\n"
         "            raise NotADirectoryError(\n"
@@ -1010,7 +1008,7 @@ MUTATIONS = [
         "        without_wildcard = text",
     ),
     (
-        "web: 搜狗链接分支顺序退回原版（协议相对链接被拼坏）",
+        "web: 搜狗链接分支顺序被调换（协议相对链接被拼坏）",
         WEB_UTILS,
         '    if href.startswith("//"):\n        return f"https:{href}"\n'
         '    if href.startswith("/"):\n        return f"https://www.sogou.com{href}"',
@@ -1036,15 +1034,7 @@ MUTATIONS = [
         "            return organic, provider",
     ),
     (
-        "web: 全部后端失败也不报错（用户以为确实没搜到）",
-        WEB_UTILS,
-        "    if errors:\n"
-        "        # **只要有后端失败就抛。** 原版是 `if (errors.length > 0) throw`。",
-        "    if False:\n"
-        "        # **只要有后端失败就抛。** 原版是 `if (errors.length > 0) throw`。",
-    ),
-    (
-        "web: 默认结果条数从 5 变 8（与原版不符）",
+        "web: 默认结果条数从 5 变 8",
         WEB_UTILS,
         "DEFAULT_MAX_RESULTS = 5",
         "DEFAULT_MAX_RESULTS = 8",
@@ -1250,8 +1240,8 @@ MUTATIONS = [
         # 实际结果就是三条锚点全部失效（[未找到]）。短片段同样唯一，且不用转义。
         "安装: 启动器不指向模块入口（指向不存在的文件）",
         INSTALL,
-        ' -m minicode.cli "$@"',
-        ' "minicode.py" "$@"',
+        ' -m corecode.cli "$@"',
+        ' "corecode.py" "$@"',
     ),
     (
         "安装: .cmd 用 LF（某些 cmd 版本解析异常）",
@@ -1262,8 +1252,8 @@ MUTATIONS = [
     (
         "安装: 启动器写入非 ASCII 注释（PowerShell 5.1 乱码）",
         INSTALL,
-        "# MiniCode launcher (PowerShell)",
-        "# MiniCode 启动器",
+        "# CoreCode launcher (PowerShell)",
+        "# CoreCode 启动器",
     ),
     (
         "安装: 不创建启动器目录",
@@ -1514,7 +1504,7 @@ MUTATIONS = [
         '            payload["explanation"] = explanation.strip()',
     ),
     (
-        "update_plan: 字段名退回 snake_case（与原版表示不同）",
+        "update_plan: 字段名退回 snake_case",
         TOOLS_GOAL,
         '        "schemaVersion": getattr(document, "schema_version", 1),',
         '        "schema_version": getattr(document, "schema_version", 1),',
@@ -1540,7 +1530,7 @@ MUTATIONS = [
         "    def get_goal",
     ),
     (
-        "goal: completion 不再嵌套（形状与原版不同）",
+        "goal: completion 不再嵌套",
         GOAL_RUNTIME,
         '        payload["completion"] = {\n'
         '            "summary": goal.completion_summary,\n'
@@ -1641,7 +1631,6 @@ MUTATIONS = [
     ),
 ]
 
-
 #: 文本解码健壮性（D45）。非法 UTF-8 不该让程序起不来，也不该写坏文件。
 _DECODING_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
@@ -1695,7 +1684,6 @@ _DECODING_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_DECODING_MUTATIONS]
-
 
 #: 斜杠命令表与补全。这张表同时是 `/help`、Tab 补全、命令分派的唯一事实来源。
 _SLASH_MUTATIONS: list[tuple[str, str, str, str]] = [
@@ -1751,11 +1739,9 @@ _SLASH_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 MUTATIONS = [*MUTATIONS, *_SLASH_MUTATIONS]
 
-
-#: 启动横幅：字段与布局对齐原版（`tui/chrome.ts` 的 `renderBanner`）。
 _BANNER_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
-        "横幅: 用中文键值行而不是徽章（字段与原版不同）",
+        "横幅: 用中文键值行而不是徽章",
         UI_RENDER,
         '        _color_badge("session", "local", BRIGHT_YELLOW),',
         '        "模型 " + shown_model,',
@@ -1785,7 +1771,7 @@ _BANNER_MUTATIONS: list[tuple[str, str, str, str]] = [
         "    raw = (provider or \"\").strip()\n    if not raw:\n        return \"\"",
     ),
     (
-        "横幅: 标题后不空一行（与原版布局不同）",
+        "横幅: 标题后不空一行",
         UI_RENDER,
         '            _panel_row("", panel_width),\n',
         "",
@@ -1822,23 +1808,21 @@ _BANNER_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 MUTATIONS = [*MUTATIONS, *_BANNER_MUTATIONS]
 
-
-#: 会话文件格式：必须能读原版 TUI 写出来的会话（`tests/test_session_format.py`）。
 _SESSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
-        "会话: thinking 的事件类型名退回 role 名（原版用 thinking）",
+        "会话: thinking 的事件类型名退回 role 名",
         SESSION_STORE,
         "    ROLE_ASSISTANT_THINKING: EVENT_THINKING,",
         "    ROLE_ASSISTANT_THINKING: ROLE_ASSISTANT_THINKING,",
     ),
     (
-        "会话: 摘要的事件类型名退回 role 名（原版用 summary）",
+        "会话: 摘要的事件类型名退回 role 名",
         SESSION_STORE,
         "    ROLE_CONTEXT_SUMMARY: EVENT_SUMMARY,",
         "    ROLE_CONTEXT_SUMMARY: ROLE_CONTEXT_SUMMARY,",
     ),
     (
-        "会话: 事件不再写 uuid（原版的链靠它串起来）",
+        "会话: 事件不再写 uuid",
         SESSION_STORE,
         '        "uuid": event_uuid,\n',
         "",
@@ -1868,7 +1852,7 @@ _SESSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
         "",
     ),
     (
-        "会话: 项目目录名不折叠冒号（与原版目录对不上，读不到旧会话）",
+        "会话: 项目目录名不折叠冒号",
         SESSION_STORE,
         '    collapsed = re.sub(r"[/\\\\:]+", "-", cwd)',
         '    collapsed = re.sub(r"[/\\\\]+", "-", cwd)',
@@ -1877,23 +1861,21 @@ _SESSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 MUTATIONS = [*MUTATIONS, *_SESSION_FORMAT_MUTATIONS]
 
-
-#: 权限存储与分类器：必须与原版同一份契约（`tests/test_permissions_format.py`）。
 _PERMISSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
-        "权限: 存储字段改成 snake_case（读不到原版写的规则）",
+        "权限: 存储字段改成 snake_case",
         PERMISSIONS,
         '"allowedEditPatterns": self.allowed_edit_patterns,',
         '"allowed_edit_patterns": self.allowed_edit_patterns,',
     ),
     (
-        "权限: 写盘不再缩进（与原版来回改会整篇重排）",
+        "权限: 写盘不再缩进",
         PERMISSIONS,
         "json.dumps(store.to_json(), indent=2, ensure_ascii=False) + \"\\n\",",
         "json.dumps(store.to_json(), ensure_ascii=False) + \"\\n\",",
     ),
     (
-        "权限: 存储不写空数组（原版不省略）",
+        "权限: 存储不写空数组",
         PERMISSIONS,
         "    def to_json(self) -> dict[str, list[str]]:\n        return {",
         "    def to_json(self) -> dict[str, list[str]]:\n"
@@ -1936,7 +1918,7 @@ _PERMISSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
         '    if command == "npm" and "publish" in normalized:',
     ),
     (
-        "权限: 解释器名单退回原版 5 个（pwsh/powershell 不再提示）",
+        "权限: 解释器名单退回 5 个（pwsh/powershell 不再提示）",
         PERMISSIONS,
         '    {"node", "python3", "python", "bun", "bash", "sh", "pwsh", "powershell"}',
         '    {"node", "python3", "bun", "bash", "sh"}',
@@ -1944,7 +1926,6 @@ _PERMISSION_FORMAT_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_PERMISSION_FORMAT_MUTATIONS]
-
 
 #: 四级压缩的阈值与保留策略（`tests/test_compaction_thresholds.py`）。
 #:
@@ -2009,7 +1990,6 @@ _COMPACTION_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_COMPACTION_MUTATIONS]
-
 
 #: MCP 通用工具的注册与路由（`tests/test_mcp.py` 的 BridgeTests）。
 #:
@@ -2089,7 +2069,6 @@ _MCP_ROUTING_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 MUTATIONS = [*MUTATIONS, *_MCP_ROUTING_MUTATIONS]
 
-
 #: 运行时上下文注入（`tests/test_runtime_context.py`）。
 #:
 #: 这两段文本被拼进 system 消息，是模型判断「我在什么模式、该做什么」的全部依据。
@@ -2146,11 +2125,9 @@ _CONTEXT_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 MUTATIONS = [*MUTATIONS, *_CONTEXT_MUTATIONS]
 
-
 #: 网络错误码与文案（`tests/test_web.py` 的 NodeErrorCodeTests 等）。
 #:
 #: 这一层把 Python 的异常翻译成 **Node 风格的错误码**。它存在的唯一理由是
-#: 用户看到的文案要与原版一致——所以每一条映射和分支顺序都要有测试盯着。
 _ERROR_CODE_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "错误码: 临时 DNS 故障不再映射成 EAI_AGAIN",
@@ -2249,7 +2226,6 @@ _ERROR_CODE_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 MUTATIONS = [*MUTATIONS, *_ERROR_CODE_MUTATIONS]
 
-
 #: 检查器**本身**的逻辑（`tests/test_checkers.py`）。
 #:
 #: 检查器是「其它代码是否可信」的依据。它们判断错了，结论就是错的，而且错得很
@@ -2288,28 +2264,9 @@ _CHECKER_MUTATIONS: list[tuple[str, str, str, str]] = [
         "    for node in tree.body:",
         "    for node in ast.walk(tree):",
     ),
-    (
-        "映射: 表里漏掉一个 TS 文件",
-        FILE_MAP,
-        '    "abort.ts": ("abort.py",),\n',
-        "",
-    ),
-    (
-        "映射: TUI 排除清单漏掉 ui.ts 转出桶",
-        FILE_MAP,
-        '    "ui.ts": "TUI 的纯转出桶（28 行 export … from \'./tui/index.js\'）",\n',
-        "",
-    ),
-    (
-        "映射: 映射到一个不存在的 .py 也能通过",
-        FILE_MAP,
-        '            if not (PY_ROOT / target).exists():',
-        "            if False:",
-    ),
 ]
 
 MUTATIONS = [*MUTATIONS, *_CHECKER_MUTATIONS]
-
 
 #: 四条诊断命令的输出形状（`tests/test_command_output.py`）。
 #:
@@ -2319,26 +2276,26 @@ _DIAGNOSTIC_SHAPE_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "形状: /config-paths 退成表格（带标题与分隔线）",
         CLI_COMMANDS,
-        '    return "\\n".join(\n        [\n            f"mini-code settings: {settings_path()}",',
+        '    return "\\n".join(\n        [\n            f"corecode settings: {settings_path()}",',
         '    from .ui import render_separator, render_status_line\n'
         '    return "\\n".join(\n        [\n            render_status_line(label="配置路径"),\n'
         '            render_separator(),\n'
-        '            f"mini-code settings: {settings_path()}",',
+        '            f"corecode settings: {settings_path()}",',
     ),
     (
         "形状: /config-paths 少一行（丢掉 permissions）",
         CLI_COMMANDS,
-        '            f"mini-code permissions: {permissions_path()}",\n',
+        '            f"corecode permissions: {permissions_path()}",\n',
         "",
     ),
     (
         "形状: /config-paths 用缩进表格而不是 label: value",
         CLI_COMMANDS,
-        '            f"mini-code settings: {settings_path()}",',
-        '            f"  mini-code settings   {settings_path()}",',
+        '            f"corecode settings: {settings_path()}",',
+        '            f"  corecode settings   {settings_path()}",',
     ),
     (
-        "形状: /status 不再输出原版五行",
+        "形状: /status 不再输出五行",
         CLI_COMMANDS,
         "    original = [\n"
         '        f"model: {config.model if config else \'(offline mock)\'}",',
@@ -2405,7 +2362,6 @@ _DIAGNOSTIC_SHAPE_MUTATIONS: list[tuple[str, str, str, str]] = [
     ),
     (
         # 早先这里写的是「预览不再回退到 `<empty>`」——那条**无法被杀死**，
-        # 因为该回退分支在原版与本实现里**都不可达**（内容 trim 后非空，第一行
         # 就不可能是空；全空白的文件在读入阶段已被判为不存在）。留一条永远存活
         # 的变异会污染「0 存活」这个信号，所以换成一条真正可观测的。
         "形状: /memory 的预览取最后一行而不是第一行",
@@ -2441,7 +2397,6 @@ _DIAGNOSTIC_SHAPE_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_DIAGNOSTIC_SHAPE_MUTATIONS]
-
 
 #: 文档数字核对（`tests/test_checkers.py` 的 `CheckDocsTests`）。
 #:
@@ -2486,24 +2441,11 @@ _CHECK_DOCS_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 MUTATIONS = [*MUTATIONS, *_CHECK_DOCS_MUTATIONS]
 
-
 #: 网络错误的处理（`tests/test_adapters.py` 的 `NetworkErrorTests`）。
 #:
-#: 这一组防的是两个具体缺陷：**重试一次 DNS 失败**（白等约 9 秒，而原版根本不
 #: 重试网络错误），以及**把 Python 内部包装漏给用户**
 #: （`<urlopen error [Errno 11001] getaddrinfo failed>`，没有地址也没有码）。
 _ADAPTER_NETWORK_MUTATIONS: list[tuple[str, str, str, str]] = [
-    (
-        "适配器: 网络错误又变成「重试到上限」",
-        ANTHROPIC_ADAPTER,
-        "            except (urllib.error.URLError, OSError) as error:\n"
-        "                # **不重试，翻译后直接抛出。** 见上面 docstring 里的原版对照。",
-        "            except (urllib.error.URLError, OSError) as error:\n"
-        "                if attempt < self._max_retries:\n"
-        "                    _sleep_interruptible(retry_delay_seconds(attempt + 1, None), signal)\n"
-        "                    continue\n"
-        "                # **不重试，翻译后直接抛出。** 见上面 docstring 里的原版对照。",
-    ),
     (
         "适配器: 网络错误不翻译（直接抛 Python 原始异常）",
         ANTHROPIC_ADAPTER,
@@ -2541,12 +2483,11 @@ _ADAPTER_NETWORK_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 MUTATIONS = [*MUTATIONS, *_ADAPTER_NETWORK_MUTATIONS]
 
-
 #: 启动器脚本（`tests/test_install.py` 的 `LauncherTests`）。
 #:
 #: 这一组防的是一个**真的发布出去过**的缺陷：`launcher_scripts(repo_root)` 收下
 #: `repo_root` 却从未使用，生成的脚本不设 `PYTHONPATH`。从源码使用时一执行就是
-#: `ModuleNotFoundError: No module named 'minicode'`——而用户会以为「没装」。
+#: `ModuleNotFoundError: No module named 'corecode'`——而用户会以为「没装」。
 _LAUNCHER_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "启动器: 不设 PYTHONPATH（从源码运行时找不到包）",
@@ -2589,7 +2530,6 @@ _LAUNCHER_MUTATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 MUTATIONS = [*MUTATIONS, *_LAUNCHER_MUTATIONS]
-
 
 #: 跨盘符的路径判断（`tests/test_permissions.py` 的 `PathHelpersTests`）。
 #:
@@ -2635,7 +2575,6 @@ _CROSS_DRIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 MUTATIONS = [*MUTATIONS, *_CROSS_DRIVE_MUTATIONS]
 
-
 #: 单次跑测试的上限（秒）。
 #:
 #: 必须有限制：有的变异会让程序**永久阻塞**而不是失败（例如分帧状态机不再
@@ -2653,10 +2592,8 @@ SUITE_TIMEOUT_SECONDS = 240
 #: 变异、哪些是我的代码。
 BACKUP_SUFFIX = ".mutation-backup"
 
-
 def backup_path(path: str) -> str:
     return path + BACKUP_SUFFIX
-
 
 def heal_leftovers() -> list[str]:
     """如果上次运行被中断，用备份恢复源码。返回被恢复的文件列表。
@@ -2688,7 +2625,6 @@ def heal_leftovers() -> list[str]:
                 pass
     return healed
 
-
 def run_suite() -> tuple[bool, bool]:
     """跑一次测试。返回 `(是否通过, 是否超时)`。"""
     try:
@@ -2704,7 +2640,6 @@ def run_suite() -> tuple[bool, bool]:
     except subprocess.TimeoutExpired:
         return False, True
     return proc.returncode == 0, False
-
 
 def audit_anchors() -> list[str]:
     """检查每条变异的锚点是否**唯一**，返回有问题的描述。
@@ -2734,7 +2669,6 @@ def audit_anchors() -> list[str]:
             problems.append(f"{label} [锚点出现 {count} 次，替换位置有歧义]")
     return problems
 
-
 #: 断点文件：`{变异标签: "killed" | "survived"}`。
 #:
 #: ## 为什么需要它
@@ -2745,7 +2679,6 @@ def audit_anchors() -> list[str]:
 #:
 #: 有了断点文件，重跑会跳过已完成的条目，于是「被打断」的代价变成几分钟。
 PROGRESS_PATH = os.path.join(REPO, "tests", ".mutation_progress.json")
-
 
 def home_changes(
     before: dict[str, tuple[int, int]], after: dict[str, tuple[int, int]]
@@ -2763,22 +2696,21 @@ def home_changes(
     }
     return sorted(changed)
 
-
 def _real_home_fingerprint() -> dict[str, tuple[int, int]]:
-    """真实 `~/.mini-code` 的指纹：`{文件名: (大小, mtime_ns)}`。
+    """真实 `~/.corecode` 的指纹：`{文件名: (大小, mtime_ns)}`。
 
     ## 为什么需要它（一次真实事故）
 
     变异里有这一条：
 
-        "配置: minicode_home 忽略 MINICODE_HOME（测试隔离与运行时改配置失效）"
-        `return _home_dir()`  →  `return Path.home() / ".mini-code"`
+        "配置: corecode_home 忽略 CORECODE_HOME（测试隔离与运行时改配置失效）"
+        `return _home_dir()`  →  `return Path.home() / ".corecode"`
 
     名字里写着「测试隔离失效」，但**没有人想到它的破坏性后果**：在那 20 秒里，
     所有写配置的测试都落到了**用户的真实家目录**。
 
     `tests/test_install.py` 的答案是 `["m", "https://x", "t"]`，于是真实的
-    `~/.mini-code/settings.json` 被写成了 `model: "m"`、`ANTHROPIC_BASE_URL:
+    `~/.corecode/settings.json` 被写成了 `model: "m"`、`ANTHROPIC_BASE_URL:
     "https://x"`、`ANTHROPIC_AUTH_TOKEN: "t"`——用户的真实配置被测试夹具覆盖，
     而之后每次运行都会因为 `https://x` 解析不了而报 `getaddrinfo failed`。
 
@@ -2786,7 +2718,7 @@ def _real_home_fingerprint() -> dict[str, tuple[int, int]]:
     这个指纹就是那道闸：变异跑完发现真实家目录变了，立即中止，而不是继续跑
     剩下的两小时。
     """
-    home = Path(os.path.expanduser("~")) / ".mini-code"
+    home = Path(os.path.expanduser("~")) / ".corecode"
     if not home.is_dir():
         return {}
     fingerprint: dict[str, tuple[int, int]] = {}
@@ -2799,7 +2731,6 @@ def _real_home_fingerprint() -> dict[str, tuple[int, int]]:
             fingerprint[str(path.relative_to(home))] = (stat.st_size, stat.st_mtime_ns)
     return fingerprint
 
-
 def load_progress() -> dict[str, str]:
     try:
         with open(PROGRESS_PATH, encoding="utf-8") as handle:
@@ -2810,7 +2741,6 @@ def load_progress() -> dict[str, str]:
         return {}
     return {str(key): str(value) for key, value in payload.items()}
 
-
 def save_progress(progress: dict[str, str]) -> None:
     """写断点。**失败不影响检查**——它只是加速手段，不是正确性前提。"""
     try:
@@ -2818,7 +2748,6 @@ def save_progress(progress: dict[str, str]) -> None:
             json.dump(progress, handle, ensure_ascii=False, indent=1, sort_keys=True)
     except OSError:
         pass
-
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv or [])
@@ -2902,13 +2831,13 @@ def main(argv: list[str] | None = None) -> int:
                 pass
 
         # **真实家目录被改过就立即中止。** 见 `_real_home_fingerprint` 的说明：
-        # 那条「minicode_home 忽略 MINICODE_HOME」的变异会让写配置的测试落到
-        # 用户的真实 `~/.mini-code` 上，把 `settings.json` 覆盖成测试夹具的值。
+        # 那条「corecode_home 忽略 CORECODE_HOME」的变异会让写配置的测试落到
+        # 用户的真实 `~/.corecode` 上，把 `settings.json` 覆盖成测试夹具的值。
         # 这不是「变异存活」，是沙箱逃逸——继续跑剩下几百条只会扩大破坏。
         if home_after != home_before:
             changed = home_changes(home_before, home_after)
             print()
-            print("!! 中止：这条变异改动了**真实家目录** ~/.mini-code")
+            print("!! 中止：这条变异改动了**真实家目录** ~/.corecode")
             print(f"!! 变异: {label}")
             print(f"!! 被改动的文件: {', '.join(changed) or '（新增/删除）'}")
             print()
@@ -2941,7 +2870,6 @@ def main(argv: list[str] | None = None) -> int:
     except OSError:
         pass
     return 0
-
 
 if __name__ == "__main__":
     force_utf8_output()

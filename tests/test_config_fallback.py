@@ -1,12 +1,6 @@
 """配置来源合并与 Claude Code 兼容回退。
 
-对应原版 `config.ts:173-188` 的 `loadEffectiveSettings()`。
-
 ## 这个缺口为什么值得单独一个文件
-
-原版会读 `~/.claude/settings.json` 作为**最低优先级**的配置来源。本实现此前
-完全没有这一层——从 Claude Code 迁移过来的用户会发现他已经配好的模型名、
-端点、密钥**全部失效**，而程序不会给出任何提示（它会报「未配置模型」）。
 
 这类「静默不生效」的缺口最难自己发现：配置项看起来都在，只是来源少了一处。
 """
@@ -24,7 +18,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.config import (  # noqa: E402
+from corecode.config import (  # noqa: E402
     ConfigError,
     load_effective_settings,
     load_runtime_config,
@@ -34,10 +28,9 @@ from minicode.config import (  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-
 class ConfigTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="minicode-cfg-"))
+        self.root = Path(tempfile.mkdtemp(prefix="corecode-cfg-"))
         self.home = self.root / "mini-home"
         self.home.mkdir(parents=True, exist_ok=True)
         self.own = self.home / "settings.json"
@@ -52,14 +45,12 @@ class ConfigTestCase(unittest.TestCase):
         path.write_text(json.dumps(data), encoding="utf-8")
 
     def effective(self) -> dict:
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}):
             return load_effective_settings(
                 settings_path=self.own, claude_path=self.claude
             )
 
-
 class MergeSettingsTests(unittest.TestCase):
-    """`merge_settings` 的语义——原版 `config.ts:162-171`。"""
 
     def test_override_wins_on_scalars(self) -> None:
         self.assertEqual(merge_settings({"a": 1}, {"a": 2})["a"], 2)
@@ -97,7 +88,6 @@ class MergeSettingsTests(unittest.TestCase):
         )
         self.assertEqual(merged["mcpServers"]["x"], "bad")
 
-
 class EffectiveSettingsTests(ConfigTestCase):
     def test_claude_fallback_provides_missing_keys(self) -> None:
         """**核心回归**：自有配置没写的键应当从 Claude 配置继承。"""
@@ -127,10 +117,6 @@ class EffectiveSettingsTests(ConfigTestCase):
     def test_both_missing_yields_no_real_settings(self) -> None:
         """两处都没有时不该冒出任何**真实**配置。
 
-        注意结果里会有一个空的 `mcpServers` 键——这是原版也有的行为
-        （`loadEffectiveSettings` 无条件传 `{ mcpServers: globalMcpConfig }`，
-        浅合并会把它带进来）。它无害：下游读 `mcpServers` 得到空 dict。
-        断言写成「没有真实键」而不是「等于 {}」，避免把忠实行为当成缺陷。
         """
         merged = self.effective()
         self.assertEqual(set(merged) - {"mcpServers"}, set())
@@ -146,7 +132,6 @@ class EffectiveSettingsTests(ConfigTestCase):
             self.effective()
 
     def test_global_mcp_json_is_merged(self) -> None:
-        """`<MINICODE_HOME>/mcp.json` 也参与合并（原版 `config.ts:177`）。"""
         self.write_json(self.home / "mcp.json", {"mcpServers": {"s": {"command": "c"}}})
         merged = self.effective()
         self.assertIn("s", merged["mcpServers"])
@@ -158,26 +143,24 @@ class EffectiveSettingsTests(ConfigTestCase):
         )
         self.assertEqual(self.effective()["mcpServers"]["s"]["command"], "b")
 
-
 class ClaudePathTests(unittest.TestCase):
-    def test_claude_path_is_not_under_minicode_home(self) -> None:
-        """**它必须独立于 `MINICODE_HOME`。**
+    def test_claude_path_is_not_under_corecode_home(self) -> None:
+        """**它必须独立于 `CORECODE_HOME`。**
 
-        跟随 `MINICODE_HOME` 会让「兼容回退」指向本项目自己的家目录，
+        跟随 `CORECODE_HOME` 会让「兼容回退」指向本项目自己的家目录，
         形成自我引用——测试里还会造成隔离失效（读到真实用户目录或读到自己）。
         """
-        from minicode.config import claude_settings_path
+        from corecode.config import claude_settings_path
 
-        with patch.dict(os.environ, {"MINICODE_HOME": r"C:\totally\elsewhere"}):
+        with patch.dict(os.environ, {"CORECODE_HOME": r"C:\totally\elsewhere"}):
             path = claude_settings_path()
         self.assertNotIn("totally", str(path))
         self.assertEqual(path, Path.home() / ".claude" / "settings.json")
 
     def test_import_time_constant_matches_the_accessor(self) -> None:
-        from minicode.config import CLAUDE_SETTINGS_PATH, claude_settings_path
+        from corecode.config import CLAUDE_SETTINGS_PATH, claude_settings_path
 
         self.assertEqual(CLAUDE_SETTINGS_PATH, claude_settings_path())
-
 
 class RuntimeConfigFallbackTests(ConfigTestCase):
     """回退必须**一路走到** `load_runtime_config`，而不只是合并函数里对。
@@ -190,19 +173,19 @@ class RuntimeConfigFallbackTests(ConfigTestCase):
     def _load(self, **env_overrides):  # noqa: ANN003
         """在隔离环境里装载配置。返回 RuntimeConfig 或抛 ConfigError。"""
         clean = {
-            "MINICODE_HOME": str(self.home),
+            "CORECODE_HOME": str(self.home),
             **env_overrides,
         }
         with patch.dict(os.environ, clean, clear=False):
             for key in (
-                "MINICODE_MODEL",
+                "CORECODE_MODEL",
                 "ANTHROPIC_MODEL",
                 "ANTHROPIC_API_KEY",
                 "ANTHROPIC_AUTH_TOKEN",
                 "ANTHROPIC_BASE_URL",
             ):
                 os.environ.pop(key, None)
-            with patch("minicode.config.claude_settings_path", return_value=self.claude):
+            with patch("corecode.config.claude_settings_path", return_value=self.claude):
                 return load_runtime_config(self.own)
 
     def test_model_and_credentials_come_from_claude(self) -> None:
@@ -241,14 +224,13 @@ class RuntimeConfigFallbackTests(ConfigTestCase):
     def test_real_claude_path_is_not_used_by_default(self) -> None:
         """**护栏**：不 patch 时读的必须是真实用户目录。
 
-        如果哪天有人把 Claude 路径改成跟随 `MINICODE_HOME`，这条会失败——
+        如果哪天有人把 Claude 路径改成跟随 `CORECODE_HOME`，这条会失败——
         那会造成「兼容回退读到自己」，也会破坏测试隔离。
         """
-        from minicode.config import claude_settings_path
+        from corecode.config import claude_settings_path
 
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}):
             self.assertNotIn(str(self.home), str(claude_settings_path()))
-
 
 class ReadSettingsFileTests(ConfigTestCase):
     def test_missing_file_is_empty(self) -> None:
@@ -263,11 +245,10 @@ class ReadSettingsFileTests(ConfigTestCase):
         with self.assertRaises(ConfigError):
             read_settings_file(self.own)
 
-
 class DynamicPathTests(ConfigTestCase):
     """**默认参数必须走动态访问器，不能用导入期快照。**
 
-    这些测试刻意**不传 path**，并且先改 `MINICODE_HOME`。如果实现里写的是
+    这些测试刻意**不传 path**，并且先改 `CORECODE_HOME`。如果实现里写的是
     模块级 `SETTINGS_PATH`（导入期求值），它会读/写到导入时的位置——测试
     隔离用的临时目录根本不起作用，症状是「配置写了却不生效」。
 
@@ -276,13 +257,13 @@ class DynamicPathTests(ConfigTestCase):
 
     def test_read_settings_file_uses_current_home(self) -> None:
         self.write_json(self.home / "settings.json", {"model": "from-current-home"})
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}):
             self.assertEqual(read_settings_file()["model"], "from-current-home")
 
     def test_save_settings_writes_to_current_home(self) -> None:
-        from minicode.config import save_settings
+        from corecode.config import save_settings
 
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}):
             written = save_settings({"model": "saved"})
         self.assertEqual(Path(written), self.home / "settings.json")
         self.assertTrue((self.home / "settings.json").exists())
@@ -297,13 +278,13 @@ class DynamicPathTests(ConfigTestCase):
         """换一个家目录后必须写到**新的**位置。
 
         这条直接钉住「不要用导入期快照」：快照在导入时就定死了，
-        换 `MINICODE_HOME` 不会让它改变。
+        换 `CORECODE_HOME` 不会让它改变。
         """
-        from minicode.config import save_settings
+        from corecode.config import save_settings
 
         other = self.root / "another-home"
         other.mkdir(parents=True, exist_ok=True)
-        with patch.dict(os.environ, {"MINICODE_HOME": str(other)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(other)}):
             written = save_settings({"model": "x"})
         self.assertEqual(Path(written), other / "settings.json")
         self.assertFalse(
@@ -311,20 +292,20 @@ class DynamicPathTests(ConfigTestCase):
         )
 
     def test_read_permission_store_uses_current_home(self) -> None:
-        from minicode.permissions import read_permission_store
+        from corecode.permissions import read_permission_store
 
         self.write_json(
             self.home / "permissions.json",
             {"allowedCommandPatterns": ["git status"]},
         )
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}):
             store = read_permission_store()
         self.assertEqual(store.allowed_command_patterns, ["git status"])
 
     def test_write_permission_store_uses_current_home(self) -> None:
-        from minicode.permissions import PermissionStore, write_permission_store
+        from corecode.permissions import PermissionStore, write_permission_store
 
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}):
             write_permission_store(
                 PermissionStore(allowed_command_patterns=["npm test"])
             )
@@ -338,16 +319,15 @@ class DynamicPathTests(ConfigTestCase):
         )
 
     def test_memory_files_follow_a_changed_home(self) -> None:
-        from minicode.memory import discover_memory_files
+        from corecode.memory import discover_memory_files
 
-        (self.home / "MINI.md").write_text("global guidance", encoding="utf-8")
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+        (self.home / "CORECODE.md").write_text("global guidance", encoding="utf-8")
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}):
             found = discover_memory_files(REPO)
         self.assertTrue(
             any("global guidance" in item.content for item in found),
-            f"没读到家目录的 MINI.md：{found}",
+            f"没读到家目录的 CORECODE.md：{found}",
         )
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

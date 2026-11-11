@@ -17,12 +17,12 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.abort import AbortSignal
-from minicode.adapters.mock import MockModelAdapter
-from minicode.agent_loop import TurnHooks, run_agent_turn
-from minicode.tooling import ToolContext, ToolDefinition, ToolRegistry, ToolResult
-from minicode.tools import create_default_registry, subagent_registry
-from minicode.types import AgentStep, StepDiagnostics, ToolCall
+from corecode.abort import AbortSignal
+from corecode.adapters.mock import MockModelAdapter
+from corecode.agent_loop import TurnHooks, run_agent_turn
+from corecode.tooling import ToolContext, ToolDefinition, ToolRegistry, ToolResult
+from corecode.tools import create_default_registry, subagent_registry
+from corecode.types import AgentStep, StepDiagnostics, ToolCall
 
 #: 测试用的临时工作区。刻意放在仓库内而不是系统临时目录：
 #: 一来沙箱允许写这里，二来测试产生的文件可见、可清理。
@@ -93,7 +93,7 @@ class AgentLoopTests(unittest.TestCase):
             model=MockModelAdapter(),
             tools=registry,
             messages=[
-                {"role": "system", "content": "You are mini-code."},
+                {"role": "system", "content": "You are corecode."},
                 {"role": "user", "content": "/ls"},
             ],
             cwd=self.workdir,
@@ -344,7 +344,7 @@ class AgentLoopTests(unittest.TestCase):
 
     def test_subagent_registry_is_read_only(self) -> None:
         """子 Agent 不能看到任何写工具——隔离发生在注册表层。"""
-        from minicode.agents.types import SUBAGENT_TOOL_NAMES
+        from corecode.agents.types import SUBAGENT_TOOL_NAMES
 
         full = create_default_registry()
         restricted = subagent_registry(full)

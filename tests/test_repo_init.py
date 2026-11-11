@@ -1,10 +1,8 @@
 """仓库初始化（`/init`）的测试。
 
-对应原版 `init.ts`（343 行）。
-
 ## 三条不可违反的性质，各自都有测试
 
-**① 绝不覆盖已有文件。** `MINI.md` 可能写了大量项目知识，被模板覆盖是不可接受
+**① 绝不覆盖已有文件。** `CORECODE.md` 可能写了大量项目知识，被模板覆盖是不可接受
 的损失。`test_existing_mini_md_is_never_overwritten` 直接钉住这条。
 
 **② `.gitignore` 只追加，不重写。** 用户已有的规则必须原样保留。
@@ -24,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.repo_init import (  # noqa: E402
+from corecode.repo_init import (  # noqa: E402
     GITIGNORE_COMMENT,
     GITIGNORE_ENTRIES,
     detect_repo,
@@ -34,10 +32,9 @@ from minicode.repo_init import (  # noqa: E402
     render_init_report,
 )
 
-
 class InitTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = tempfile.mkdtemp(prefix="minicode-init-")
+        self.root = tempfile.mkdtemp(prefix="corecode-init-")
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root, ignore_errors=True)
@@ -50,7 +47,6 @@ class InitTestCase(unittest.TestCase):
 
     def read(self, name: str) -> str:
         return (Path(self.root) / name).read_text(encoding="utf-8")
-
 
 class DetectRepoTests(InitTestCase):
     def test_empty_directory_detects_nothing(self) -> None:
@@ -91,7 +87,6 @@ class DetectRepoTests(InitTestCase):
         self.assertTrue(d.nest)
 
     def test_package_json_matching_is_case_insensitive(self) -> None:
-        """原版把 `package.json` 整个转小写再匹配，因此 `"React"` 也认。"""
         self.write("package.json", '{"dependencies": {"React": "18"}}')
         self.assertTrue(detect_repo(self.root).react)
 
@@ -121,11 +116,10 @@ class DetectRepoTests(InitTestCase):
         self.assertTrue(d.package_json)
         self.assertFalse(d.react)
 
-
 class RenderMiniMdTests(InitTestCase):
     def test_always_has_header_and_working_agreement(self) -> None:
         text = render_init_mini_md(self.root)
-        self.assertIn("# MINI.md", text)
+        self.assertIn("# CORECODE.md", text)
         self.assertIn("## Detected stack", text)
         self.assertIn("## Working agreement", text)
 
@@ -202,14 +196,13 @@ class RenderMiniMdTests(InitTestCase):
                     following.strip(), f"标题 {line!r} 下面没有内容"
                 )
 
-
 class InitializeRepoTests(InitTestCase):
     def test_creates_all_three_artifacts(self) -> None:
         report = initialize_repo(self.root)
         names = {a.name for a in report.artifacts}
-        self.assertEqual(names, {".mini-code/", ".gitignore", "MINI.md"})
-        self.assertTrue((Path(self.root) / ".mini-code").is_dir())
-        self.assertTrue((Path(self.root) / "MINI.md").is_file())
+        self.assertEqual(names, {".corecode/", ".gitignore", "CORECODE.md"})
+        self.assertTrue((Path(self.root) / ".corecode").is_dir())
+        self.assertTrue((Path(self.root) / "CORECODE.md").is_file())
         self.assertTrue((Path(self.root) / ".gitignore").is_file())
 
     def test_first_run_reports_created(self) -> None:
@@ -220,22 +213,22 @@ class InitializeRepoTests(InitTestCase):
     def test_second_run_is_idempotent(self) -> None:
         """**幂等**：重复跑必须全是 skipped，且文件内容不变。"""
         initialize_repo(self.root)
-        before = self.read("MINI.md")
+        before = self.read("CORECODE.md")
         gitignore_before = self.read(".gitignore")
 
         report = initialize_repo(self.root)
         for artifact in report.artifacts:
             self.assertEqual(artifact.status, "skipped", artifact.name)
-        self.assertEqual(self.read("MINI.md"), before)
+        self.assertEqual(self.read("CORECODE.md"), before)
         self.assertEqual(self.read(".gitignore"), gitignore_before)
 
     def test_existing_mini_md_is_never_overwritten(self) -> None:
-        """**最重要的一条。** 用户的 MINI.md 可能写了大量项目知识。"""
-        self.write("MINI.md", "# 我自己的说明\n\n非常宝贵的内容\n")
+        """**最重要的一条。** 用户的 CORECODE.md 可能写了大量项目知识。"""
+        self.write("CORECODE.md", "# 我自己的说明\n\n非常宝贵的内容\n")
         report = initialize_repo(self.root)
-        self.assertEqual(self.read("MINI.md"), "# 我自己的说明\n\n非常宝贵的内容\n")
+        self.assertEqual(self.read("CORECODE.md"), "# 我自己的说明\n\n非常宝贵的内容\n")
         status = {a.name: a.status for a in report.artifacts}
-        self.assertEqual(status["MINI.md"], "skipped")
+        self.assertEqual(status["CORECODE.md"], "skipped")
 
     def test_gitignore_appends_without_losing_existing_rules(self) -> None:
         self.write(".gitignore", "node_modules/\n*.log\n")
@@ -262,12 +255,12 @@ class InitializeRepoTests(InitTestCase):
         status = {a.name: a.status for a in report.artifacts}
         self.assertEqual(status[".gitignore"], "skipped")
 
-    def test_mini_code_as_a_file_raises(self) -> None:
-        """`.mini-code` 已存在但是个文件 → 必须报错，不能覆盖。"""
-        self.write(".mini-code", "not a directory")
+    def test_corecode_as_a_file_raises(self) -> None:
+        """`.corecode` 已存在但是个文件 → 必须报错，不能覆盖。"""
+        self.write(".corecode", "not a directory")
         with self.assertRaises(NotADirectoryError):
             initialize_repo(self.root)
-        self.assertEqual(self.read(".mini-code"), "not a directory")
+        self.assertEqual(self.read(".corecode"), "not a directory")
 
     def test_gitignore_entries_are_not_duplicated(self) -> None:
         self.write(
@@ -278,7 +271,6 @@ class InitializeRepoTests(InitTestCase):
         content = self.read(".gitignore")
         for entry in GITIGNORE_ENTRIES:
             self.assertEqual(content.count(entry), 1, entry)
-
 
 class GitignoreTests(InitTestCase):
     def test_creates_when_missing(self) -> None:
@@ -304,7 +296,7 @@ class GitignoreTests(InitTestCase):
             self.assertIn(entry, content)
 
     def test_trailing_whitespace_on_existing_lines_is_stripped(self) -> None:
-        """原版对每行 `trimEnd()` 后写回，因此已有行会被去空白。
+        """
 
         这不是缺陷，但值得钉住——它意味着这个函数**会触碰**已有行。
         """
@@ -312,17 +304,16 @@ class GitignoreTests(InitTestCase):
         ensure_gitignore_entries(str(path))
         self.assertIn("keep-me\n", path.read_text(encoding="utf-8"))
 
-
 class InitReportTests(unittest.TestCase):
     def test_report_shape(self) -> None:
-        from minicode.repo_init import InitArtifact, InitReport
+        from corecode.repo_init import InitArtifact, InitReport
 
         report = InitReport(
             project_root="/tmp/proj",
             artifacts=[
-                InitArtifact(".mini-code/", "created"),
+                InitArtifact(".corecode/", "created"),
                 InitArtifact(".gitignore", "updated"),
-                InitArtifact("MINI.md", "skipped"),
+                InitArtifact("CORECODE.md", "skipped"),
             ],
         )
         text = render_init_report(report)
@@ -335,14 +326,13 @@ class InitReportTests(unittest.TestCase):
 
     def test_report_labels_are_distinct(self) -> None:
         """三种状态必须显示成三种不同的文字，否则用户分不清发生了什么。"""
-        from minicode.repo_init import InitArtifact, InitReport
+        from corecode.repo_init import InitArtifact, InitReport
 
         labels = set()
         for status in ("created", "updated", "skipped"):
             report = InitReport("/p", [InitArtifact("x", status)])
             labels.add(render_init_report(report).splitlines()[2])
         self.assertEqual(len(labels), 3)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

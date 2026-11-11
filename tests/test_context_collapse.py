@@ -1,11 +1,5 @@
 """collapse / auto-compact / tool-result-storage / pipeline 的测试。
 
-重点：
-  - collapse 是**投影**：真实转录绝不能被改动；
-  - collapse 的 usage 失效范围（本实现对原实现做了修正，见 docs/divergences.md）；
-  - auto-compact 的三重门控与连续失败熔断；
-  - 大结果落盘的单条与批次两道闸门；
-  - pipeline 的四级顺序与「snip 每回合最多一次」。
 """
 
 from __future__ import annotations
@@ -17,7 +11,7 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.context.collapse import (
+from corecode.context.collapse import (
     CollapseSpan,
     ContextCollapseState,
     apply_context_collapse_if_needed,
@@ -27,15 +21,15 @@ from minicode.context.collapse import (
     project_collapsed_view,
     tool_group_is_closed,
 )
-from minicode.context.compact import (
+from corecode.context.compact import (
     compact_conversation,
     find_retention_boundary,
     group_messages_by_api_round,
     parse_summary_from_response,
     reset_auto_compact_state,
 )
-from minicode.context.pipeline import ContextPipeline
-from minicode.context.tool_result_storage import (
+from corecode.context.pipeline import ContextPipeline
+from corecode.context.tool_result_storage import (
     DEFAULT_MAX_RESULT_SIZE_CHARS,
     MAX_TOOL_RESULTS_PER_BATCH_CHARS,
     PREVIEW_SIZE_CHARS,
@@ -48,38 +42,34 @@ from minicode.context.tool_result_storage import (
     generate_preview,
     replace_large_tool_result,
 )
-from minicode.context.tokens import (
+from corecode.context.tokens import (
     compute_context_stats,
     mark_provider_usage_stale,
     message_provider_usage,
 )
-from minicode.types import AgentStep
+from corecode.types import AgentStep
 
 MODEL = "claude-sonnet-4"
 WINDOW = 184_000
 USER_CHARS_PER_TOKEN = 3.0
 
-#: 落盘类测试的输出目录。刻意放在仓库内而不是 ~/.mini-code：
+#: 落盘类测试的输出目录。刻意放在仓库内而不是 ~/.corecode：
 #: 一来沙箱允许写这里，二来测试不会污染真实用户数据。
 _OUTPUT_DIR = os.path.join(_HERE, "_tmp", "tool-results")
 
 unittest.TestCase.maxDiff = None
 
-
 def filler(chars: int) -> str:
     return "x" * chars
 
-
 def chars_needed(ratio: float) -> int:
     return int(ratio * WINDOW * 1.15 * USER_CHARS_PER_TOKEN)
-
 
 def user(content: str, ident: str | None = None) -> dict:
     message = {"role": "user", "content": content}
     if ident:
         message["id"] = ident
     return message
-
 
 def assistant(content: str, ident: str | None = None, usage: dict | None = None) -> dict:
     message: dict = {"role": "assistant", "content": content}
@@ -89,10 +79,8 @@ def assistant(content: str, ident: str | None = None, usage: dict | None = None)
         message["providerUsage"] = usage
     return message
 
-
 def usage(total: int) -> dict:
     return {"inputTokens": total, "outputTokens": 0, "totalTokens": total, "source": "t"}
-
 
 def tool_result(content: str, tool_use_id: str = "t", tool_name: str = "read_file") -> dict:
     return {
@@ -103,7 +91,6 @@ def tool_result(content: str, tool_use_id: str = "t", tool_name: str = "read_fil
         "isError": False,
     }
 
-
 def tool_call(tool_use_id: str = "t", tool_name: str = "read_file") -> dict:
     return {
         "role": "assistant_tool_call",
@@ -111,7 +98,6 @@ def tool_call(tool_use_id: str = "t", tool_name: str = "read_file") -> dict:
         "toolName": tool_name,
         "input": {},
     }
-
 
 class ScriptedAdapter:
     """返回固定摘要的假适配器，并记录最后一次收到的提示词。"""
@@ -131,11 +117,9 @@ class ScriptedAdapter:
             return AgentStep(type="assistant", content="<summary>空</summary>")
         return AgentStep(type="assistant", content=self._responses.pop(0))
 
-
 # ---------------------------------------------------------------------------
 # collapse
 # ---------------------------------------------------------------------------
-
 
 class ToolGroupClosureTests(unittest.TestCase):
     def test_parallel_batch_is_closed_here(self) -> None:
@@ -158,7 +142,6 @@ class ToolGroupClosureTests(unittest.TestCase):
         self.assertFalse(
             tool_group_is_closed([tool_call("a"), tool_result("1", "a"), tool_result("2", "b")])
         )
-
 
 class ProjectionTests(unittest.TestCase):
     def _committed_state(self, message_ids: list[str]) -> ContextCollapseState:
@@ -235,8 +218,6 @@ class ProjectionTests(unittest.TestCase):
         state = ContextCollapseState(enabled=False)
         self.assertIs(project_collapsed_view(messages, state), messages)
 
-    # -- 本实现对原实现的修正 ------------------------------------------------
-
     def test_usage_before_span_is_preserved(self) -> None:
         """span 之前的消息完全未被触碰，其 provider usage 必须仍然可用。"""
         messages = [
@@ -278,7 +259,6 @@ class ProjectionTests(unittest.TestCase):
             "estimate_only",
             "span 之前仍有可用 usage，计量不应退化为纯估算",
         )
-
 
 class CollapseCandidateTests(unittest.TestCase):
     def test_no_candidate_when_too_short(self) -> None:
@@ -322,7 +302,6 @@ class CollapseCandidateTests(unittest.TestCase):
                 set(second.message_ids) & set(first.message_ids),
                 "已被 span 覆盖的消息不应再次入选",
             )
-
 
 class ApplyCollapseTests(unittest.TestCase):
     def _long(self) -> list[dict]:
@@ -400,11 +379,9 @@ class ApplyCollapseTests(unittest.TestCase):
         self.assertFalse(result.collapsed)
         self.assertEqual(result.state.consecutive_failures, 0)
 
-
 # ---------------------------------------------------------------------------
 # auto-compact
 # ---------------------------------------------------------------------------
-
 
 class AutoCompactTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -474,7 +451,6 @@ class AutoCompactTests(unittest.TestCase):
         self.assertEqual(result.messages[1]["role"], "context_summary")
 
     def test_compact_does_not_drop_a_leading_non_system_message(self) -> None:
-        """本实现对原实现的修正：原实现盲切下标 0 会吞掉首条非 system 消息。"""
         messages = [user("这是第一条，必须保住", "first")] + [
             user(filler(4000), f"u{i}") for i in range(60)
         ]
@@ -494,11 +470,9 @@ class AutoCompactTests(unittest.TestCase):
         self.assertIsNone(parse_summary_from_response("<summary></summary>"))
         self.assertIsNone(parse_summary_from_response("</summary><summary>"))
 
-
 # ---------------------------------------------------------------------------
 # tool-result storage
 # ---------------------------------------------------------------------------
-
 
 class PreviewTests(unittest.TestCase):
     def test_short_content_is_returned_whole(self) -> None:
@@ -529,7 +503,6 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(format_chars(300), "300 chars")
         self.assertEqual(format_chars(52_000), "52K chars")
         self.assertEqual(format_chars(1_200_000), "1.2M chars")
-
 
 class ReplaceLargeResultTests(unittest.TestCase):
     def _result(self, content: str, ident: str = "t1") -> PendingToolResult:
@@ -591,7 +564,6 @@ class ReplaceLargeResultTests(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), content)
 
-
 class BatchBudgetTests(unittest.TestCase):
     def _result(self, ident: str, size: int) -> PendingToolResult:
         return PendingToolResult(
@@ -631,11 +603,9 @@ class BatchBudgetTests(unittest.TestCase):
         outcome = apply_tool_result_budget(second, state, base_dir=_OUTPUT_DIR)
         self.assertEqual(outcome.newly_replaced, [])
 
-
 # ---------------------------------------------------------------------------
 # pipeline
 # ---------------------------------------------------------------------------
-
 
 class PipelineTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -748,9 +718,6 @@ class PipelineTests(unittest.TestCase):
     def test_auto_compact_only_runs_on_the_first_step(self) -> None:
         """**auto-compact 只在 step 0 尝试。**
 
-        它是最重的手段（要调模型），每步都试会让一个回合里反复触发摘要调用。
-        原版写着 `if (step === 0 && modelName)`。
-
         这条用同一个超限历史分别跑 step=0 与 step=1，断言后者一次都不调模型。
         """
         def build():
@@ -808,9 +775,6 @@ class PipelineTests(unittest.TestCase):
     def test_no_model_name_skips_collapse_even_with_a_large_history(self) -> None:
         """**没有模型名时四级压缩全部跳过。**
 
-        算不出窗口就没有阈值，任何压缩都是盲猜。原版与本实现都在入口处
-        直接返回。
-
         上面那条 `test_no_model_name_skips_everything` 用的是单条 200k 字符的
         消息——即使不提前返回，各级也会因为「消息太少」而拒绝，所以它**测不出
         这个提前返回**。这条用「一定会触发各级阈值」的历史，唯一让它们不动的
@@ -848,7 +812,6 @@ class PipelineTests(unittest.TestCase):
         会话文件里一直累积指向已不存在消息的 span；而本文件的不变量写着
         「原地更新」——不变量与实际行为不一致，比数据脏更麻烦。
 
-        原版 `replaceContextCollapseState()` 同样在原地同步调用方的对象。
         """
         shared = create_context_collapse_state()
         # 造一个已经折叠过一段的 state，并把它交给管线。
@@ -895,7 +858,6 @@ class PipelineTests(unittest.TestCase):
         # ② 数据已被清空（失效 span 不会写进会话文件）
         self.assertEqual(shared.spans, [])
         self.assertEqual(shared.consecutive_failures, 0)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1,13 +1,9 @@
-# MiniCode (Python)
+# CoreCode
 
-一个轻量的终端编码助手：**Claude Code 式的 agent 架构，用 Python 从零重写。**
+一个轻量的终端编码助手：**Claude Code 式的 agent 架构，用 Python 实现。**
 
 这是一个学习与自用导向的项目。它刻意保持小：核心循环可通读，模块边界单向，
 运行时零第三方依赖（只用标准库）。
-
-> 架构蓝本来自 [LiuMengxuan04/MiniCode](https://github.com/LiuMengxuan04/MiniCode)
-> 的 TypeScript 实现。本仓库不是逐行翻译，而是按同一套架构取向重写，
-> 并在少数地方做了有意的取舍（见「与 TypeScript 版的差异」）。
 
 ---
 
@@ -16,15 +12,15 @@
 **行模式 REPL，仿 Claude Code 的观感。** 这是默认也是唯一的交互方式：
 
 ```bash
-minicode
+corecode
 ```
 
 ```
 ╭────────────────────────────────────────────────────────────────────────────╮
-│ MiniCode  终端编码助手                                                     │
+│ CoreCode  终端编码助手                                                     │
 │ 模型  qwen3.8-27b                                                          │
 │ 会话  a1b2c3d4                                                             │
-│ 目录  D:\CoreCode\minicode-py                                              │
+│ 目录  D:\CoreCode\corecode                                              │
 │ 工具  20 个（6 只读 · 11 受限 coder）                                      │
 │ 技能  2 个                                                                 │
 ╰────────────────────────────────────────────────────────────────────────────╯
@@ -49,48 +45,6 @@ minicode
 
 视觉记号沿用 Claude Code：`⏺` 起头的工具调用、`⎿` 承接结果、`>` 提示符、
 圆角框。模型反问时用独立的方框突出，并明确提示「请直接输入你的回答」。
-
-### 动画
-
-启动时有一段**像素动画**（逐帧点亮 `MINI` 字样），模型思考时有一个
-**转圈指示器**：
-
-```
-█···█·█████·█···█·█████      启动动画：6 帧逐行点亮
-██·██···█···██··█···█··      全亮后停留 0.9 秒 ← 不闪而过
-█·█·█···█···█·█·█···█··      总时长上限 1.8 秒
-█···█···█···█··██···█··
-█···█···█···█···█·█████
-
-⠋ 思考中…                    思考时：单行转圈
-⏺ read_file                   首次输出时自动擦掉转圈
-  ⎿ PATH: pyproject.toml
-```
-
-**「停留」是刻意的。** 早先的版本点亮完就立刻擦掉，视觉上**一闪而过**，
-根本来不及看清画的是什么。动画的价值在于被看到，不在于播完。
-
-**动画是可选增强，绝不是前提。** 每个动画都先过能力探测，以下情况
-**完全静默**（连空行都不留）：
-
-| 情况 | 原因 |
-|---|---|
-| 非终端（管道 / 重定向 / CI） | `\r` 与光标序列会污染文件 |
-| `NO_COLOR` 已设置 | 用户想要最小化输出 |
-| `TERM=dumb` | 终端声明自己什么都不会 |
-| `--no-animation` | 显式关闭 |
-| 终端宽度 < 字形宽度 | 像素画截断后会变成无意义的方块，不如不播 |
-
-**动画只用「写」，不涉及「读」。** 转圈只发 `\r` 回到行首重写同一行；
-像素动画用**相对**光标移动（`ESC[<n>A`），只需要知道自己占了几行，
-不需要知道终端总行数。这正是它与失败的全屏 TUI 的本质区别——后者用
-绝对定位，要求「渲染行数恰好等于终端行数」，一旦不等就整体错乱。
-
-两条硬约束保证多行动画不漂移：
-
-1. **帧高固定**。高度一变，相对移动就会算错位置，画面逐帧漂移。
-   因此所有帧都补齐到同一高度。
-2. **每行 ≤ 终端宽度**。超宽会触发终端自动换行，同样破坏行数记账。
 
 ### 流式输出
 
@@ -166,9 +120,9 @@ python -m unittest discover -s tests -v
 # 用离线 mock 模型跑通一个完整回合
 python -c "
 import sys; sys.path.insert(0, 'src')
-from minicode.agent_loop import run_agent_turn
-from minicode.adapters.mock import MockModelAdapter
-from minicode.tools import create_default_registry
+from corecode.agent_loop import run_agent_turn
+from corecode.adapters.mock import MockModelAdapter
+from corecode.tools import create_default_registry
 r = run_agent_turn(
     model=MockModelAdapter(), tools=create_default_registry(),
     messages=[{'role':'user','content':'/ls'}], cwd='.',
@@ -201,7 +155,7 @@ for m in r.messages: print(' ', m['role'], '|', str(m.get('content'))[:60])
 ```
 
 配套的**命令行层**（不属于循环）：`cli` 行模式 REPL、`cli_commands` 斜杠命令、
-`manage_cli` 子命令（`minicode mcp` / `minicode skills`）、`install` 安装器。
+`manage_cli` 子命令（`corecode mcp` / `corecode skills`）、`install` 安装器。
 
 ### 三条不可动摇的边界
 
@@ -254,9 +208,9 @@ for step in range(max_steps):
 | 修复经验 | 错误签名与后续恢复动作 | 工具再次报错时优先召回 |
 | 用户画像 | 明确的长期偏好、约束、身份 | 跨会话、跨项目注入系统上下文 |
 
-资产保存在 `MINICODE_HOME/evolved-memory/`，使用增量 BM25 索引检索。检索发生在
+资产保存在 `CORECODE_HOME/evolved-memory/`，使用增量 BM25 索引检索。检索发生在
 每一次模型调用之前，只修改模型可见投影，不污染真实会话。重复成功的流程写到
-项目 `.mini-code/skills/evolved-*/SKILL.md`，并在当前会话立即刷新到技能目录。
+项目 `.corecode/skills/evolved-*/SKILL.md`，并在当前会话立即刷新到技能目录。
 完整机制见 [`docs/spec-evolution.md`](docs/spec-evolution.md)。
 
 ---
@@ -306,6 +260,19 @@ Skill 支持可选 front matter：`category`、`tags`、`intents`、`when_to_use
 
 ## 实现进度
 
+<!-- BEGIN GENERATED STATS -->
+
+| 项目 | 数量 |
+|---|---|
+| 未映射 | 0 |
+| Python 模块 | 108 |
+| 模块级常量 | 334 |
+| 模块级函数/类 | 681 |
+| 变异用例 | 340 |
+| 单元测试 | 1661 |
+
+<!-- END GENERATED STATS -->
+
 | 模块 | 状态 |
 |---|---|
 | 核心循环 `agent_loop` | ✅ 完成，16 项行为测试通过 |
@@ -339,19 +306,17 @@ Skill 支持可选 front matter：`category`、`tags`、`intents`、`when_to_use
 | `src/` 各模块 | 全部覆盖，或记为有意差异 ✅ |
 | 完全缺失 / 能力缩水 | **0 / 0** |
 
-有意差异共 38 条，逐条记在 [`docs/divergences.md`](docs/divergences.md)
-（每条含原行为 / 本实现 / 理由 / 影响面 / 可回退）。逐项对等清单与核对方法
-见 [`docs/parity.md`](docs/parity.md)。
+每个 ✅ 都有对应测试兜底：命令数量与能力集合由 `tools/check_docs.py` 校验，
+文档与实测不一致会直接变红。
 
 > 早先这张表把工具层写成「✅ 完成」而在括号里省略了缺失项，是**表述误导**。
 > 后来它又反向漂移了一次：所有项目都已补齐，表里却仍列着一堆 ❌。
-> 两次是同一个病——**文档没有跟着代码走**。现在的做法是：缺口一补齐就改这张表，
-> 并由 `docs/parity.md` 里的可执行断言（命令数量、缺口集合）挡住过期。
+> 两次是同一个病——**文档没有跟着代码走**。现在的做法是：缺口一补齐就改这张表。
 
-> **测试隔离**：`tests/__init__.py` 在任何 `minicode` 导入之前把家目录钉在仓库内
-> （`tests/_tmp/mini-home`），并做一次 fail-closed 断言。运行时的路径解析走
+> **测试隔离**：`tests/__init__.py` 在任何 `corecode` 导入之前把家目录钉在仓库内
+> （`tests/_tmp/corecode-home`），并做一次 fail-closed 断言。运行时的路径解析走
 > `config.projects_dir()` 这类**动态**访问器，因此测试可以逐用例覆盖
-> `MINICODE_HOME`。模块级的 `PROJECTS_DIR` 只是展示用快照，不要用它读写文件。
+> `CORECODE_HOME`。模块级的 `PROJECTS_DIR` 只是展示用快照，不要用它读写文件。
 
 ---
 
@@ -368,7 +333,7 @@ python tools/self_check.py       # 环境自检（依赖 + 导入 + 测试）
 `mutation_check.py` 的价值在于：绿色测试只说明测试通过，不说明测试**有效**。
 它已经抓出过 2 个「形同虚设」的测试。
 
-`self_check.py` 刻意是独立脚本而不是 CLI 子命令——早先的 `minicode --agent`
+`self_check.py` 刻意是独立脚本而不是 CLI 子命令——早先的 `corecode --agent`
 会跑测试，而测试里又有一个用 `--agent` 的用例，于是无限递归并**挂住**。
 
 `mutation_check.py` 还会**自愈**：变异前先把原文另存为 `.mutation-backup`，
@@ -380,7 +345,7 @@ python tools/self_check.py       # 环境自检（依赖 + 导入 + 测试）
 
 ## MCP 接入
 
-在 `~/.mini-code/mcp.json`、项目根的 `.mcp.json`，或 `settings.json` 的
+在 `~/.corecode/mcp.json`、项目根的 `.mcp.json`，或 `settings.json` 的
 `mcpServers` 中配置（后者优先级最高）：
 
 ```json
@@ -411,7 +376,7 @@ python tools/self_check.py       # 环境自检（依赖 + 导入 + 测试）
 
 ## 配置
 
-写入 `~/.mini-code/settings.json`：
+写入 `~/.corecode/settings.json`：
 
 ```json
 {
@@ -419,7 +384,7 @@ python tools/self_check.py       # 环境自检（依赖 + 导入 + 测试）
   "env": {
     "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic",
     "ANTHROPIC_API_KEY": "sk-...",
-    "MINICODE_THINKING": "disabled"
+    "CORECODE_THINKING": "disabled"
   },
   "maxOutputTokens": 16000
 }
@@ -431,10 +396,10 @@ python tools/self_check.py       # 环境自检（依赖 + 导入 + 测试）
 本工具的配置文件，你写在这里的端点与密钥会被静默作废。凭据成对决策（D26）——
 文件提供了任一凭据时就不再从环境回退，避免「端点来自 A、密钥来自 B」。
 
-`MINICODE_*` 前缀是本工具专有的，**始终**以进程环境为准，便于临时覆盖：
+`CORECODE_*` 前缀是本工具专有的，**始终**以进程环境为准，便于临时覆盖：
 
 ```bash
-MINICODE_MODEL=claude-sonnet-4 minicode
+CORECODE_MODEL=claude-sonnet-4 corecode
 ```
 
 ### 用阿里云百炼（Model Studio）
@@ -454,7 +419,7 @@ MINICODE_MODEL=claude-sonnet-4 minicode
 
 1. **不要**把 `base_url` 写到 `/v1` 结尾——客户端会自行追加 `/v1/messages`，
    写成 `.../apps/anthropic/v1` 会产生 `/v1/v1/messages` 并返回 404。
-2. **必须设 `"MINICODE_THINKING": "disabled"`**（或 settings 里的 `"thinking": "disabled"`）。
+2. **必须设 `"CORECODE_THINKING": "disabled"`**（或 settings 里的 `"thinking": "disabled"`）。
    百炼的 `qwen3.8-max` 系列默认开启思考，而思考 token 与正文共享 `max_tokens`；
    预算被思考吃光时模型返回**空内容**。症状是「模型不回答」，根因却是 token 预算。
 
@@ -466,20 +431,20 @@ MINICODE_MODEL=claude-sonnet-4 minicode
 ## 全屏界面（内联实时区域）
 
 ```bash
-minicode --tui
+corecode --tui
 ```
 
 外观仿 Claude Code：圆角输入框、`⏺` 起头的工具调用、`⎿` 承接结果、
 底部带转圈动画的状态行。
 
 ```
-MiniCode  session abc123  tools 12
+CoreCode  session abc123  tools 12
                                         ← 转录区（不足时补空行，输入框始终贴底）
 > 帮我看看这个文件
 
 ⏺ read_file
   ⎿ 读取了 pyproject.toml
-这个项目的名字是 minicode。
+这个项目的名字是 corecode。
 
 ╭──────────────────────────────────────╮
 │ > 下一个问题                          │
@@ -489,7 +454,7 @@ MiniCode  session abc123  tools 12
 
 ### 为什么是「内联」而不是「全屏」
 
-早先的实现（也是照搬原版 `tty-app.ts` 的做法）用**备用屏幕 + 绝对行定位**
+早先的实现用**备用屏幕 + 绝对行定位**
 （`ESC[<行>;1H`）。它有一个致命脆弱点：**要求「渲染行数」恰好等于「终端行数」**。
 一旦不等——哪怕只多一行——写入就会触发滚动，屏幕整体上移，之后所有绝对行号
 全部错位，画面必然错乱。
@@ -538,7 +503,7 @@ python tools/tui_doctor.py
 **① stdin 不是真正的 Windows 控制台。** 在 **Git Bash / MSYS2 / Cygwin**
 下，`isatty()` 返回真，但标准句柄不是控制台，`msvcrt.kbhit()` 会**永远返回
 False**——界面画出来了，按键永远读不到。解决办法：换用 **Windows Terminal
-或 PowerShell**，或用行模式 `minicode`。
+或 PowerShell**，或用行模式 `corecode`。
 
 **② stdout 被重定向。** `--tui` 需要 stdin 与 stdout 都是终端；管道或重定向
 下会明确提示并回退到行模式。
@@ -565,9 +530,8 @@ False**——界面画出来了，按键永远读不到。解决办法：换用 
 
 - **没有鼠标支持**：点击、拖选、滚轮都不可用。也因此**不开启鼠标跟踪**——
   开了却不解析，鼠标移动产生的 `ESC[M…` 会被当成乱码打进输入行。
-- **没有剪贴板集成**、没有会话选择器、没有 `/init` 流程、没有欢迎动画。
-- **原版 `tty-app.ts` 有 2394 行，本目录约 1300 行**，交互循环是重新实现的，
-  不是逐行移植。真正复刻的是**差分渲染算法**（对照 `screen.ts`）。
+- **没有剪贴板集成**、没有会话选择器、没有 `/init` 流程。
+- **交互循环约 1300 行**，渲染走差分算法：只重画变化的部分，不整屏刷新。
 - **`NO_COLOR` 被设置时颜色全部关闭**（这是[约定](https://no-color.org/)，也是
   色彩显示异常时唯一的自救手段）。布局不受影响。
 - **原始终端取键无法在自动化环境里验证**（没有 TTY）。按键源与尺寸源可注入，
@@ -579,34 +543,21 @@ False**——界面画出来了，按键永远读不到。解决办法：换用 
 
 ---
 
-## 与 TypeScript 版的差异
-
-这些是**有意的**取舍，不是移植遗漏：
-
-| 主题 | TypeScript 版 | 本仓库 | 原因 |
-|---|---|---|---|
-| 消息表示 | 判别联合类型 | `dict` + 构造辅助函数 | 消息同时要喂给模型 wire 格式、JSONL 日志、UI 渲染；dict 让三者转换成本为零。校验收敛到工具 validator 与构造函数 |
-| 上下文压缩 | 四套独立机制 | 合并进 `ContextPipeline` | 循环只需知道「给我真实消息和模型可见投影」这一个接缝 |
-| 取消传播 | `AbortSignal`（平台原生） | 自建 `AbortSignal`（`threading.Event`） | 工具执行多为同步阻塞调用，全链路 async 化得不偿失 |
-| UI 框架 | 无（手写 ANSI） | 无（手写 ANSI） | 保持一致 |
-
----
-
 ## 目录
 
 ```
-src/minicode/                     行数    职责
+src/corecode/                     行数    职责
   __main__.py / __init__.py               包入口
   cli.py                    759   行模式 REPL、参数解析、单次提问
   cli_commands.py           625   斜杠命令（29 条）
-  manage_cli.py             421   子命令：minicode mcp / minicode skills
-  install.py                268   交互式本地安装器（python -m minicode.install）
-  repo_init.py              416   /init：探测仓库并生成 MINI.md
+  manage_cli.py             421   子命令：corecode mcp / corecode skills
+  install.py                268   交互式本地安装器（python -m corecode.install）
+  repo_init.py              416   /init：探测仓库并生成 CORECODE.md
   history.py                223   输入历史（JSONL）
   host.py                   381   会话宿主：装配模型/工具/权限/计划
   config.py                 549   配置装载、路径访问、Claude 兼容回退
   permissions.py            532   权限：只读白名单、审批、持久化
-  memory.py                 279   MINI.md 发现与装载
+  memory.py                 279   CORECODE.md 发现与装载
   evolution/                     自进化记忆：反思、资产库、BM25 索引、召回、Skill 生长
   skill_metadata.py              SKILL.md 元信息解析与兼容回退
   skill_routing.py               分层目录、一阶段召回、二阶段精排、Token 预算

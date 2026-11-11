@@ -18,9 +18,9 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.abort import AbortSignal
-from minicode.agents.manager import SubAgentError, SubAgentManager
-from minicode.agents.types import (
+from corecode.abort import AbortSignal
+from corecode.agents.manager import SubAgentError, SubAgentManager
+from corecode.agents.types import (
     MAX_SUB_AGENTS,
     PENDING_SUBAGENT_TOOLS,
     STATUS_CLOSED,
@@ -29,10 +29,10 @@ from minicode.agents.types import (
     STATUS_RUNNING,
     SUBAGENT_TOOL_NAMES,
 )
-from minicode.agents.worker_prompt import build_subagent_prompt
-from minicode.tooling import ToolContext, ToolRegistry
-from minicode.tools import create_root_registry, create_worker_registry
-from minicode.types import AgentStep
+from corecode.agents.worker_prompt import build_subagent_prompt
+from corecode.tooling import ToolContext, ToolRegistry
+from corecode.tools import create_root_registry, create_worker_registry
+from corecode.types import AgentStep
 
 CWD = os.path.dirname(_HERE)
 
@@ -156,7 +156,7 @@ class SubAgentManagerTests(unittest.TestCase):
     def test_coder_registry_has_write_tools_but_no_agent_or_user_tools(self) -> None:
         manager = self._manager(ReportingAdapter())
         root = create_root_registry(manager)
-        from minicode.tools import create_coder_registry
+        from corecode.tools import create_coder_registry
 
         coder = create_coder_registry(root)
         names = {tool.name for tool in coder.list()}
@@ -390,7 +390,7 @@ class SubAgentToolTests(unittest.TestCase):
     """四个管理工具本身的输入校验与输出形状。"""
 
     def setUp(self) -> None:
-        from minicode.tools.subagents import create_subagent_tools
+        from corecode.tools.subagents import create_subagent_tools
 
         self.manager = SubAgentManager(
             model=ReportingAdapter("报告内容"),
@@ -412,7 +412,7 @@ class SubAgentToolTests(unittest.TestCase):
         self.assertIn("max_concurrent", result.output)
 
     def test_spawn_tool_reports_capacity_errors(self) -> None:
-        from minicode.tools.subagents import create_subagent_tools
+        from corecode.tools.subagents import create_subagent_tools
 
         blocking = SubAgentManager(
             model=BlockingAdapter(),

@@ -1,0 +1,785 @@
+"""命令行入口。
+
+把前面所有模块串成一个可用的程序：
+
+    corecode                     交互式 REPL
+    corecode -p "问题"           单次提问后退出（便于脚本与集成测试）
+    corecode --resume [id]       恢复会话
+    corecode --fork <id>         从会话分叉
+    corecode --mock              离线模式（不需要 API key）
+
+设计上的两个取向：
+
+  - **没有 API key 也要能启动。** 配置缺失时自动退回离线 mock 模型，
+    并明确告知用户——而不是直接抛异常退出。这样新用户能先看到它能做什么。
+  - **权限提示是注入的。** `PermissionManager` 接收一个处理函数；行模式用
+    控制台问答实现它，TUI 会用交互面板实现它，测试用自动批准实现它。
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import threading
+from typing import Any
+
+from .adapters.anthropic import AnthropicModelAdapter
+from .adapters.mock import MockModelAdapter
+from .agents.manager import SubAgentManager
+from .config import (
+    ConfigError,
+    RuntimeConfig,
+    load_runtime_config,
+    resolve_model_mode,
+)
+from .host import HostCallbacks, SessionHost
+from .local_tool_shortcuts import parse_local_tool_shortcut
+from .permissions import (
+    PermissionDenied,
+    PermissionManager,
+    PermissionRequest,
+    auto_approve_prompt,
+)
+from .runtime.plan import PlanManager
+from .tooling import ToolContext
+from .tools import (
+    create_coder_registry,
+    create_root_registry,
+    create_worker_registry,
+)
+from .types import ModelAdapter
+from .ui import (
+    COLOR_HINT,
+    COLOR_USER,
+    GLYPH_BULLET,
+    GLYPH_FAIL,
+    GLYPH_OK,
+    GLYPH_TOOL,
+    ConsoleUI,
+    build_console_ui,
+    paint,
+    render_banner,
+    set_animation_enabled,
+)
+
+#: `/exit` 之外还会结束进程的输入。
+_EXIT_WORDS = frozenset({"/exit", "/quit", "exit", "quit"})
+
+# ---------------------------------------------------------------------------
+# 权限提示
+# ---------------------------------------------------------------------------
+
+def console_permission_prompt(
+    request: PermissionRequest, signal: Any
+) -> Any:
+    """行模式的权限提问。
+
+    展示摘要与细节，让用户按快捷键选择；无法读取输入时**默认拒绝**——
+    权限提示绝不能因为读不到输入就放行。
+    """
+    from .permissions import PermissionPromptResult
+
+    print()
+    print(f"── 需要你的批准 ─────────────────────────────")
+    print(f"  {request.summary}")
+    for line in request.details:
+        if line:
+            print(f"  {line}")
+    print()
+    for choice in request.choices:
+        print(f"  [{choice.key}] {choice.label}")
+
+    try:
+        answer = input("选择（直接回车 = 拒绝）: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return PermissionPromptResult(decision="deny_once")
+
+    for choice in request.choices:
+        if answer == choice.key.lower():
+            feedback = None
+            if choice.decision == "deny_with_feedback":
+                try:
+                    feedback = input("给模型的反馈: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    feedback = None
+            return PermissionPromptResult(decision=choice.decision, feedback=feedback)
+
+    # 未识别或空输入 → 拒绝（fail closed）。
+    return PermissionPromptResult(decision="deny_once")
+
+# ---------------------------------------------------------------------------
+# 依赖装配
+# ---------------------------------------------------------------------------
+
+def _build_model(
+    runtime: RuntimeConfig | None, mock: bool, tools_holder: dict[str, Any]
+) -> ModelAdapter:
+    if mock or runtime is None:
+        return MockModelAdapter()
+
+    def provider() -> RuntimeConfig:
+        # 每次请求重新读配置：`/model` 切换后无需重建适配器。
+        current = load_runtime_config()
+        tools_holder["runtime"] = current
+        return current
+
+    return AnthropicModelAdapter(provider)
+
+def build_host(
+    args: argparse.Namespace,
+    *,
+    callbacks: HostCallbacks | None = None,
+    warn_offline: bool = True,
+) -> SessionHost:
+    """按命令行参数装配一个可用的会话宿主。
+
+    `warn_offline=False` 时不打印「已进入离线 mock 模式」那句提示——REPL 会
+    打启动横幅，而横幅的徽章行已经写着 `[provider] offline` 与
+    单次模式（`-p`）没有横幅，那里仍然需要这句。
+    """
+    import os
+
+    cwd = os.path.abspath(args.cwd or os.getcwd())
+
+    runtime: RuntimeConfig | None = None
+    config_error: str | None = None
+    # `CORECODE_MODEL_MODE=mock` / `CORECODE_MODEL_MODE=mock` 也进 mock 模式。
+    #
+    # 两者都支持：`--mock` 给人用，环境变量给脚本/测试用。不认它的话，一个
+    mock_mode = bool(args.mock) or resolve_model_mode() == "mock"
+    if not mock_mode:
+        try:
+            runtime = load_runtime_config()
+        except ConfigError as error:
+            config_error = str(error)
+
+    # 先建工具表（子 Agent 需要只读子集），再建模型（它需要能列出工具）。
+    plan = PlanManager("pending")
+    permissions = PermissionManager(
+        cwd,
+        console_permission_prompt,
+        store_path=None,
+    )
+
+    subagents_holder: dict[str, Any] = {}
+    # **必须把 plan 传进去**：否则 `update_plan` 不会被注册，而系统提示每个
+    # 回合都在让模型用它——模型一调就是「Unknown tool」。见
+    # `create_default_registry` 的说明。
+    tools = create_root_registry(cwd=cwd, plan=plan)
+    worker_tools = create_worker_registry(tools)
+    coder_tools = create_coder_registry(tools)
+
+    model = _build_model(runtime, mock_mode, subagents_holder)
+
+    subagents = SubAgentManager(
+        model=model,
+        tools=worker_tools,
+        coder_tools=coder_tools,
+        cwd=cwd,
+    )
+    from .tools.subagents import create_subagent_tools
+
+    tools.add_tools(create_subagent_tools(subagents))
+    subagents_holder["manager"] = subagents
+
+    # MCP 在**后台**连接：服务器冷启动可能要几秒，不该阻塞启动。
+    # 先把状态标为 connecting，让 /mcp 立刻有东西可显示。
+    #
+    # 这个字典在 host 构造之前就存在，因此后台线程完成时可以安全地回填——
+    # 它可能先于 host 就绪，所以回调里要判空。
+    host_holder: dict[str, Any] = {}
+
+    # MCP 配置与「有没有模型凭据」无关，因此独立读取。
+    #
+    # 之前它只经由 `load_runtime_config()` 获得，而 mock 模式不调用那个函数
+    # （没有 API key 时会抛错）——结果是「没有 API key 就用不了 MCP」，
+    # 这个耦合是错的：MCP 服务器不需要模型凭据。
+    from .config import load_mcp_servers
+
+    servers = (
+        runtime.mcp_servers if runtime else load_mcp_servers(cwd=cwd)
+    ) or {}
+
+    mcp_holder: dict[str, Any] = {"bridge": None, "done": threading.Event()}
+    if servers:
+        from .mcp import build_connecting_summaries
+
+        tools.set_mcp_servers(
+            [item.to_dict() for item in build_connecting_summaries(servers)]
+        )
+
+        def _refresh_prompt() -> None:
+            host = host_holder.get("host")
+            if host is not None:
+                host.refresh_system_prompt()
+
+        _start_mcp_hydration(cwd, servers, tools, mcp_holder, on_ready=_refresh_prompt)
+
+    session_id = args.session or _new_session_id()
+
+    host = SessionHost(
+        cwd=cwd,
+        model=model,
+        runtime_config=runtime,
+        permissions=permissions,
+        tools=tools,
+        plan=plan,
+        session_id=session_id,
+        callbacks=callbacks,
+        subagents=subagents,
+    )
+    host_holder["host"] = host
+    if servers:
+        host.attach_mcp_completion(mcp_holder["done"])
+    host.refresh_system_prompt()
+
+    if config_error:
+        # **只在没有横幅的模式下提示**（见 `build_host` 的说明）。
+        if warn_offline:
+            host._notice(  # noqa: SLF001 - 一次性告知，随后继续用 mock 模式
+                f"未找到可用配置（{config_error}）\n已进入离线 mock 模式："
+                "它能跑通完整流程，但不会调用真实模型。"
+            )
+    return host
+
+def _new_session_id() -> str:
+    import uuid
+
+    return str(uuid.uuid4())[:8]
+
+def _start_mcp_hydration(
+    cwd: str,
+    servers: dict[str, Any],
+    tools: Any,
+    holder: dict[str, Any],
+    on_ready: Any = None,
+) -> None:
+    """在后台连接 MCP 服务器，连上后把工具注入注册表。
+
+    放后台的理由：服务器冷启动（`npx` 拉包、Python 导入重库）可能要数秒，
+    阻塞启动会让「输入第一条消息」变得很慢。UI 期间显示 `connecting`。
+
+    `on_ready` 用于在连接完成后重建系统提示——否则提示里会一直写着
+    `connecting`，也拿不到 MCP 工具的命名说明。
+
+    **`done` 必须在 `on_ready` 之后才置位**：它是「MCP 就绪」的公开信号，
+    调用方（脚本、测试）等到它之后就会去读系统提示。先置位再刷新会留下
+    一个竞态窗口，让等到信号的人读到尚未更新的提示。这个 bug 真实出现过。
+    """
+
+    def hydrate() -> None:
+        try:
+            from .mcp import create_mcp_backed_tools
+
+            bridge = create_mcp_backed_tools(cwd, servers)
+            tools.add_tools(bridge.tools)
+            tools.set_mcp_servers([item.to_dict() for item in bridge.summaries])
+            tools.add_disposer(bridge.dispose)
+            holder["bridge"] = bridge
+        except Exception:  # noqa: BLE001 - MCP 失败绝不该影响主流程
+            pass
+        finally:
+            if on_ready is not None:
+                try:
+                    on_ready()
+                except Exception:  # noqa: BLE001
+                    pass
+            # 最后一步：所有可观察状态都已就绪，此时才对外宣告完成。
+            holder["done"].set()
+
+    threading.Thread(target=hydrate, name="corecode-mcp", daemon=True).start()
+
+# ---------------------------------------------------------------------------
+# 本地命令
+# ---------------------------------------------------------------------------
+
+def handle_local_command(host: SessionHost, text: str) -> str | None:
+    """处理不涉及运行时状态的斜杠命令。返回 None 表示「不认识」。"""
+    from .cli_commands import try_handle_local_command
+
+    return try_handle_local_command(host, text)
+
+# ---------------------------------------------------------------------------
+# 参数
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="corecode",
+        description="轻量的终端编码助手。",
+    )
+    parser.add_argument("-p", "--prompt", help="单次提问后退出（不进入 REPL）")
+    parser.add_argument("--resume", nargs="?", const="__picker__", help="恢复会话（可给 id）")
+    parser.add_argument("--fork", help="从指定会话分叉后继续")
+    parser.add_argument("--mock", action="store_true", help="离线 mock 模式，不需要 API key")
+    parser.add_argument("--cwd", help="工作目录（默认当前目录）")
+    parser.add_argument("--session", help="指定会话 id")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="自动批准所有权限请求（危险：仅用于受信任的脚本场景）",
+    )
+    parser.add_argument(
+        "--no-animation",
+        action="store_true",
+        help="关闭启动动画与转圈（非终端环境下本就会自动关闭）",
+    )
+    return parser
+
+# ---------------------------------------------------------------------------
+# 主流程
+# ---------------------------------------------------------------------------
+
+def _ensure_utf8_output() -> None:
+    """把 stdin / stdout / stderr 都钉在 UTF-8。
+
+    Windows 控制台默认编码是 cp936 之类，而本程序的界面文本与用户输入都是中文。
+    三个流都要处理，缺一个就会出问题：
+
+      - 只改 stdout → 输出乱码（「程序明明能用却像是坏了」）。
+      - 只改 stdout+stderr → **管道输入**仍然按 cp936 解码，中文变成代理字符，
+        随后写回输出时抛 `UnicodeEncodeError: surrogates not allowed`。
+        本实现实际踩过这条。
+
+    无法重配时静默跳过；errors="replace" 保证任何编码异常都不会中断程序。
+    """
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+def _cwd_from_argv(raw: list[str]) -> str:
+    """从原始 argv 里取出 `--cwd`，供管理子命令使用。
+
+    **必须在 argparse 之前做**：管理子命令要在解析参数之前就被拦截，而它需要
+    cwd 来决定项目级配置写到哪里。
+
+    选项，因此这里要额外处理它的位置。
+    """
+    for index, item in enumerate(raw):
+        if item == "--cwd" and index + 1 < len(raw):
+            return raw[index + 1]
+        if item.startswith("--cwd="):
+            return item.split("=", 1)[1]
+    return os.getcwd()
+
+#: 本 CLI 自己的、需要**带值**的选项。管理子命令的 argv 里要剥掉它们。
+_OWN_VALUE_OPTIONS = ("--cwd", "--session", "--prompt", "--resume", "--fork")
+#: 本 CLI 自己的开关型选项。
+_OWN_FLAGS = frozenset({"--mock", "--yes", "--no-animation", "-p"})
+
+def _management_argv(raw: list[str]) -> list[str]:
+    """剥掉本 CLI 自己的选项，留下给管理子命令看的 argv。
+
+    ## 为什么要剥
+
+    `corecode --cwd /x mcp list` 里 `--cwd /x` 属于**主程序**，不属于
+    `mcp` 子命令。不剥掉的话，`maybe_handle_management_command` 看到的第一个
+    词是 `--cwd`，它既不认识、也不知道这是个选项，于是判定「不是我的命令」，
+    子命令就永远走不到。
+
+    `--` 之后的内容一律保留：那是要启动的 MCP 命令，不能碰。
+    """
+    result: list[str] = []
+    index = 0
+    while index < len(raw):
+        item = raw[index]
+        # `--` 之后原样保留（属于 mcp add 的命令参数）。
+        if item == "--":
+            result.extend(raw[index:])
+            break
+        if item in _OWN_VALUE_OPTIONS:
+            index += 2  # 连同它的值一起跳过
+            continue
+        if item in _OWN_FLAGS:
+            index += 1
+            continue
+        if any(item.startswith(f"{name}=") for name in _OWN_VALUE_OPTIONS):
+            index += 1
+            continue
+        result.append(item)
+        index += 1
+    return result
+
+def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_output()
+    raw = list(argv if argv is not None else sys.argv[1:])
+
+    # **管理子命令要在 argparse 之前拦截。**
+    #
+    # `corecode mcp add fs -- npx -y ...` 里的 `--` 与 `-y` 对 argparse 来说是
+    # `maybeHandleManagementCommand`，返回 true 就结束。
+    #
+    # 注意是拿 `_management_argv(raw)` 去判断，但**用原始 `raw` 去 parse_args**：
+    # 剥选项只服务于「识别这是不是管理子命令」，不能影响正常启动路径。
+    from .manage_cli import maybe_handle_management_command
+
+    if maybe_handle_management_command(_cwd_from_argv(raw), _management_argv(raw)):
+        return 0
+
+    parser = build_parser()
+    args = parser.parse_args(raw)
+
+    if getattr(args, "no_animation", False):
+        set_animation_enabled(False)
+
+    callbacks = HostCallbacks(
+        on_assistant=lambda text, is_final: print(f"\n{text}\n"),
+        on_progress=lambda text: print(f"  {GLYPH_BULLET} {text}"),
+        on_tool_start=lambda name, data: print(f"  {GLYPH_TOOL} {name}"),
+        on_tool_result=lambda name, output, is_error: print(
+            f"  {GLYPH_FAIL if is_error else GLYPH_OK} {name}"
+        ),
+        on_notice=lambda text: print(f"\n{text}\n"),
+    )
+
+    # 单次模式（`-p`）没有启动横幅，用户看不到 `[provider] offline` 徽章，
+    # 所以要打那句「已进入离线 mock 模式」的说明；REPL 有横幅，不需要重说。
+    host = build_host(args, callbacks=callbacks, warn_offline=bool(args.prompt))
+    if args.yes:
+        # 显式替换提示函数：用户已声明「全部放行」。
+        host.permissions._prompt = auto_approve_prompt  # noqa: SLF001
+
+    # 会话装载
+    if args.fork:
+        forked = host.fork(args.fork)
+        if forked is None:
+            print(f"找不到会话 {args.fork}，无法分叉。", file=sys.stderr)
+            return 1
+        host.session_id = forked
+    elif args.resume:
+        if args.resume == "__picker__":
+            _print_sessions(host)
+        elif not host.resume(args.resume):
+            print(f"找不到会话 {args.resume}。", file=sys.stderr)
+            return 1
+
+    try:
+        if args.prompt:
+            return _run_once(host, args.prompt)
+        return _run_repl(host)
+    except KeyboardInterrupt:
+        print()
+        return 130
+    finally:
+        host.stop()
+
+def _run_once(host: SessionHost, prompt: str) -> int:
+    """单次提问后退出。这是集成测试与脚本使用的主路径。
+
+    分派顺序必须与 REPL 完全一致（`_dispatch`）：
+
+        运行时命令 → 本地命令 → 工具快捷方式 → 未知命令提示 → 普通回合
+
+    少任何一步都会出错。早先漏了「本地命令」那一步，`-p /status` 被当成对话
+    内容发给了模型；后来漏了「工具快捷方式」，`-p /ls` 被当成未知命令而失败
+    ——两次都是同一类错误：**两条路径的分派顺序必须一起改**。
+
+    输出走与 REPL 相同的界面层，因此两种模式的外观一致；同时因为界面层
+    会在非终端环境下自动关闭颜色，`-p` 的输出可以直接重定向到文件。
+    """
+    ui = build_console_ui()
+    _attach_ui_callbacks(host, ui)
+    try:
+        reply = host.runtime.command(prompt)
+        if reply is not None:
+            ui.write(reply)
+            return 0
+
+        local = handle_local_command(host, prompt)
+        if local is not None:
+            ui.write(local)
+            return 0
+
+        if _run_tool_shortcut(host, prompt, ui):
+            return 0
+
+        if _looks_like_unknown_command(prompt):
+            ui.error(f"未知命令：{prompt}。输入 /help 查看可用命令。")
+            return 1
+
+        ui.begin_turn()
+        result = host.runtime.submit(prompt)
+        ui.end_turn()
+        ui.turn_stats(host.stats)
+        if result.outcome in ("failed", "aborted"):
+            ui.error(f"回合结束：{result.outcome} {result.error or ''}")
+            return 1
+        return 0
+    except Exception as error:  # noqa: BLE001 - CLI 顶层要把错误变成退出码
+        ui.error(f"错误：{error}")
+        return 1
+
+def _run_repl(host: SessionHost) -> int:
+    """交互式行模式（美化输出）。
+
+    **这是默认且唯一推荐的交互方式。** 它不做 raw mode、不做光标定位、
+    不做全屏重绘——只往 stdout 写文本。因此在你任何终端里都能工作，
+    也能安全地在管道/CI 里使用。
+
+    （早先有一个全屏 TUI 模式，因为依赖 raw mode 与非阻塞读键，在
+    Git Bash / MSYS2 等环境下按键永远读不到，已移除。见 README。）
+    """
+    ui = build_console_ui()
+    ui.play_startup()
+    _print_banner(host, ui)
+    _attach_ui_callbacks(host, ui)
+
+    #
+    # 装不上（Windows 没有 readline 扩展）就静默跳过——补全不可用不该让 REPL
+    # 起不来，也不该因此报错打扰用户。
+    from .cli_commands import install_slash_completion
+
+    install_slash_completion()
+
+    while True:
+        try:
+            line = input(paint("› ", COLOR_USER)).strip()
+        except EOFError:
+            print()
+            return 0
+        except KeyboardInterrupt:
+            # Ctrl-C 在输入行：取消当前输入而不是退出程序。
+            print()
+            continue
+
+        if not line:
+            continue
+        if line in _EXIT_WORDS:
+            _record_history(host, line)
+            return 0
+
+        _record_history(host, line)
+        try:
+            _dispatch(host, line, ui)
+        except KeyboardInterrupt:
+            ui.notice("已中断。")
+            host.runtime.turns.stop("用户中断")
+        except Exception as error:  # noqa: BLE001 - 单条命令失败不该退出 REPL
+            ui.error(f"错误：{error}")
+
+def _record_history(host: SessionHost, line: str) -> None:
+    """把一行输入记进历史文件。
+
+    ## 为什么吞掉异常
+
+    写历史失败（磁盘满、家目录只读）**不该让用户的这一条输入丢失**——
+    它已经读进来了，正确行为是继续执行，而不是把输入连同错误一起抛掉。
+    历史是便利设施，不是功能前提。
+    """
+    from .history import append_history
+
+    try:
+        append_history(line, host.cwd, host.session_id)
+    except Exception:  # noqa: BLE001 - 历史写失败不该影响正常使用
+        return
+
+def _attach_ui_callbacks(host: SessionHost, ui: "ConsoleUI") -> None:
+    """把界面接到宿主的观察点上。
+
+    宿主通过 `HostCallbacks` 暴露观察点，因此界面层不需要知道 agent 循环的
+    任何细节——这也是行模式界面能这么薄的原因。
+    """
+    callbacks = ui.callbacks()
+    host.callbacks.on_assistant = callbacks["on_assistant"]
+    host.callbacks.on_assistant_delta = callbacks["on_assistant_delta"]
+    host.callbacks.on_progress = callbacks["on_progress"]
+    host.callbacks.on_tool_start = callbacks["on_tool_start"]
+    host.callbacks.on_tool_result = callbacks["on_tool_result"]
+    host.callbacks.on_notice = callbacks["on_notice"]
+    # 统计**不**挂到回调上：它在 `end_turn()` 之后由调用方显式显示，
+    # 这样元信息才能干净地单独占一行（见 `ConsoleUI.callbacks` 的说明）。
+
+def _print_banner(host: SessionHost, ui: "ConsoleUI") -> None:
+    """打印启动横幅。
+
+        const mcpStatus = summarizeMcpServers(tools.getMcpServers())
+        renderBanner(runtime, cwd, permissions.getSummary(), {
+          transcriptCount: 0, messageCount: messages.length,
+          skillCount: tools.getSkills().length,
+          mcpTotalCount, mcpConnectedCount, mcpConnectingCount, mcpErrorCount,
+        })
+
+    """
+    from .mcp.status import summarize_mcp_servers
+
+    model_name = host.runtime_config.model if host.runtime_config else ""
+    provider = host.runtime_config.base_url if host.runtime_config else ""
+    skills: list[Any] = []
+    try:
+        skills = host.tools.skills()
+    except Exception:  # noqa: BLE001
+        skills = []
+
+    # 而不是在使用处现算——否则横幅与 `/mcp` 迟早出现两套口径。
+    total = connected = connecting = errored = 0
+    try:
+        summary = summarize_mcp_servers(host.tools.mcp_servers())
+        total = summary.total
+        connected = summary.connected
+        connecting = summary.connecting
+        errored = summary.error
+    except Exception:  # noqa: BLE001 - MCP 汇总失败不该让横幅打不出来
+        pass
+
+    ui.write(
+        render_banner(
+            model=model_name,
+            session_id=host.session_id,
+            cwd=host.cwd,
+            provider=provider,
+            skill_count=len(skills),
+            message_count=len(host.messages),
+            event_count=0,
+            mcp_total=total,
+            mcp_connected=connected,
+            mcp_connecting=connecting,
+            mcp_error=errored,
+            # **不传 width**：横幅有自己的宽度规则（`max(60, 终端列数 ?? 100)`），
+        )
+    )
+    ui.write(
+        paint("输入 ", COLOR_HINT)
+        + paint("/help", COLOR_USER)
+        + paint(" 查看命令 · ", COLOR_HINT)
+        + paint("/exit", COLOR_USER)
+        + paint(" 退出", COLOR_HINT)
+    )
+    ui.blank()
+
+def _looks_like_unknown_command(line: str) -> bool:
+    """判断一个斜杠输入是否「像是把命令打错了」。
+
+    ## 这个判据为什么必须谨慎
+
+    斜杠开头的输入有两种完全不同的来源：
+
+      - **用户想打命令**：`/status`、`/he`（打了一半）
+      - **模型侧的工具快捷方式**：`/ls`、`/read a.py`、`/write x::y`
+        （mock 适配器用这套；真实模型也可能约定类似的写法）
+
+    早先的实现用 `line.startswith("/")` 一刀切，把 `/ls` 这类快捷方式
+    全部拦掉——那是真实的功能回归，而且很隐蔽（界面看起来正常，只是
+    快捷方式不работа了）。
+
+    现在的判据是**保守的**：只有「单 token **且是某个已知命令的前缀**」
+    才提示打错。这样：
+
+      - `/he` → 是 `/help` 的前缀 → 提示（用户确实在打命令）
+      - `/status` → 是完整命令 → 提示（其实上面已处理，这里兜底）
+      - `/ls` → 不是任何命令的前缀 → **交给模型**
+      - `/nope` → 不是任何命令的前缀 → 交给模型
+
+    代价是 `/nope` 这种彻底打错的名字会走模型、由模型回一句「我不明白」。
+    这是可接受的：**漏判（交给模型）比误判（拦掉合法输入）代价小得多**。
+    """
+    stripped = line.strip()
+    if not stripped.startswith("/"):
+        return False
+    # 带空格 → 有参数 → 更可能是快捷方式，交给模型
+    if " " in stripped:
+        return False
+    # 单 token：只有当它是某个已知命令的前缀时，才认定用户在打命令。
+    return any(usage.startswith(stripped) for usage, _ in _COMMAND_USAGES)
+
+def _command_usages() -> list[tuple[str, str]]:
+    from .cli_commands import SLASH_COMMANDS
+
+    return [(item.usage, item.description) for item in SLASH_COMMANDS]
+
+_COMMAND_USAGES = _command_usages()
+
+def _run_tool_shortcut(host: SessionHost, line: str, ui: "ConsoleUI") -> bool:
+    """把一行输入当成本地工具快捷方式执行。返回**是否已处理**。
+
+    直接调工具，**不经过模型**。有些操作用户自己立刻就想做（看一眼目录、读一个
+    文件、改一行），让它们绕一整轮对话是浪费。
+
+    权限照常生效——快捷方式只是入口，不绕过 `permissions`。这也是它必须走
+    `ToolRegistry.execute` 而不是直接调工具函数的原因：审批、校验、异常兜底
+    都在那一层。
+    """
+    shortcut = parse_local_tool_shortcut(line)
+    if shortcut is None:
+        return False
+
+    ui.tool_start(shortcut.tool_name)
+    result = host.tools.execute(
+        shortcut.tool_name,
+        shortcut.input,
+        ToolContext(cwd=host.cwd, permissions=host.permissions, signal=None),
+    )
+    # `full=True`：用户主动发起的调用要看**完整输出**。压缩成一行等于什么都没给
+    # ——他敲 `/read pyproject.toml` 的目的就是看内容。
+    ui.tool_result(shortcut.tool_name, ok=result.ok, detail=result.output, full=True)
+    ui.blank()
+    return True
+
+def _write_command_output(ui: "ConsoleUI", text: str) -> None:
+    """本地命令的输出排版：**前后各一个空行**。
+
+        console.log(`\\n${runtimeReply}\\n`)
+
+    那一对空行不是为了好看——它把命令输出与上一条输入/回答隔开，否则连续敲
+    几条命令时输出会糊成一片。少了前置空行，第一条命令的输出会紧贴启动横幅
+    的底边（这正是逐字对照第一次失败的原因：TS 两行空、本实现一行）。
+    """
+    ui.blank()
+    ui.write(text)
+    ui.blank()
+
+def _dispatch(host: SessionHost, line: str, ui: "ConsoleUI") -> None:
+    """一条输入的分派顺序。
+
+        运行时命令 → 本地命令 → 工具快捷方式 → 未知命令提示 → 普通回合
+
+    **快捷方式必须排在「未知命令提示」之前**：`/edit a::b::c` 的头部 `/edit`
+    不是已知命令，如果先做 `_looks_like_unknown_command` 判断它就会被当成
+    打错的命令拦下，永远走不到解析器。
+    """
+    reply = host.runtime.command(line)
+    if reply is not None:
+        _write_command_output(ui, reply)
+        return
+
+    local = handle_local_command(host, line)
+    if local is not None:
+        _write_command_output(ui, local)
+        return
+
+    if _run_tool_shortcut(host, line, ui):
+        return
+
+    if _looks_like_unknown_command(line):
+        ui.error(f"未知命令：{line}。输入 /help 查看可用命令。")
+        return
+
+    ui.begin_turn()
+    result = host.runtime.submit(line)
+    ui.end_turn()
+    # 统计在 end_turn **之后**显示：那时正文已经收尾、空行也已留出，
+    # 元信息单独占一行，不会与回答挤在一起。
+    ui.turn_stats(host.stats)
+    if result.outcome in ("failed", "aborted"):
+        ui.error(f"回合结束：{result.outcome} {result.error or ''}")
+
+def _print_sessions(host: SessionHost) -> None:
+    from .session import list_sessions
+
+    sessions = list_sessions(host.cwd)
+    if not sessions:
+        print("当前目录还没有会话。")
+        return
+    print(f"共 {len(sessions)} 个会话：")
+    for meta in sessions:
+        title = meta.title or "(无标题)"
+        print(f"  {meta.id}  {title}  [{meta.message_count} 行]")
+
+if __name__ == "__main__":
+    raise SystemExit(main())

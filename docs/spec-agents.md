@@ -46,7 +46,7 @@ Agent 管理工具。工作区越界路径直接拒绝。
 从干净 Git 仓库的 `HEAD` 创建 detached worktree：
 
 ```text
-<MINICODE_HOME>/agent-worktrees/<project-key>/<agent-id>-<nonce>/
+<CORECODE_HOME>/agent-worktrees/<project-key>/<agent-id>-<nonce>/
 ```
 
 根工作区有未提交改动时拒绝创建，避免 worker 基于过期 HEAD 产出错误 patch。

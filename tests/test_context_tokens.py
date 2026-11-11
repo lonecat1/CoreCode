@@ -13,11 +13,11 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.context.model_context import (
+from corecode.context.model_context import (
     UNKNOWN_MODEL_CONTEXT,
     get_model_context_window,
 )
-from minicode.context.tokens import (
+from corecode.context.tokens import (
     compute_context_stats,
     estimate_message_tokens,
     estimate_messages_tokens,
@@ -50,7 +50,6 @@ def usage(total: int) -> dict:
 
 
 class NumericAlignmentTests(unittest.TestCase):
-    """这些差异不处理的话，边界处行为会与原实现漂移。"""
 
     def test_js_round_rounds_half_up(self) -> None:
         # Python 内建 round 是银行家舍入：round(50.5) == 50
@@ -206,7 +205,7 @@ class ContextStatsTests(unittest.TestCase):
         self.assertEqual(stats.warning_level, "blocked")
 
     def test_warning_levels_follow_the_four_bands(self) -> None:
-        from minicode.context.tokens import compute_warning_level
+        from corecode.context.tokens import compute_warning_level
 
         self.assertEqual(compute_warning_level(0.0), "normal")
         self.assertEqual(compute_warning_level(0.49), "normal")

@@ -169,91 +169,6 @@ class DuplicateDefinitionTests(unittest.TestCase):
         self.assertEqual(problems, [], "\n".join(problems))
 
 
-class FileMapTests(unittest.TestCase):
-    """`file_map` 的覆盖度审计。
-
-    它替代了一句**没有依据的说法**：文档曾写「77 个文件 → 68 映射 + 9 TUI，
-    0 未映射」，但当时并没有那张表，而且 68+9=77 漏掉了 `ui.ts` 那个转出桶。
-    """
-
-    def test_every_ts_file_is_covered(self) -> None:
-        import file_map
-
-        ts = file_map.ts_files()
-        covered = set(file_map.MAPPING) | set(file_map.TUI_EXCLUDED)
-        self.assertEqual(sorted(ts - covered), [], "有 TS 文件没被覆盖")
-
-    def test_every_mapped_python_file_exists(self) -> None:
-        import file_map
-
-        for source, targets in sorted(file_map.MAPPING.items()):
-            for target in targets:
-                with self.subTest(source=source, target=target):
-                    self.assertTrue(
-                        (file_map.PY_ROOT / target).exists(),
-                        f"{source} → {target} 不存在",
-                    )
-
-    def test_audit_catches_a_mapping_to_a_missing_file(self) -> None:
-        """**这条测的是 `audit()` 自己的存在性检查**，不是重做一遍断言。
-
-        早先这里只有一个「遍历 `MAPPING` 断言文件存在」的测试——它确实能发现
-        坏映射，但它**绕过了 `audit()`**。于是把 `audit()` 里的存在性检查
-        改成 `if False:` 也不会变红：检查器废了，测试照样绿。
-
-        现在临时往 `MAPPING` 里塞一个不存在的目标，断言 `audit()` 报出来。
-        """
-        import file_map
-
-        original = file_map.MAPPING["abort.ts"]
-        try:
-            file_map.MAPPING["abort.ts"] = ("definitely_not_here.py",)
-            problems = file_map.audit()
-        finally:
-            file_map.MAPPING["abort.ts"] = original
-        joined = "\n".join(problems)
-        self.assertIn("definitely_not_here.py", joined, joined)
-        self.assertIn("文件不存在", joined, joined)
-
-    def test_audit_catches_an_uncovered_ts_file(self) -> None:
-        """表里漏一个 TS 文件时 `audit()` 要报。"""
-        import file_map
-
-        original = file_map.MAPPING.pop("abort.ts")
-        try:
-            problems = file_map.audit()
-        finally:
-            file_map.MAPPING["abort.ts"] = original
-        joined = "\n".join(problems)
-        self.assertIn("abort.ts", joined, joined)
-
-    def test_audit_catches_py_only_overlapping_the_mapping(self) -> None:
-        """同一个文件不能既被映射又登记为「独有」——二选一。"""
-        import file_map
-
-        original = file_map.MAPPING["abort.ts"]
-        try:
-            file_map.MAPPING["abort.ts"] = ("stats.py",)
-            problems = file_map.audit()
-        finally:
-            file_map.MAPPING["abort.ts"] = original
-        joined = "\n".join(problems)
-        self.assertIn("既被映射又登记为独有", joined, joined)
-
-    def test_py_only_entries_exist_and_carry_a_reason(self) -> None:
-        import file_map
-
-        for name, reason in sorted(file_map.PY_ONLY.items()):
-            with self.subTest(name=name):
-                self.assertTrue((file_map.PY_ROOT / name).exists(), f"{name} 不存在")
-                self.assertGreater(len(reason.strip()), 10, f"{name} 的理由太短")
-
-    def test_the_audit_passes(self) -> None:
-        import file_map
-
-        self.assertEqual(file_map.audit(), [])
-
-
 class CheckDocsTests(unittest.TestCase):
     """`check_docs` 的纯函数：生成块与手写数字比对。
 
@@ -369,7 +284,7 @@ class CheckDocsTests(unittest.TestCase):
     def test_the_document_has_a_generated_block(self) -> None:
         """文档里必须有那对标记，否则 `--write` 会无脑追加到末尾。"""
         docs = self._stats()
-        content = (docs.REPO / "docs" / "parity.md").read_text(encoding="utf-8")
+        content = (docs.REPO / "README.md").read_text(encoding="utf-8")
         self.assertIn(docs.BEGIN, content)
         self.assertIn(docs.END, content)
 
@@ -379,9 +294,10 @@ class CheckDocsTests(unittest.TestCase):
         docs = self._stats()
         for name in docs.DOCS:
             with self.subTest(doc=name):
-                self.assertTrue(
-                    (docs.REPO / "docs" / name).exists(), f"{name} 不存在"
-                )
+                path = docs.REPO / "docs" / name
+                if not path.exists():
+                    path = docs.REPO / name
+                self.assertTrue(path.exists(), f"{name} 不存在")
 
     def test_verify_all_docs_reports_problems_with_the_file_name(self) -> None:
         """多文档核对时，问题必须标明**出自哪个文件**。
@@ -469,12 +385,12 @@ class RealHomeGuardTests(unittest.TestCase):
 
     ## 这条防线的由来（一次真实事故）
 
-    变异清单里有一条把 `minicode_home()` 从「读环境变量」改成硬编码
-    `Path.home() / ".mini-code"`，标签写着「测试隔离失效」。没人想到它的
+    变异清单里有一条把 `corecode_home()` 从「读环境变量」改成硬编码
+    `Path.home() / ".corecode"`，标签写着「测试隔离失效」。没人想到它的
     破坏性后果：那 20 秒里，所有**写配置**的测试都落到了用户的真实家目录。
 
     `tests/test_install.py` 的答案是 `["m", "https://x", "t"]`，于是真实的
-    `~/.mini-code/settings.json` 被写成了 `model: "m"`、
+    `~/.corecode/settings.json` 被写成了 `model: "m"`、
     `ANTHROPIC_BASE_URL: "https://x"`、`ANTHROPIC_AUTH_TOKEN: "t"`。
     此后每次运行都因为 `https://x` 解析不了而报 `getaddrinfo failed`。
 

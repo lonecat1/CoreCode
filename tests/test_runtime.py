@@ -20,25 +20,25 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.abort import AbortSignal
-from minicode.runtime.context import (
+from corecode.abort import AbortSignal
+from corecode.runtime.context import (
     build_goal_context,
     build_loop_context,
     format_goal,
     inject_runtime_context,
 )
-from minicode.runtime.goal import (
+from corecode.runtime.goal import (
     ACTION_BLOCKED,
     ACTION_COMPLETED,
     ACTION_SET_CRITERIA,
     GoalError,
     GoalManager,
 )
-from minicode.runtime.goal_controller import (
+from corecode.runtime.goal_controller import (
     MAX_AUTOMATIC_TURNS,
     MAX_EMPTY_CONTINUATION_TURNS,
 )
-from minicode.runtime.loop import (
+from corecode.runtime.loop import (
     DEFAULT_LOOP_INTERVAL_MS,
     MAX_LOOP_INTERVAL_MS,
     LoopClock,
@@ -46,29 +46,26 @@ from minicode.runtime.loop import (
     LoopScheduler,
     parse_loop_request,
 )
-from minicode.runtime.plan import (
+from corecode.runtime.plan import (
     PlanError,
     PlanManager,
     format_plan,
     inject_plan_context,
 )
-from minicode.runtime.session import RuntimeError_, SessionRuntime
-from minicode.runtime.turn import TurnBusyError, TurnRequest, TurnRunner
-from minicode.tooling import ToolRegistry
-from minicode.tools.goal import create_goal_tools
-from minicode.types import AgentTurnResult
+from corecode.runtime.session import RuntimeError_, SessionRuntime
+from corecode.runtime.turn import TurnBusyError, TurnRequest, TurnRunner
+from corecode.tooling import ToolRegistry
+from corecode.tools.goal import create_goal_tools
+from corecode.types import AgentTurnResult
 
 unittest.TestCase.maxDiff = None
-
 
 def _result(outcome: str = "final", tool_calls: int = 0) -> AgentTurnResult:
     return AgentTurnResult(messages=[], outcome=outcome, tool_calls=tool_calls)
 
-
 # ---------------------------------------------------------------------------
 # Plan
 # ---------------------------------------------------------------------------
-
 
 class PlanTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -103,7 +100,6 @@ class PlanTests(unittest.TestCase):
     def test_empty_string_id_is_rejected(self) -> None:
         """**空字符串 id 必须拒绝，不能当成「省略 id」。**
 
-        原版是 `z.string().min(1).optional()`——只接受「非空字符串」或
         「完全不传」。早先这里把 `""` 也当成「省略」，于是模型想**更新**
         某个条目却写了个空 id 时，会**静默变成新增**，ToDo 越改越多。
 
@@ -202,7 +198,6 @@ class PlanTests(unittest.TestCase):
         self.plan.update([{"title": "A", "status": "pending"}])
         self.assertEqual(len(seen), 1)
 
-
 class PlanContextTests(unittest.TestCase):
     def test_context_is_appended_to_existing_system_message(self) -> None:
         """必须追加到**已有** system 消息，否则每回合都会新增一条。"""
@@ -223,11 +218,9 @@ class PlanContextTests(unittest.TestCase):
         self.assertEqual(result[0]["role"], "system")
         self.assertEqual(len(result), 2)
 
-
 # ---------------------------------------------------------------------------
 # Goal
 # ---------------------------------------------------------------------------
-
 
 class GoalTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -398,7 +391,6 @@ class GoalTests(unittest.TestCase):
                 {"action": ACTION_COMPLETED, "summary": "完成", "checks": ["x"]}
             )
 
-
 class GoalContextTests(unittest.TestCase):
     def test_context_states_the_ownership_boundary(self) -> None:
         plan = PlanManager("s1")
@@ -424,20 +416,14 @@ class GoalContextTests(unittest.TestCase):
         self.assertIn("1. 标准一", text)
         self.assertIn("Plan:", text)
 
-
 # ---------------------------------------------------------------------------
 # Loop
 # ---------------------------------------------------------------------------
 
-
 class ParseLoopRequestTests(unittest.TestCase):
-    """逐条对应原版 `parseLoopRequest`（`loop/scheduler.ts:8-26`）。
+    """
 
-    **早先这里的文法与原版不同，而且静默给出错误行为**：
-
-        /loop 1.5h do it   原版 → 间隔 90 分钟、prompt "do it"
                            旧版 → 间隔 10 分钟、prompt "1.5h do it"
-        /loop 5x hello     原版 → 报错
                            旧版 → 间隔 10 分钟、prompt "5x hello"
 
     用户想要 90 分钟的循环，实际拿到 10 分钟——不报错，只是不对。
@@ -453,7 +439,7 @@ class ParseLoopRequestTests(unittest.TestCase):
         self.assertEqual(parse_loop_request("2h 跑测试")[1], 2 * 60 * 60_000)
 
     def test_decimal_intervals_are_supported(self) -> None:
-        """**原版的文法支持小数**（`\\d+(?:\\.\\d+)?`）。
+        """
 
         `1.5h` 是 90 分钟。旧文法不认它，于是把它当成 prompt 并用默认的
         10 分钟间隔——用户要 90 分钟却得到 10 分钟。
@@ -462,10 +448,9 @@ class ParseLoopRequestTests(unittest.TestCase):
         self.assertEqual(parse_loop_request("2.5m 跑测试"), ("跑测试", 150_000))
 
     def test_combined_units_are_rejected_like_the_original(self) -> None:
-        """`1h30m` **不是**原版的文法（原版只认单个单位）。
+        """
 
         本实现一度额外支持它，但那与「数字前缀就报错」这条规则冲突——
-        而且两种写法表达同一件事没有必要。按原版拒绝。
         """
         with self.assertRaises(LoopError):
             parse_loop_request("1h30m 跑测试")
@@ -520,7 +505,6 @@ class ParseLoopRequestTests(unittest.TestCase):
             parse_loop_request("v2 跑测试"), ("v2 跑测试", DEFAULT_LOOP_INTERVAL_MS)
         )
 
-
 class ManualClock(LoopClock):
     """记录被安排的回调，由测试手动触发。"""
 
@@ -544,7 +528,6 @@ class ManualClock(LoopClock):
     def fire(self) -> None:
         handle, _delay, callback = self.timers.pop(0)
         callback()
-
 
 class LoopSchedulerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -661,11 +644,9 @@ class LoopSchedulerTests(unittest.TestCase):
         self.assertIn("<current_loop>", text)
         self.assertIn("Do not create or update a Goal", text)
 
-
 # ---------------------------------------------------------------------------
 # TurnRunner
 # ---------------------------------------------------------------------------
-
 
 class TurnRunnerTests(unittest.TestCase):
     def test_single_flight_rejects_second_run(self) -> None:
@@ -726,11 +707,9 @@ class TurnRunnerTests(unittest.TestCase):
         result = runner.run(body, parent)
         self.assertEqual(result.outcome, "aborted")
 
-
 # ---------------------------------------------------------------------------
 # SessionRuntime：四道互斥闸门
 # ---------------------------------------------------------------------------
-
 
 class SessionRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -874,11 +853,9 @@ class SessionRuntimeTests(unittest.TestCase):
         self.runtime.reset()
         self.assertIsNone(self.runtime.goal.manager.get_snapshot())
 
-
 # ---------------------------------------------------------------------------
 # Goal 自动推进
 # ---------------------------------------------------------------------------
-
 
 class GoalContinuationTests(unittest.TestCase):
     def test_final_does_not_end_the_goal(self) -> None:
@@ -898,7 +875,7 @@ class GoalContinuationTests(unittest.TestCase):
             return _result(outcome, tool_calls=1)
 
         goal_manager = GoalManager(plan)
-        from minicode.runtime.goal_controller import GoalController
+        from corecode.runtime.goal_controller import GoalController
 
         controller = GoalController(
             goal_manager,
@@ -918,7 +895,7 @@ class GoalContinuationTests(unittest.TestCase):
     def test_ask_user_suspends_the_goal(self) -> None:
         plan = PlanManager("s1")
         goal_manager = GoalManager(plan)
-        from minicode.runtime.goal_controller import GoalController
+        from corecode.runtime.goal_controller import GoalController
 
         controller = GoalController(
             goal_manager,
@@ -938,7 +915,7 @@ class GoalContinuationTests(unittest.TestCase):
         plan = PlanManager("s1")
         goal_manager = GoalManager(plan)
         notices: list[str] = []
-        from minicode.runtime.goal_controller import GoalController
+        from corecode.runtime.goal_controller import GoalController
 
         controller = GoalController(
             goal_manager,
@@ -960,7 +937,7 @@ class GoalContinuationTests(unittest.TestCase):
         plan = PlanManager("s1")
         goal_manager = GoalManager(plan)
         calls: list[int] = []
-        from minicode.runtime.goal_controller import GoalController
+        from corecode.runtime.goal_controller import GoalController
 
         def run_turn(request: TurnRequest) -> AgentTurnResult:
             calls.append(1)
@@ -997,7 +974,7 @@ class GoalContinuationTests(unittest.TestCase):
         plan = PlanManager("s1")
         goal_manager = GoalManager(plan)
         calls: list[int] = []
-        from minicode.runtime.goal_controller import GoalController
+        from corecode.runtime.goal_controller import GoalController
 
         def run_turn(request: TurnRequest) -> AgentTurnResult:
             calls.append(1)
@@ -1022,7 +999,6 @@ class GoalContinuationTests(unittest.TestCase):
         self.assertLessEqual(
             len(calls), MAX_AUTOMATIC_TURNS + 1, "不应超过预算继续跑"
         )
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -2,7 +2,6 @@
 
 ## 这些数字从哪来
 
-全部来自 `tools/compaction_compare.py`：同一批合成对话分别喂给 TS 原版与
 本实现，逐字段比对（`estimate` / `total` / `effective` / `utilization` /
 `level` / `source` / `shouldAutoCompact` / `snip` / `micro`），**17/17 完全
 一致**——包括 `snip` 的「剪了没剪」与 `microcompact` 的「清了没清」。
@@ -34,17 +33,16 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, os.path.join(_REPO, "src"))
 
-from minicode.context.compact import should_auto_compact  # noqa: E402
-from minicode.context.microcompact import microcompact  # noqa: E402
-from minicode.context.model_context import get_model_context_window  # noqa: E402
-from minicode.context.snip import snip_compact_conversation  # noqa: E402
-from minicode.context.tokens import (  # noqa: E402
+from corecode.context.compact import should_auto_compact  # noqa: E402
+from corecode.context.microcompact import microcompact  # noqa: E402
+from corecode.context.model_context import get_model_context_window  # noqa: E402
+from corecode.context.snip import snip_compact_conversation  # noqa: E402
+from corecode.context.tokens import (  # noqa: E402
     compute_context_stats,
     estimate_messages_tokens,
 )
 
 MODEL = "claude-sonnet-4"
-
 
 def build_messages(chars: int, count: int, tool_ratio: float) -> list[dict]:
     """与 `tools/compaction_compare.py` 完全相同的构造（必须一致）。"""
@@ -74,7 +72,6 @@ def build_messages(chars: int, count: int, tool_ratio: float) -> list[dict]:
             )
     return messages
 
-
 def snap(messages: list[dict]) -> dict:
     """一次算出四个层次的判定——与对照工具的字段一致。"""
     stats = compute_context_stats(messages, MODEL)
@@ -91,7 +88,6 @@ def snap(messages: list[dict]) -> dict:
         "snip_reason": snip.reason,
         "micro_changed": after_micro is not messages,
     }
-
 
 #: `(名字, 字符数, 条数, tool 占比) -> 期望快照`。
 #:
@@ -153,7 +149,6 @@ EXPECTED: dict[tuple[str, int, int, float], dict] = {
         snip_reason="no_safe_interval", micro_changed=True),
 }
 
-
 class CompactionThresholdTests(unittest.TestCase):
     def test_every_case_matches_the_verified_snapshot(self) -> None:
         for (name, chars, count, ratio), expected in EXPECTED.items():
@@ -206,7 +201,6 @@ class CompactionThresholdTests(unittest.TestCase):
         }
         self.assertEqual(levels, {"normal", "warning", "critical", "blocked"})
 
-
 class BoundaryTests(unittest.TestCase):
     """把 0.50 / 0.70 / 0.85 / 0.95 四个门槛的两侧各试一次。"""
 
@@ -222,7 +216,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_microcompact_threshold_is_five_percent_below_snip(self) -> None:
         """`microcompact(0.50)` 先于 `snip(0.70)`——顺序不是随意的。"""
-        from minicode.context import constants
+        from corecode.context import constants
 
         self.assertLess(
             constants.MICROCOMPACT_UTILIZATION, constants.SNIP_COMPACT_THRESHOLD
@@ -234,7 +228,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_retention_limits_match_the_original(self) -> None:
         """microcompact 只清「最近 3 条之外」的工具结果。"""
-        from minicode.context import constants
+        from corecode.context import constants
 
         self.assertEqual(constants.KEEP_RECENT_TOOL_RESULTS, 3)
         self.assertEqual(constants.SNIP_KEEP_RECENT_MESSAGES, 12)
@@ -242,7 +236,7 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(constants.SNIP_MIN_TOKENS_TO_FREE, 2_000)
 
     def test_cleared_content_is_the_original_marker(self) -> None:
-        """被清空的工具结果正文必须**逐字**等于原版的标记。
+        """
 
         `CLEAR_MARKER` 是**模型可见的文本**：模型看到它才知道这里的内容是被
         主动清掉的，而不是本来就空。换成空串（或换个说法）都会改变模型的判断
@@ -251,7 +245,7 @@ class BoundaryTests(unittest.TestCase):
         （这条是补的：`CLEAR_MARKER = ""` 的变异原本存活——没有任何测试检查
         清空后的**内容**，只检查了「变了没变」。）
         """
-        from minicode.context.constants import CLEAR_MARKER
+        from corecode.context.constants import CLEAR_MARKER
 
         self.assertEqual(CLEAR_MARKER, "[Output cleared for context space]")
 
@@ -272,7 +266,6 @@ class BoundaryTests(unittest.TestCase):
         for message in kept:
             with self.subTest(message=message["id"]):
                 self.assertTrue(message["content"].startswith("["))
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

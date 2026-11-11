@@ -10,11 +10,6 @@
 
 **① 只读的状态文件 → 有损解码，绝不崩。**
 
-原版是 Node 的 `readFile(path, 'utf8')`，它对非法字节**不抛错**，而是替换成
-U+FFFD。Python 的 `read_text(encoding="utf-8")` 则抛 `UnicodeDecodeError`——
-而它是 `ValueError` 的子类，**不是** `OSError`，所以那些
-`except OSError: return {}` 完全接不住，异常会一路冒到用户面前变成 traceback。
-
 实测过的崩点（修复前）：`settings.json`、`history.jsonl`，以及 `/init` 读
 `.gitignore` 时（那个只 `except OSError`，于是 `/init` 直接崩）。
 
@@ -40,14 +35,12 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-from minicode import config, history, memory, repo_init  # noqa: E402
-from minicode.file_review import FileReviewError, load_existing_file  # noqa: E402
-
+from corecode import config, history, memory, repo_init  # noqa: E402
+from corecode.file_review import FileReviewError, load_existing_file  # noqa: E402
 
 def _bad_bytes() -> bytes:
     """一段合法 UTF-8 里嵌一个 0xFF —— 0xFF 在 UTF-8 中永不出现。"""
     return b'{"key": "value", "broken": "\xff\xfe"}'
-
 
 class _TempDirCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -58,7 +51,6 @@ class _TempDirCase(unittest.TestCase):
         path = os.path.join(self._tmp, name)
         Path(path).write_bytes(data)
         return path
-
 
 class LenientReadTests(_TempDirCase):
     """只读的状态文件：有损解码，绝不崩。"""
@@ -120,11 +112,10 @@ class LenientReadTests(_TempDirCase):
 
     def test_memory_with_invalid_bytes_does_not_crash(self) -> None:
         """记忆文件里有非法字节时，有损读入而不是让程序起不来。"""
-        self.write("MINI.md", b"# \xff\xfe broken\ncontent line\n")
+        self.write("CORECODE.md", b"# \xff\xfe broken\ncontent line\n")
         result = memory.load_memory(self._tmp)
         # 有损解码后内容仍在，坏字节变成 U+FFFD
         self.assertIn("content line", result)
-
 
 class StrictReadTests(_TempDirCase):
     """会被写回的文件：明确失败，不要有损读取。"""
@@ -155,7 +146,6 @@ class StrictReadTests(_TempDirCase):
         with self.assertRaises(FileReviewError):
             load_existing_file(path)
         self.assertEqual(Path(path).read_bytes(), original)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

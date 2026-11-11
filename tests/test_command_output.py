@@ -6,7 +6,6 @@
 扁平行、少个冒号、少个字段）不影响任何程序运行，所以普通测试不会发现，而
 用户会以为信息丢了。
 
-这些形状由 `tools/e2e_compare.py` 的 `诊断:` 场景与 TS 原版**逐字**对照过
 （9/9 通过）。但那个工具需要 TS 仓库在场、还要跑 `tsx`，进不了单元测试。
 所以这里把对照结论固化成本地断言：日后任何形状漂移都会在这里变红。
 
@@ -32,12 +31,10 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, os.path.join(_REPO, "src"))
 
-from minicode.cli_commands import _render_config_paths  # noqa: E402
-from minicode.memory import describe_memory_files, render_memory_report  # noqa: E402
+from corecode.cli_commands import _render_config_paths  # noqa: E402
+from corecode.memory import describe_memory_files, render_memory_report  # noqa: E402
 
-#: `renderMemoryReport()` 的字段顺序（`memory.ts:218-224`）。
 MEMORY_FIELDS = ["scope", "lines", "chars", "preview"]
-
 
 class ConfigPathsShapeTests(unittest.TestCase):
     """`/config-paths`：四行 `label: value`，无标题、无分隔线、不折行。"""
@@ -46,9 +43,8 @@ class ConfigPathsShapeTests(unittest.TestCase):
         self._tmp = tempfile.mkdtemp(prefix="diag-")
         self.home = Path(self._tmp) / "home"
         self.home.mkdir()
-        self._env = patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}, clear=False)
+        self._env = patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}, clear=False)
         self._env.start()
-        os.environ.pop("MINI_CODE_HOME", None)
 
     def tearDown(self) -> None:
         self._env.stop()
@@ -58,8 +54,8 @@ class ConfigPathsShapeTests(unittest.TestCase):
         self.assertEqual(len(lines), 4, lines)
         self.assertEqual(
             [line.split(":")[0] for line in lines],
-            ["mini-code settings", "mini-code permissions",
-             "mini-code mcp", "compat fallback"],
+            ["corecode settings", "corecode permissions",
+             "corecode mcp", "compat fallback"],
         )
 
     def test_every_line_uses_label_colon_value(self) -> None:
@@ -76,13 +72,12 @@ class ConfigPathsShapeTests(unittest.TestCase):
 
     def test_paths_are_complete(self) -> None:
         """路径**完整**出现，没有省略号、没有被折成两行。"""
-        from minicode.config import claude_settings_path, settings_path
+        from corecode.config import claude_settings_path, settings_path
 
         output = _render_config_paths()
         self.assertNotIn("...", output)
         self.assertIn(str(settings_path()), output)
         self.assertIn(str(claude_settings_path()), output)
-
 
 class MemoryReportShapeTests(unittest.TestCase):
     """`/memory`：抬头 + 空行 + 每文件五行（含 `preview`）。"""
@@ -101,48 +96,46 @@ class MemoryReportShapeTests(unittest.TestCase):
         self.assertEqual(render_memory_report(str(self.root)), "No memory files loaded.")
 
     def test_header_and_field_order(self) -> None:
-        self._write("MINI.md", "# 项目说明\n\n正文一行。\n")
+        self._write("CORECODE.md", "# 项目说明\n\n正文一行。\n")
         output = render_memory_report(str(self.root))
         lines = output.splitlines()
         self.assertTrue(lines[0].startswith("Memory files loaded: "), lines[0])
         self.assertEqual(lines[0], "Memory files loaded: 1")
-        # 抬头与条目之间隔得比条目之间更宽（原版数组里有 `''` 元素）
-        self.assertIn("\n\n\n", output.split("1. MINI.md")[0])
+        self.assertIn("\n\n\n", output.split("1. CORECODE.md")[0])
         body = [line.strip() for line in lines if line.strip().startswith(
             ("scope:", "lines:", "chars:", "preview:"))]
         self.assertEqual([line.split(":")[0] for line in body], MEMORY_FIELDS)
 
     def test_preview_is_the_first_line_of_trimmed_content(self) -> None:
-        self._write("MINI.md", "\n\n# 标题在前\n正文。\n")
+        self._write("CORECODE.md", "\n\n# 标题在前\n正文。\n")
         entries = describe_memory_files(str(self.root))
         self.assertEqual(entries[0]["preview"], "# 标题在前")
 
     def test_preview_falls_back_for_blank_file(self) -> None:
-        self._write("MINI.md", "   \n\n")
+        self._write("CORECODE.md", "   \n\n")
         # 全空白文件会被 `_read_if_present` 当成不存在
         self.assertEqual(render_memory_report(str(self.root)), "No memory files loaded.")
 
     def test_lines_counts_after_trimming(self) -> None:
-        """`lines` 先 trim 再数——首尾空行不算（原版 `trimmed.split('\\n')`）。"""
-        self._write("MINI.md", "\n\n\n正文\n\n\n")
+        self._write("CORECODE.md", "\n\n\n正文\n\n\n")
         entries = describe_memory_files(str(self.root))
         self.assertEqual(entries[0]["lines"], 1)
 
     def test_chars_counts_the_raw_content(self) -> None:
-        """`chars` **不 trim**，也不吃尾部换行——原版是 `content.length`。
+        """
 
         这一条曾经错过两次：先用 `splitlines()` 吃掉了尾部换行（少 1），
         再用默认换行模式读文件把 `\\r\\n` 折成 `\\n`（在 Windows 上再少 3）。
         """
         content = "# 标题\n正文\n"
-        self._write("MINI.md", content)
+        self._write("CORECODE.md", content)
         entries = describe_memory_files(str(self.root))
         self.assertEqual(entries[0]["chars"], len(content))
 
     def test_crlf_is_preserved(self) -> None:
         """Windows 换行必须原样计入——Node 的 `readFile('utf8')` 不做归一化。"""
         crlf = "# 标题\r\n正文\r\n"
-        target = self.root / "MINI.md"
+        target = self.root / "CORECODE.md"
         with open(target, "w", encoding="utf-8", newline="") as handle:
             handle.write(crlf)
         entries = describe_memory_files(str(self.root))
@@ -150,26 +143,22 @@ class MemoryReportShapeTests(unittest.TestCase):
         self.assertEqual(entries[0]["lines"], 2)
 
     def test_scope_values_are_the_original_three(self) -> None:
-        self._write("MINI.md", "项目级\n")
+        self._write("CORECODE.md", "项目级\n")
         entries = describe_memory_files(str(self.root))
         self.assertEqual(entries[0]["scope"], "project")
 
-
 class StatusPrefixTests(unittest.TestCase):
-    """`/status` 的开头**必须**是原版那五行（可被脚本 grep）。"""
 
-    #: 原版 `cli-commands.ts:276-282` 的字段顺序。
     TS_FIELDS = ["model", "baseUrl", "auth", "mcp servers", "config"]
 
     def test_first_five_lines_are_the_original_fields(self) -> None:
-        from minicode.cli import build_host, build_parser
-        from minicode.cli_commands import _render_status
+        from corecode.cli import build_host, build_parser
+        from corecode.cli_commands import _render_status
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
             home.mkdir()
-            with patch.dict(os.environ, {"MINICODE_HOME": str(home)}):
-                os.environ.pop("MINI_CODE_HOME", None)
+            with patch.dict(os.environ, {"CORECODE_HOME": str(home)}):
                 args = build_parser().parse_args(["--mock", "--cwd", tmp])
                 host = build_host(args, warn_offline=False)
             output = _render_status(host)
@@ -183,15 +172,14 @@ class StatusPrefixTests(unittest.TestCase):
 
         `home` 可以复用：调用方先在同一目录里放好 `mcp.json` 之类，再调这里。
         """
-        from minicode.cli import build_host, build_parser
-        from minicode.cli_commands import _render_status
+        from corecode.cli import build_host, build_parser
+        from corecode.cli_commands import _render_status
 
         tmp = tempfile.mkdtemp(prefix="status-shape-")
         self.addCleanup(__import__("shutil").rmtree, tmp, True)
         actual_home = home if home is not None else Path(tmp) / "home"
         actual_home.mkdir(parents=True, exist_ok=True)
-        with patch.dict(os.environ, {"MINICODE_HOME": str(actual_home), **env}):
-            os.environ.pop("MINI_CODE_HOME", None)
+        with patch.dict(os.environ, {"CORECODE_HOME": str(actual_home), **env}):
             args = build_parser().parse_args(["--cwd", tmp])
             host = build_host(args, warn_offline=False)
         output = _render_status(host)
@@ -204,16 +192,15 @@ class StatusPrefixTests(unittest.TestCase):
     def test_auth_line_reflects_which_variable_supplied_the_token(self) -> None:
         """有 `ANTHROPIC_AUTH_TOKEN` 时报它，否则报 `ANTHROPIC_API_KEY`。
 
-        原版是 `runtime.authToken ? 'ANTHROPIC_AUTH_TOKEN' : 'ANTHROPIC_API_KEY'`
         ——这不是装饰：它告诉用户**当前生效的是哪个变量**，配错变量时一眼可见。
         """
         with_token = self._status_lines({
-            "ANTHROPIC_AUTH_TOKEN": "t", "MINICODE_MODEL": "claude-sonnet-4",
+            "ANTHROPIC_AUTH_TOKEN": "t", "CORECODE_MODEL": "claude-sonnet-4",
         })
         self.assertEqual(with_token["auth"], "ANTHROPIC_AUTH_TOKEN")
 
         without = self._status_lines({
-            "ANTHROPIC_API_KEY": "k", "MINICODE_MODEL": "claude-sonnet-4",
+            "ANTHROPIC_API_KEY": "k", "CORECODE_MODEL": "claude-sonnet-4",
         })
         # 只给了 API_KEY 时仍然报 API_KEY
         self.assertEqual(without["auth"], "ANTHROPIC_API_KEY")
@@ -226,18 +213,17 @@ class StatusPrefixTests(unittest.TestCase):
         断言就测不到「计数来自配置」这件事。
         """
         empty = self._status_lines({
-            "MINICODE_MODEL": "claude-sonnet-4", "ANTHROPIC_AUTH_TOKEN": "t",
+            "CORECODE_MODEL": "claude-sonnet-4", "ANTHROPIC_AUTH_TOKEN": "t",
         })
         self.assertEqual(empty["mcp servers"], "0")
 
-        from minicode.config import mcp_path
+        from corecode.config import mcp_path
 
         # 先造好 home 与 mcp.json，再用**同一个 home** 跑 /status
         home = Path(tempfile.mkdtemp(prefix="status-mcp-")) / "home"
         self.addCleanup(__import__("shutil").rmtree, str(home.parent), True)
         home.mkdir(parents=True, exist_ok=True)
-        with patch.dict(os.environ, {"MINICODE_HOME": str(home)}):
-            os.environ.pop("MINI_CODE_HOME", None)
+        with patch.dict(os.environ, {"CORECODE_HOME": str(home)}):
             path = mcp_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
@@ -245,24 +231,23 @@ class StatusPrefixTests(unittest.TestCase):
                 encoding="utf-8",
             )
         configured = self._status_lines(
-            {"MINICODE_MODEL": "claude-sonnet-4", "ANTHROPIC_AUTH_TOKEN": "t"},
+            {"CORECODE_MODEL": "claude-sonnet-4", "ANTHROPIC_AUTH_TOKEN": "t"},
             home=home,
         )
         self.assertEqual(configured["mcp servers"], "2")
 
     def test_source_summary_names_the_claude_fallback(self) -> None:
         """来源摘要必须有三段，中间那段是 Claude 回退。"""
-        from minicode.config import claude_settings_path, load_runtime_config
+        from corecode.config import claude_settings_path, load_runtime_config
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
             home.mkdir()
             with patch.dict(os.environ, {
-                "MINICODE_HOME": str(home),
+                "CORECODE_HOME": str(home),
                 "ANTHROPIC_AUTH_TOKEN": "test-token",
-                "MINICODE_MODEL": "claude-sonnet-4",
+                "CORECODE_MODEL": "claude-sonnet-4",
             }):
-                os.environ.pop("MINI_CODE_HOME", None)
                 runtime = load_runtime_config()
         summary = runtime.source_summary
         self.assertTrue(summary.startswith("config: "), summary)
@@ -270,11 +255,9 @@ class StatusPrefixTests(unittest.TestCase):
         self.assertIn(str(claude_settings_path()), summary)
         self.assertTrue(summary.endswith("> process.env"), summary)
 
-
 class PermissionsShapeTests(unittest.TestCase):
-    """`/permissions`：原版四行 `label: value`。
+    """
 
-    `get_summary()` 产出的就是 `label: value` 串——原版 `findValue()` 从中取值。
     之前渲染时把它塞进对齐表格，于是 `permission store:` 那一行（路径）直接
     消失了：用户连「去哪个文件改规则」都不知道。
     """
@@ -283,9 +266,9 @@ class PermissionsShapeTests(unittest.TestCase):
         """在给定的 home 下渲染 `/permissions`，返回 `(输出, 实际用的 home)`。
 
         把 home 返回出去是必须的：断言里要拿 `permissions_path()` 做期望值，
-        而它依赖 `MINICODE_HOME`——在 patch 上下文**外**取值会得到真实家目录。
+        而它依赖 `CORECODE_HOME`——在 patch 上下文**外**取值会得到真实家目录。
         """
-        from minicode import cli_commands
+        from corecode import cli_commands
 
         class _FakePermissions:
             def get_summary(_self) -> list[str]:
@@ -298,8 +281,7 @@ class PermissionsShapeTests(unittest.TestCase):
         self.addCleanup(__import__("shutil").rmtree, tmp, True)
         actual_home = home if home is not None else Path(tmp) / "home"
         actual_home.mkdir(parents=True, exist_ok=True)
-        with patch.dict(os.environ, {"MINICODE_HOME": str(actual_home)}):
-            os.environ.pop("MINI_CODE_HOME", None)
+        with patch.dict(os.environ, {"CORECODE_HOME": str(actual_home)}):
             return cli_commands._render_permissions(_FakeHost()), actual_home
 
     def test_four_lines_in_the_original_order(self) -> None:
@@ -318,11 +300,10 @@ class PermissionsShapeTests(unittest.TestCase):
 
         期望值必须在**同一个 home 下**取——否则比的是真实家目录。
         """
-        from minicode.permissions import permissions_path
+        from corecode.permissions import permissions_path
 
         output, home = self._render(["cwd: /w"])
-        with patch.dict(os.environ, {"MINICODE_HOME": str(home)}):
-            os.environ.pop("MINI_CODE_HOME", None)
+        with patch.dict(os.environ, {"CORECODE_HOME": str(home)}):
             expected = str(permissions_path())
         self.assertIn(f"permission store: {expected}", output)
 
@@ -358,16 +339,13 @@ class PermissionsShapeTests(unittest.TestCase):
         output, _home = self._render(["cwd: /w"])
         self.assertEqual(len(output.splitlines()), 4, output)
 
-
 class MemoryPreviewFallbackTests(unittest.TestCase):
     def test_empty_preview_fallback_is_unreachable(self) -> None:
         """`or "<empty>"` 那条回退**永远走不到**——这是刻意保留的。
 
-        原版写的是 `trimmed.split('\\n')[0] || '<empty>'`。但 `trimmed` 非空时
         它的第一个字符必然不是空白，所以「第一行为空」这种情况不存在；
         而全空白的文件在读取阶段就被 `_read_if_present` 判为不存在。
 
-        保留它是因为：行为与原版**完全一致**（都一样走不到），而删掉会让
         「逐字对照」时少一处对应。这条测试的作用是把这个判断**记下来**，
         免得日后有人以为它是活代码、为它写一个永远不成立的用例。
         """
@@ -381,7 +359,6 @@ class MemoryPreviewFallbackTests(unittest.TestCase):
                 self.assertNotEqual(preview(content), "<empty>")
         # 唯一会产出的情况是空内容，而那条路径在读文件时已被拦掉
         self.assertEqual(preview("   \n\n"), "<empty>")
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

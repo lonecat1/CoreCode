@@ -16,9 +16,9 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.context.constants import CLEAR_MARKER
-from minicode.context.microcompact import microcompact
-from minicode.context.snip import (
+from corecode.context.constants import CLEAR_MARKER
+from corecode.context.microcompact import microcompact
+from corecode.context.snip import (
     build_message_groups,
     build_snip_boundary_content,
     find_candidate_range,
@@ -26,7 +26,7 @@ from minicode.context.snip import (
     is_protected_tool_name,
     snip_compact_conversation,
 )
-from minicode.context.tokens import compute_context_stats
+from corecode.context.tokens import compute_context_stats
 
 MODEL = "claude-sonnet-4"                       # 窗口 200000，有效输入 184000
 WINDOW = 184_000
@@ -104,7 +104,7 @@ def pressured_snip(tail_extra: list[dict] | None = None) -> list[dict]:
     per_message = total_chars // middle_count
 
     messages: list[dict] = [
-        {"role": "system", "content": "you are mini-code"},
+        {"role": "system", "content": "you are corecode"},
         assistant("开始工作", "a-start"),
     ]
     # 中段：可被剪裁的普通问答
@@ -195,7 +195,6 @@ class MicrocompactTests(unittest.TestCase):
         self.assertEqual(result[2]["content"], CLEAR_MARKER)
 
     def test_error_results_are_also_cleared(self) -> None:
-        """原实现不检查 isError：失败的工具输出同样会被清空。"""
         results = [
             tool_result("run_command", filler(2000), "e1", is_error=True),
             *[tool_result("read_file", filler(2000), f"t{i}") for i in range(3)],

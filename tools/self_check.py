@@ -2,7 +2,7 @@
 
 Deliberately a **standalone script**, not a CLI flag.
 
-An earlier version exposed this as `minicode --agent`, which ran the test suite —
+An earlier version exposed this as `corecode --agent`, which ran the test suite —
 and the test suite contained a test that called `--agent`. That is infinite
 recursion, and it hung the suite instead of failing it. Anything that runs the
 tests must live outside the tests.

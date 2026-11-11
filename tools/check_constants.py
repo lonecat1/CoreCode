@@ -2,11 +2,6 @@
 
 ## 为什么需要它
 
-原 TypeScript 版有 **4 个零引用常量**（`SUMMARY_MAX_OUTPUT_TOKENS`、
-`PTL_MAX_RETRIES`、`MIN_KEEP_TOKENS`、`BLOCKED_UTILIZATION`），本实现一度把
-其中几个连着一起继承了，甚至把 `SUMMARY_MAX_OUTPUT_TOKENS` 继承成了
-**两份互不引用的定义**（`constants.py` 与 `compact.py` 各一份）。
-
 这些都不是靠「读一遍代码」能可靠发现的——常量通常在文件头部排成一列，
 每一行看起来都同样合理。**只有把它们当成数据、逐个去搜引用，才看得出来。**
 
@@ -43,7 +38,7 @@ import sys
 from _shared import force_utf8_output
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(REPO, "src", "minicode")
+SRC = os.path.join(REPO, "src", "corecode")
 TESTS = os.path.join(REPO, "tests")
 
 #: 刻意允许「仅测试引用」的常量。
@@ -52,7 +47,7 @@ TESTS = os.path.join(REPO, "tests")
 #: 判据是：**它存在的目的就是被测试读取**，生产代码不需要它。
 ALLOWED_ORPHANS: dict[str, str] = {
     "CLAUDE_SETTINGS_PATH": (
-        "测试用它断言 `claude_settings_path()` **没有**跟随 MINICODE_HOME。"
+        "测试用它断言 `claude_settings_path()` **没有**跟随 CORECODE_HOME。"
         "这是那条隔离性质的反面参照物，生产代码只调用函数、不需要这个快照。"
     ),
     "PENDING_SUBAGENT_TOOLS": (
@@ -65,7 +60,6 @@ ALLOWED_ORPHANS: dict[str, str] = {
         "它描述的是**测试该怎么探测**，不是运行时行为。"
     ),
 }
-
 
 class Occurrence:
     __slots__ = ("path", "line", "text", "is_comment")
@@ -80,7 +74,6 @@ class Occurrence:
         rel = os.path.relpath(self.path, REPO).replace("\\", "/")
         kind = "注释" if self.is_comment else "代码"
         return f"{rel}:{self.line} [{kind}] {self.text.strip()[:70]}"
-
 
 def module_sources() -> dict[str, str]:
     """`src/` 与 `tests/` 下的全部 Python 源文件。
@@ -100,7 +93,6 @@ def module_sources() -> dict[str, str]:
                     with open(path, encoding="utf-8") as handle:
                         sources[path] = handle.read()
     return sources
-
 
 def defined_constants(sources: dict[str, str]) -> dict[str, str]:
     """找出 `src/` 里模块级的大写常量名 -> 定义它的文件。
@@ -130,7 +122,6 @@ def defined_constants(sources: dict[str, str]) -> dict[str, str]:
                 if name.isupper() and len(name) > 2:
                     found.setdefault(name, path)
     return found
-
 
 def docstring_ranges(sources: dict[str, str]) -> dict[str, list[tuple[int, int]]]:
     """**每个文件只算一次** docstring 占据的行区间。
@@ -168,7 +159,6 @@ def docstring_ranges(sources: dict[str, str]) -> dict[str, list[tuple[int, int]]
         ranges[path] = spans
     return ranges
 
-
 def find_occurrences(
     name: str,
     sources: dict[str, str],
@@ -204,14 +194,12 @@ def find_occurrences(
             hits.append(Occurrence(path, index, raw, is_comment))
     return hits
 
-
 def _is_definition_line(line: str, name: str) -> bool:
     stripped = line.strip()
     for prefix in (f"{name} =", f"{name}:", f"{name}="):
         if stripped.startswith(prefix):
             return True
     return False
-
 
 def main() -> int:
     sources = module_sources()
@@ -304,7 +292,6 @@ def main() -> int:
         print(f"✓ 全部 {len(constants)} 个常量都有生产代码引用，或已列入白名单")
         return 0
     return 1
-
 
 if __name__ == "__main__":
     force_utf8_output()

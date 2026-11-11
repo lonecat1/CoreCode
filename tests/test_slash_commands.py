@@ -14,9 +14,6 @@
 但没有任何调用点、也没有测试——`check_constants.py` 只检查**常量**的引用，
 不检查函数，所以这类缺陷完全逃得过工具。
 
-**② 表被「合并」成了 29 条。** 原版是 37 条：`/loop` 占三条、`/goal` 占六条。
-合并成 `/loop [Nm|Nh] <prompt> | /loop stop` 之后同时坏掉两件事：
-
     /help        少列 8 行，用户看不到 /loop stop、/goal pause 这些子形式
     Tab 补全      敲 "/loop s" + Tab 一个都匹配不上，退化成列出全部命令
 
@@ -34,7 +31,7 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-from minicode.cli_commands import (  # noqa: E402
+from corecode.cli_commands import (  # noqa: E402
     SLASH_COMMANDS,
     all_slash_usages,
     complete_slash_command,
@@ -43,7 +40,6 @@ from minicode.cli_commands import (  # noqa: E402
     install_slash_completion,
 )
 
-#: 原版 `cli-commands.ts:21-172` 的 usage 列表，**顺序也一致**。
 #: 这份字面量就是契约：改它等于改用户看到的 /help。
 TS_USAGES = [
     "/loop",
@@ -85,7 +81,6 @@ TS_USAGES = [
     "/memory",
 ]
 
-
 class SlashCommandTableTests(unittest.TestCase):
     def test_has_exactly_the_original_37_entries(self) -> None:
         self.assertEqual(len(SLASH_COMMANDS), 37)
@@ -117,7 +112,6 @@ class SlashCommandTableTests(unittest.TestCase):
         names = {item.name for item in SLASH_COMMANDS}
         self.assertEqual(len(names), 29, "29 个命令名 → 37 条 usage")
 
-
 class HelpRenderingTests(unittest.TestCase):
     def test_help_lists_every_usage_on_its_own_line(self) -> None:
         lines = format_slash_commands().split("\n")
@@ -131,9 +125,7 @@ class HelpRenderingTests(unittest.TestCase):
             with self.subTest(usage=usage):
                 self.assertIn(usage, text)
 
-
 class CompletionTests(unittest.TestCase):
-    """对应原版 `completeSlashCommand`（`cli-commands.ts:313`）。"""
 
     def test_prefix_match_returns_hits(self) -> None:
         matches, echo = complete_slash_command("/co")
@@ -181,7 +173,6 @@ class CompletionTests(unittest.TestCase):
                 with self.subTest(prefix=prefix, match=match):
                     self.assertIn(match, pool)
 
-
 class InstallCompleterTests(unittest.TestCase):
     """`install_slash_completion` 是**可选**的：装不上也不能影响启动。"""
 
@@ -202,7 +193,6 @@ class InstallCompleterTests(unittest.TestCase):
         matches, _ = complete_slash_command("/co")
         self.assertTrue(matches)
         self.assertEqual(install_slash_completion(), install_slash_completion())
-
 
 class FakeReadlineInstallTests(unittest.TestCase):
     """用一个**假的 readline 模块**把 `install_slash_completion` 的函数体跑起来。
@@ -258,9 +248,6 @@ class FakeReadlineInstallTests(unittest.TestCase):
     def test_clears_the_word_delimiters(self) -> None:
         """**必须清空 delims。**
 
-        readline 默认按空格等字符切词，于是 `/loop st` 按 Tab 只补全 `st`，
-        而且会把整行替换成一个 usage——与原版「按整行前缀匹配」不一致。
-
         不清空的话这条断言失败。这也是变异检查里的一条存活项。
         """
         install_slash_completion()
@@ -303,7 +290,6 @@ class FakeReadlineInstallTests(unittest.TestCase):
         completer = self.calls["completer"]
         # 没有 get_line_buffer 时退回用 text
         self.assertEqual(completer("/loop s", 0), "/loop stop")
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

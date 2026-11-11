@@ -1,4 +1,4 @@
-"""核对 `docs/parity.md` 里写的数字是否与**当前仓库**一致。
+"""
 
 ## 为什么需要这个
 
@@ -16,7 +16,6 @@
 
 ## 做法
 
-1. 数字**不手抄**：`docs/parity.md` 里放一个由标记围起来的块，内容由本脚本
    生成（`--write` 重写）。
 2. 手写的那些数字也要核：本脚本按固定句式（`N 个常量`、`N 个模块级函数/类`、
    `N 条`）扫全文，任何一处与实测不符就报出来。
@@ -39,13 +38,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PY = sys.executable
-DOC = REPO / "docs" / "parity.md"
+DOC = REPO / "README.md"
 
 #: 会被扫「手写数字」的全部文档。
 #:
-#: 生成块只写进 `DOC`（`parity.md`），但**每个**文档里手写的数字都要核对——
 #: `verification.md` 里就写着「28 个场景」「330 条」这类数字，它们同样会漂。
-DOCS = ["parity.md", "verification.md", "divergences.md"]
+DOCS = ["verification.md", "README.md"]
 
 BEGIN = "<!-- BEGIN GENERATED STATS -->"
 END = "<!-- END GENERATED STATS -->"
@@ -70,7 +68,6 @@ HAND_WRITTEN_PATTERNS: list[tuple[str, str, str]] = [
     (r"(\d+) 条，0 歧义", "mutations", "条变异"),
 ]
 
-
 def run_checker(name: str) -> str:
     proc = subprocess.run(
         [PY, str(REPO / "tools" / name)],
@@ -78,7 +75,6 @@ def run_checker(name: str) -> str:
         encoding="utf-8", errors="replace",
     )
     return (proc.stdout or "") + (proc.stderr or "")
-
 
 def collect() -> dict[str, int]:
     """全部统计数字——**一律来自检查器的实际输出**。"""
@@ -99,15 +95,6 @@ def collect() -> dict[str, int]:
     if match:
         stats["modules"] = int(match.group(1))
 
-    mapped = run_checker("file_map.py")
-    match = re.search(r"TS (\d+) 个文件 → 映射 (\d+) \+ TUI 排除 (\d+)", mapped)
-    if match:
-        stats["ts_files"] = int(match.group(1))
-        stats["mapped"] = int(match.group(2))
-        stats["tui"] = int(match.group(3))
-    if "覆盖度、存在性、反向覆盖全部通过" in mapped:
-        stats["file_map_ok"] = 1
-
     duplicates = run_checker("check_duplicates.py")
     if "没有同名遮蔽的定义" in duplicates:
         stats["duplicates_ok"] = 1
@@ -125,7 +112,6 @@ def collect() -> dict[str, int]:
 
     return stats
 
-
 def collect_tests() -> int | None:
     proc = subprocess.run(
         [PY, "-m", "unittest", "discover", "-s", "tests", "-t", "."],
@@ -136,12 +122,8 @@ def collect_tests() -> int | None:
     match = re.search(r"^Ran (\d+) tests", text, re.MULTILINE)
     return int(match.group(1)) if match else None
 
-
 def generated_block(stats: dict[str, int], tests: int | None) -> str:
     rows = [
-        ("TS 源文件", stats.get("ts_files")),
-        ("已映射到本实现", stats.get("mapped")),
-        ("TUI 排除", stats.get("tui")),
         ("未映射", 0),
         ("Python 模块", stats.get("modules")),
         ("模块级常量", stats.get("constants")),
@@ -155,7 +137,6 @@ def generated_block(stats: dict[str, int], tests: int | None) -> str:
     lines.append("")
     lines.append(END)
     return "\n".join(lines)
-
 
 def hand_written_problems(text: str, stats: dict[str, int]) -> list[str]:
     problems: list[str] = []
@@ -171,7 +152,6 @@ def hand_written_problems(text: str, stats: dict[str, int]) -> list[str]:
                     f"第 {line} 行写「{stated} {label}」，实测 {actual}"
                 )
     return problems
-
 
 def verify(text: str, stats: dict[str, int], block: str) -> list[str]:
     """把**主文档**正文与实测数字比对，返回问题列表。
@@ -193,16 +173,15 @@ def verify(text: str, stats: dict[str, int], block: str) -> list[str]:
     problems.extend(hand_written_problems(text, stats))
     return problems
 
-
 def verify_all_docs(stats: dict[str, int], block: str) -> list[str]:
     """核对 `DOCS` 里的**每一个**文档：主文档还要比对生成块。
 
-    早先只扫 `parity.md`，于是 `verification.md` 里「28 个场景」「330 条」这类
     数字无人看管——写它的当天是对的，之后就没人管了。
     """
     problems: list[str] = []
     for name in DOCS:
-        path = REPO / "docs" / name
+        # 主文档在仓库根（README.md），其余在 docs/ 下。
+        path = REPO / name if name == DOC.name else REPO / "docs" / name
         if not path.exists():
             problems.append(f"{name} 不存在（DOCS 里登记了它）")
             continue
@@ -213,7 +192,6 @@ def verify_all_docs(stats: dict[str, int], block: str) -> list[str]:
             found = hand_written_problems(text, stats)
         problems.extend(f"{name}: {item}" for item in found)
     return problems
-
 
 def main(argv: list[str]) -> int:
     write = "--write" in argv
@@ -257,7 +235,6 @@ def main(argv: list[str]) -> int:
         print(f"  ✗ {item}")
     print("\n数字别手抄——跑 `python tools/check_docs.py --write` 重新生成。")
     return 1
-
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

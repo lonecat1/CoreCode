@@ -15,14 +15,14 @@ from pathlib import Path
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.adapters.anthropic import (
+from corecode.adapters.anthropic import (
     parse_assistant_text,
     parse_retry_after,
     retry_delay_seconds,
     should_retry_status,
     to_wire_messages,
 )
-from minicode.config import (
+from corecode.config import (
     ConfigError,
     load_runtime_config,
     merge_settings,
@@ -30,7 +30,6 @@ from minicode.config import (
 )
 
 _TMP_ROOT = os.path.join(_HERE, "_tmp")
-
 
 class WireConversionTests(unittest.TestCase):
     """内部消息 -> Messages API 格式。"""
@@ -131,20 +130,18 @@ class WireConversionTests(unittest.TestCase):
         self.assertIn("Snipped", messages[0]["content"][0]["text"])
 
     def test_snip_boundary_text_matches_the_original_word_for_word(self) -> None:
-        """**逐字对齐原版 `buildAnthropicSnipBoundaryText()`。**
+        """**
 
         这是模型在被裁剪处看到的**唯一**提示。早先这里是三段自拟文案，语义
         还不一样：
 
-          - 原版在安抚模型：中段被删，但「最近的对话与当前任务上下文都保留
             着」，鼓励它直接用现有上下文继续；
           - 自拟版在警告模型：别对删掉的内容做任何假设。
 
         两者对同一次裁剪给出不同的行为暗示，所以必须逐字相同才能谈行为对等。
 
-        期望值抄自 `compact/snipCompact.ts:365`，**不要顺手润色**。
         """
-        from minicode.adapters.anthropic import _SNIP_BOUNDARY_TEXT
+        from corecode.adapters.anthropic import _SNIP_BOUNDARY_TEXT
 
         self.assertEqual(
             _SNIP_BOUNDARY_TEXT,
@@ -161,7 +158,6 @@ class WireConversionTests(unittest.TestCase):
     def test_snip_boundary_ignores_the_stored_content(self) -> None:
         """消息自带的 `content`（含统计信息）不上线，模型只看到固定文案。
 
-        原版同样只用 `buildAnthropicSnipBoundaryText()` 的返回值——统计数字是
         给 UI 看的，写进 wire 只是噪音。
         """
         _, messages = to_wire_messages(
@@ -193,7 +189,6 @@ class WireConversionTests(unittest.TestCase):
         )
         self.assertTrue(messages[0]["content"][0]["is_error"])
 
-
 class ResponseParsingTests(unittest.TestCase):
     """模型文本 -> (正文, kind)。"""
 
@@ -214,7 +209,6 @@ class ResponseParsingTests(unittest.TestCase):
 
     def test_empty_text_stays_empty(self) -> None:
         self.assertEqual(parse_assistant_text("   "), ("", None))
-
 
 class RetryPolicyTests(unittest.TestCase):
     def test_retryable_statuses(self) -> None:
@@ -239,7 +233,6 @@ class RetryPolicyTests(unittest.TestCase):
             self.assertLessEqual(delay, 8.0 * 1.25)
             self.assertGreater(delay, 0)
 
-
 class _AlwaysFailingOpener:
     """每次 `open()` 都抛同一个异常，并记下被调了几次。"""
 
@@ -250,7 +243,6 @@ class _AlwaysFailingOpener:
     def open(self, request, timeout=None):  # noqa: ANN001, ARG002
         self.calls += 1
         raise self.error
-
 
 class _OkResponse:
     status = 200
@@ -267,7 +259,6 @@ class _OkResponse:
 
     def __iter__(self):
         return iter(())
-
 
 class _StatusThenOkOpener:
     """前 `failures` 次返回给定状态码，之后成功。"""
@@ -290,11 +281,10 @@ class _StatusThenOkOpener:
             )
         return _OkResponse()
 
-
 def _adapter_with_opener(opener, *, max_retries: int | None = 4):  # noqa: ANN001
     """造一个适配器，配置固定（不读环境变量），opener 可控。"""
-    from minicode.adapters.anthropic import AnthropicModelAdapter
-    from minicode.config import RuntimeConfig
+    from corecode.adapters.anthropic import AnthropicModelAdapter
+    from corecode.config import RuntimeConfig
 
     config = RuntimeConfig(
         model="claude-sonnet-4",
@@ -303,16 +293,13 @@ def _adapter_with_opener(opener, *, max_retries: int | None = 4):  # noqa: ANN00
     )
     return AnthropicModelAdapter(lambda: config, max_retries=max_retries, opener=opener)
 
-
 class NetworkErrorTests(unittest.TestCase):
     """网络错误：**不重试**，且消息要说清「连哪个地址失败了」。
 
     ## 这两条都是真实缺陷的回归护栏
 
     早先 `_post_with_retry` 对 `urllib.error.URLError` **无条件重试**
-    （`max_retries=4` + 指数退避），而原版不重试：它的 `for` 循环里
     `await fetch(...)` **没有 try/catch**，异常直接冒泡
-    （`anthropic-adapter.ts:344-362`）。
 
     代价很具体：一次 DNS 解析失败要白等 **4 次退避、约 9 秒**才报错——而重试
     一个「hostname 解析不了」不会有任何机会成功。
@@ -331,18 +318,18 @@ class NetworkErrorTests(unittest.TestCase):
         return urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "x"))
 
     def test_dns_failure_is_not_retried(self) -> None:
-        from minicode.adapters.anthropic import AnthropicNetworkError
+        from corecode.adapters.anthropic import AnthropicNetworkError
 
         opener = _AlwaysFailingOpener(self._dns_error())
         adapter = _adapter_with_opener(opener)
         with self.assertRaises(AnthropicNetworkError):
             adapter.next([{"role": "user", "content": "hi"}])
-        self.assertEqual(opener.calls, 1, "网络错误不该重试（原版也不重试）")
+        self.assertEqual(opener.calls, 1, "网络错误不该重试")
 
     def test_connection_refused_is_not_retried(self) -> None:
         import urllib.error
 
-        from minicode.adapters.anthropic import AnthropicNetworkError
+        from corecode.adapters.anthropic import AnthropicNetworkError
 
         opener = _AlwaysFailingOpener(
             urllib.error.URLError(ConnectionRefusedError(111, "refused"))
@@ -358,7 +345,7 @@ class NetworkErrorTests(unittest.TestCase):
         两样缺一不可：**码**说明是什么故障，**URL** 说明连的是哪个地址
         （用户最常见的错误是 `ANTHROPIC_BASE_URL` 写错一个字母）。
         """
-        from minicode.adapters.anthropic import AnthropicNetworkError
+        from corecode.adapters.anthropic import AnthropicNetworkError
 
         opener = _AlwaysFailingOpener(self._dns_error())
         adapter = _adapter_with_opener(opener)
@@ -376,7 +363,7 @@ class NetworkErrorTests(unittest.TestCase):
         """除了字符串，还要有结构化字段——测试与未来的界面都要用。"""
         import urllib.error
 
-        from minicode.adapters.anthropic import AnthropicNetworkError
+        from corecode.adapters.anthropic import AnthropicNetworkError
 
         opener = _AlwaysFailingOpener(
             urllib.error.URLError(ConnectionRefusedError(111, "refused"))
@@ -391,7 +378,7 @@ class NetworkErrorTests(unittest.TestCase):
     def test_timeout_is_flagged_and_not_retried(self) -> None:
         import socket
 
-        from minicode.adapters.anthropic import AnthropicNetworkError
+        from corecode.adapters.anthropic import AnthropicNetworkError
 
         opener = _AlwaysFailingOpener(socket.timeout("timed out"))
         adapter = _adapter_with_opener(opener)
@@ -404,7 +391,6 @@ class NetworkErrorTests(unittest.TestCase):
     def test_http_status_errors_are_still_retried(self) -> None:
         """**回归护栏**：改网络错误路径时不能把 HTTP 状态码重试弄丢。
 
-        原版对 429/5xx 是重试的（`shouldRetryStatus`），那是行为契约。
         """
         opener = _StatusThenOkOpener(503, failures=2)
         adapter = _adapter_with_opener(opener, max_retries=4)
@@ -416,7 +402,7 @@ class NetworkErrorTests(unittest.TestCase):
         import io
         import urllib.error
 
-        from minicode.adapters.anthropic import AnthropicHttpError
+        from corecode.adapters.anthropic import AnthropicHttpError
 
         class _Permanent:
             calls = 0
@@ -434,24 +420,19 @@ class NetworkErrorTests(unittest.TestCase):
             adapter.next([{"role": "user", "content": "hi"}])
         self.assertEqual(_Permanent.calls, 1, "400 不该重试")
 
-
 class MaxOutputTokensTests(unittest.TestCase):
-    """逐条对应原版 `utils/context.ts` 的 `MODEL_MAX_OUTPUT_TOKEN_RULES`。
+    """
 
     **这组值此前是本实现自己拟的粗粒度规则**（`claude-sonnet-4` → 16000、
-    `deepseek` → 8192、`qwen` → 32768），与原版的 18 条精确模式不一致。
     差异不只是数字不同——粗粒度子串会**静默截断用户配置**：用户设
-    `maxOutputTokens: 16000`、模型 `deepseek-v4-pro` 时，原版得到 16000，
     粗粒度 `deepseek` 规则会砍成 8192 且不报错。
     """
 
     def test_known_models_use_their_defaults(self) -> None:
-        # 原版 `claude-sonnet-4` 模式 → default 64_000（不是 16_000）
         self.assertEqual(resolve_max_output_tokens("claude-sonnet-4-20250514"), 64_000)
         self.assertEqual(resolve_max_output_tokens("claude-3-5-haiku"), 8_192)
 
     def test_unknown_model_falls_back_to_the_original_default(self) -> None:
-        """原版 `UNKNOWN_MODEL_MAX_OUTPUT_TOKENS` 是 (32000, 64000)。"""
         self.assertEqual(resolve_max_output_tokens("some-new-model"), 32_000)
 
     def test_configured_value_is_clamped_to_upper_bound(self) -> None:
@@ -478,7 +459,6 @@ class MaxOutputTokensTests(unittest.TestCase):
     def test_deepseek_v4_uses_the_unknown_fallback(self) -> None:
         """**这条钉住一个真实踩到的坑。**
 
-        原版只有 `deepseek-reasoner` 与 `deepseek-chat` 两条规则，
         `deepseek-v4-pro` 不匹配任何规则 → 走兜底 (32000, 64000)。
 
         于是用户配的 `maxOutputTokens: 16000` 得到 **16000**（保留）。
@@ -489,7 +469,6 @@ class MaxOutputTokensTests(unittest.TestCase):
         self.assertEqual(resolve_max_output_tokens("deepseek-v4-pro"), 32_000)
 
     def test_deepseek_known_models_keep_their_own_limits(self) -> None:
-        """兜底变宽了，但原版明确列出的两个 deepseek 模型仍用各自的上限。"""
         self.assertEqual(resolve_max_output_tokens("deepseek-chat", 16_000), 8_000)
         self.assertEqual(resolve_max_output_tokens("deepseek-chat"), 4_000)
         self.assertEqual(resolve_max_output_tokens("deepseek-reasoner"), 32_000)
@@ -502,16 +481,15 @@ class MaxOutputTokensTests(unittest.TestCase):
         self.assertEqual(resolve_max_output_tokens("gpt-5"), 128_000)
         self.assertEqual(resolve_max_output_tokens("gemini-2.5-pro"), 65_536)
 
-
 class SettingsTests(unittest.TestCase):
     #: 这些环境变量会覆盖 settings.json，测试期间必须清空以免被真实环境污染。
     AMBIENT_KEYS = (
-        "MINICODE_MODEL",
+        "CORECODE_MODEL",
         "ANTHROPIC_MODEL",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_BASE_URL",
-        "MINICODE_MAX_OUTPUT_TOKENS",
+        "CORECODE_MAX_OUTPUT_TOKENS",
     )
 
     def setUp(self) -> None:
@@ -575,7 +553,7 @@ class SettingsTests(unittest.TestCase):
                 "env": {"ANTHROPIC_AUTH_TOKEN": "t"},
             }
         )
-        os.environ["MINICODE_MODEL"] = "from-process-env"
+        os.environ["CORECODE_MODEL"] = "from-process-env"
         config = load_runtime_config(self.settings_path)
         self.assertEqual(config.model, "from-process-env")
 
@@ -584,7 +562,6 @@ class SettingsTests(unittest.TestCase):
         config = load_runtime_config(self.settings_path)
         self.assertEqual(config.headers()["x-api-key"], "key-1")
         self.assertNotIn("Authorization", config.headers())
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

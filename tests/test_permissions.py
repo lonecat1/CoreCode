@@ -15,8 +15,8 @@ from pathlib import Path
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.abort import AbortSignal
-from minicode.permissions import (
+from corecode.abort import AbortSignal
+from corecode.permissions import (
     PermissionDenied,
     PermissionManager,
     PermissionPromptResult,
@@ -29,7 +29,6 @@ from minicode.permissions import (
 )
 
 _TMP_ROOT = os.path.join(_HERE, "_tmp")
-
 
 class FakePrompt:
     """可编排的提示处理器：按顺序吐决定，并记录收到的请求。
@@ -51,7 +50,6 @@ class FakePrompt:
             self._decisions.pop(0) if len(self._decisions) > 1 else self._decisions[0]
         )
         return PermissionPromptResult(decision=decision, feedback=feedback)
-
 
 class DangerousCommandTests(unittest.TestCase):
     def test_destructive_git_commands_are_flagged(self) -> None:
@@ -81,7 +79,6 @@ class DangerousCommandTests(unittest.TestCase):
         self.assertIsNone(classify_dangerous_command("ls", ["-la"]))
         self.assertIsNone(classify_dangerous_command("grep", ["-r", "x", "."]))
 
-
 class PathHelpersTests(unittest.TestCase):
     def test_is_within_directory(self) -> None:
         root = os.path.join(_TMP_ROOT, "root")
@@ -103,11 +100,6 @@ class PathHelpersTests(unittest.TestCase):
 
         ## 这是用户报过来的真实故障
 
-        Node 的 `path.relative('C:\\\\a', 'D:\\\\b')` 返回**一个绝对路径**（不抛），
-        于是原版的 `path.isAbsolute(relative)` 为真、`isWithinDirectory` 返回
-        `false`。而 Python 的 `os.path.relpath` 遇到不同盘符**直接抛**
-        `ValueError: path is on mount 'D:', start on mount 'C:'`。
-
         症状：工作目录在 C: 时让 agent 读 D: 上的文件，工具层收到的是一个
         异常，而不是「不在 cwd 内、要不要批准？」——用户看到的是「D 盘不在
         授权的工作目录中」这种看不懂的拒绝。
@@ -125,16 +117,15 @@ class PathHelpersTests(unittest.TestCase):
         这条走 `PermissionManager` 的真实路径：给一个「永远同意」的提示器，
         跨盘符的读取应当被放行（并记进会话允许集合）。
         """
-        from minicode.permissions import PathIntent, PermissionManager, PermissionPromptResult
+        from corecode.permissions import PathIntent, PermissionManager, PermissionPromptResult
 
         def always_allow(request, signal):  # noqa: ANN001, ARG001
             return PermissionPromptResult(decision="allow_once", feedback=None)
 
         manager = PermissionManager(r"C:\Windows", always_allow)
-        target = r"D:\CoreCode\minicode-py\README.md"
+        target = r"D:\CoreCode\corecode\README.md"
         manager.ensure_path_access(target, PathIntent.READ)  # 不抛即通过
         self.assertIn(target, manager._session_allowed_paths)
-
 
 class PermissionManagerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -389,7 +380,7 @@ class PermissionManagerTests(unittest.TestCase):
         self.assertEqual(store.denied_directory_prefixes, [])
 
     def test_store_round_trip(self) -> None:
-        from minicode.permissions import PermissionStore
+        from corecode.permissions import PermissionStore
 
         write_permission_store(
             PermissionStore(
@@ -405,7 +396,6 @@ class PermissionManagerTests(unittest.TestCase):
         store = read_permission_store(self.store_path)
         self.assertEqual(store.allowed_directory_prefixes, ["/a"])
         self.assertEqual(store.denied_command_patterns, ["rm -rf"])
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -12,8 +12,6 @@
 
 `accept` 头**只声明 `application/json`**，不声明 `text/event-stream`。
 
-原实现声明了 SSE 却只做整体 `JSON.parse`——它对 SSE 响应的处理是坏的。
-声明了却不处理比不支持更糟：它会让服务器选择一条我们走不通的路径。
 """
 
 from __future__ import annotations
@@ -28,13 +26,12 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.mcp.http_client import (  # noqa: E402
+from corecode.mcp.http_client import (  # noqa: E402
     HTTP_TIMEOUT,
     McpHttpClient,
     McpHttpError,
     _extract_auth_hint,
 )
-
 
 def _ok_response(payload, *, status: int = 200):
     """造一个 urlopen 的上下文管理器返回值。"""
@@ -45,7 +42,6 @@ def _ok_response(payload, *, status: int = 200):
     response.__enter__ = lambda self: self
     response.__exit__ = lambda self, *a: False
     return response
-
 
 class AuthHintTests(unittest.TestCase):
     """`WWW-Authenticate` 的解析——401 时唯一能告诉用户「去哪授权」的线索。"""
@@ -87,7 +83,6 @@ class AuthHintTests(unittest.TestCase):
         """引号没闭合时不该崩——退回原文。"""
         header = 'Bearer resource_metadata="unterminated'
         self.assertEqual(_extract_auth_hint({"www-authenticate": header}), header)
-
 
 class RequestShapeTests(unittest.TestCase):
     """请求体的构造。"""
@@ -145,8 +140,6 @@ class RequestShapeTests(unittest.TestCase):
     def test_accept_does_not_advertise_sse(self) -> None:
         """**声明了却不处理比不支持更糟。**
 
-        原实现声明 `text/event-stream` 却只做整体 `JSON.parse`，于是服务器
-        选中 SSE 时必然解析失败。我们只声明真正能处理的类型。
         """
         captured = self._capture(self._client(), "m", {})
         self.assertEqual(captured["headers"]["accept"], "application/json")
@@ -180,7 +173,6 @@ class RequestShapeTests(unittest.TestCase):
         """`ensure_ascii=False`：中文参数按 UTF-8 原样发出，不变成 `\\uXXXX`。"""
         captured = self._capture(self._client(), "m", {"q": "中文"})
         self.assertEqual(captured["body"]["params"]["q"], "中文")
-
 
 class ResponseHandlingTests(unittest.TestCase):
     def _client(self):
@@ -236,7 +228,6 @@ class ResponseHandlingTests(unittest.TestCase):
         with self.assertRaises(McpHttpError) as caught:
             self._call(_ok_response({"jsonrpc": "2.0", "id": 1, "error": {}}))
         self.assertIn("unknown error", str(caught.exception))
-
 
 class FailureTests(unittest.TestCase):
     def _client(self):
@@ -308,7 +299,6 @@ class FailureTests(unittest.TestCase):
                 self._client()._request("m", {})
         self.assertEqual(caught.exception.status, 503)
 
-
 class EndpointKeyTests(unittest.TestCase):
     def test_key_combines_name_and_url(self) -> None:
         client = McpHttpClient(name="srv", url="https://x/mcp", headers={})
@@ -318,7 +308,6 @@ class EndpointKeyTests(unittest.TestCase):
         a = McpHttpClient(name="s", url="https://a", headers={})
         b = McpHttpClient(name="s", url="https://b", headers={})
         self.assertNotEqual(a.endpoint_key, b.endpoint_key)
-
 
 class ProtocolMethodTests(unittest.TestCase):
     """各个 MCP 方法的请求参数与结果整形。"""
@@ -474,7 +463,6 @@ class ProtocolMethodTests(unittest.TestCase):
     def test_get_prompt_defaults_arguments(self) -> None:
         _result, body = self._run("get_prompt", {"result": {}}, "greet")
         self.assertEqual(body["params"]["arguments"], {})
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

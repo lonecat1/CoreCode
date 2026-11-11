@@ -22,13 +22,12 @@ from pathlib import Path
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.tooling import ToolContext, ToolRegistry  # noqa: E402
-from minicode.tools.files import list_files_tool  # noqa: E402
+from corecode.tooling import ToolContext, ToolRegistry  # noqa: E402
+from corecode.tools.files import list_files_tool  # noqa: E402
 
 unittest.TestCase.maxDiff = None
 
 _TMP = Path(_HERE) / "_tmp" / "tools"
-
 
 def build_tree(root: Path) -> None:
     """造一棵有嵌套、有干扰目录的树。"""
@@ -50,7 +49,6 @@ def build_tree(root: Path) -> None:
     # 这一点（去掉 __pycache__ 跳过之后全部测试照样通过）。
     (root / "src" / "core" / "__pycache__" / "c.cpython-312.py").write_text("z", encoding="utf-8")
     (root / "node_modules" / "pkg" / "x.py").write_text("x", encoding="utf-8")
-
 
 class ListFilesTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -155,7 +153,6 @@ class ListFilesTests(unittest.TestCase):
                     os.path.isabs(line), f"路径应为相对路径: {line}"
                 )
 
-
 class ListFilesSchemaTests(unittest.TestCase):
     def test_schema_documents_the_new_parameters(self) -> None:
         """模型靠 schema 里的描述决定怎么用；不写就等于没有。"""
@@ -178,13 +175,10 @@ class ListFilesSchemaTests(unittest.TestCase):
         self.assertEqual(validator({"glob": None})["glob"], "")
         self.assertEqual(validator({"recursive": None})["recursive"], False)
 
-
 class GoalToolTests(unittest.TestCase):
     """`get_goal` / `update_goal` 的输出格式与 `stop` 控制位。
 
     ## 为什么输出格式重要
-
-    原版两个工具都返回 **JSON**：
 
         get_goal    → JSON.stringify({ goal, plan })
         update_goal → JSON.stringify(updated)
@@ -195,9 +189,9 @@ class GoalToolTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        from minicode.runtime.goal import GoalManager
-        from minicode.runtime.plan import PlanManager
-        from minicode.tools.goal import create_goal_tools
+        from corecode.runtime.goal import GoalManager
+        from corecode.runtime.plan import PlanManager
+        from corecode.tools.goal import create_goal_tools
 
         self.plan = PlanManager("sess-1")
         self.goal = GoalManager(self.plan)
@@ -217,7 +211,6 @@ class GoalToolTests(unittest.TestCase):
     def test_get_goal_returns_goal_and_plan(self) -> None:
         """**必须同时返回 plan。**
 
-        原版 `JSON.stringify({ goal, plan })`。只给 goal 的话，模型看不到
         todo 的 id 与状态，也就无法决定下一步。
         """
         payload = self._json("get_goal", {})
@@ -284,10 +277,9 @@ class GoalToolTests(unittest.TestCase):
         self.assertTrue(getattr(result, "stop", False), "完成意味着本回合有结论了")
 
     def test_completed_nests_summary_checks_and_checked_at(self) -> None:
-        """原版把这三样放在一个嵌套的 `completion` 对象里。
+        """
 
         本实现用三个平铺字段存储，但**发给模型时还原成嵌套形状**——
-        否则模型看到的形状与原版不同。
         """
         self.goal.create("目标")
         self.plan.update([{"title": "a", "status": "completed"}])
@@ -332,13 +324,11 @@ class GoalToolTests(unittest.TestCase):
         self.assertTrue(self.tools["get_goal"].description)
         self.assertTrue(self.tools["update_goal"].description)
 
-
 class UpdatePlanToolTests(unittest.TestCase):
     """`update_plan` 的输出格式。
 
     ## 为什么这个格式重要
 
-    输出是**模型可见的**。原版返回**整份 plan 文档的 JSON**
     （`JSON.stringify({ ...updated, explanation })`），本实现一度只回一句
     `"Plan updated: 1/3 completed."`。
 
@@ -348,8 +338,8 @@ class UpdatePlanToolTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        from minicode.runtime.plan import PlanManager
-        from minicode.tools.goal import create_update_plan_tool
+        from corecode.runtime.plan import PlanManager
+        from corecode.tools.goal import create_update_plan_tool
 
         self.plan = PlanManager("sess-1")
         self.tool = create_update_plan_tool(self.plan)
@@ -361,7 +351,7 @@ class UpdatePlanToolTests(unittest.TestCase):
         return result.output
 
     def test_output_is_json_with_camel_case_fields(self) -> None:
-        """字段名与原版一致（驼峰），因为这是模型看到的结构。
+        """
 
         改成 snake_case 会让「同一条计划在两种实现下的表示不同」，而模型对
         字段名的预期来自它见过的训练数据。
@@ -469,7 +459,6 @@ class UpdatePlanToolTests(unittest.TestCase):
         item = self.tool.input_schema["properties"]["todos"]["items"]
         self.assertEqual(item["required"], ["title", "status"])
         self.assertNotIn("id", item["required"])
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

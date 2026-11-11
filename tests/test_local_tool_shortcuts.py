@@ -1,7 +1,5 @@
 """本地工具快捷方式的解析测试。
 
-对应原版 `MiniCode/src/local-tool-shortcuts.ts`。
-
 ## 为什么要覆盖这么多边角
 
 解析器的输入是**用户手敲的一行字**，格式错误的方式比正确的方式多得多。而且
@@ -17,17 +15,15 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.local_tool_shortcuts import (  # noqa: E402
+from corecode.local_tool_shortcuts import (  # noqa: E402
     SHORTCUT_USAGES,
     LocalToolShortcut,
     parse_local_tool_shortcut,
 )
 
-
 class ParseHelper:
     def parse(self, text: str) -> LocalToolShortcut | None:
         return parse_local_tool_shortcut(text)
-
 
 class NotAShortcutTests(unittest.TestCase, ParseHelper):
     """不是快捷方式的输入必须原样返回 `None`，交给后面的分派。"""
@@ -48,7 +44,6 @@ class NotAShortcutTests(unittest.TestCase, ParseHelper):
     def test_ls_prefix_is_not_greedy(self) -> None:
         """**`/lsof` 不能被当成 `/ls`。**
 
-        原版用 `input === '/ls' || input.startsWith('/ls ')`，靠那个空格把
         `/lsof` 挡在外面。少了空格判断，任何以 `/ls` 开头的词都会被吃掉。
         """
         self.assertIsNone(self.parse("/lsof"))
@@ -63,7 +58,6 @@ class NotAShortcutTests(unittest.TestCase, ParseHelper):
     def test_bare_command_words(self) -> None:
         for word in ("ls", "read a.txt", "cmd git status"):
             self.assertIsNone(self.parse(word), word)
-
 
 class ListFilesTests(unittest.TestCase, ParseHelper):
     def test_bare_ls(self) -> None:
@@ -85,7 +79,6 @@ class ListFilesTests(unittest.TestCase, ParseHelper):
         result = self.parse("/ls   ")
         self.assertEqual(result.input, {})
 
-
 class GrepTests(unittest.TestCase, ParseHelper):
     def test_pattern_only(self) -> None:
         result = self.parse("/grep TODO")
@@ -105,14 +98,12 @@ class GrepTests(unittest.TestCase, ParseHelper):
         self.assertEqual(result.input, {"pattern": "TODO"})
 
     def test_extra_separators_stay_in_the_path(self) -> None:
-        """**D35**：原版会把第三段及以后整个丢掉。
+        """
 
-        `/grep a::b::c` 在原版得到 `pattern='a', path='b'`，`c` 消失；
         本实现保留在 path 里。
         """
         result = self.parse("/grep a::b::c")
         self.assertEqual(result.input, {"pattern": "a", "path": "b::c"})
-
 
 class ReadTests(unittest.TestCase, ParseHelper):
     def test_read(self) -> None:
@@ -126,7 +117,6 @@ class ReadTests(unittest.TestCase, ParseHelper):
 
     def test_path_is_trimmed(self) -> None:
         self.assertEqual(self.parse("/read  a.txt  ").input, {"path": "a.txt"})
-
 
 class WriteAndModifyTests(unittest.TestCase, ParseHelper):
     def test_write(self) -> None:
@@ -157,7 +147,6 @@ class WriteAndModifyTests(unittest.TestCase, ParseHelper):
     def test_modify_keeps_separators_in_content(self) -> None:
         result = self.parse("/modify a.txt::a::b")
         self.assertEqual(result.input["content"], "a::b")
-
 
 class EditTests(unittest.TestCase, ParseHelper):
     def test_edit(self) -> None:
@@ -191,7 +180,6 @@ class EditTests(unittest.TestCase, ParseHelper):
     def test_edit_keeps_separators_in_replace(self) -> None:
         """**D35 的核心用例。**
 
-        原版 `split('::')` 解构三段，`/edit a::b::c::d` 的 `d` 会被静默丢掉。
         替换成含 `::` 的内容很常见（Python 切片 `a[1::2]`、URL、命名空间），
         静默截断属于悄悄改坏数据。
         """
@@ -205,7 +193,6 @@ class EditTests(unittest.TestCase, ParseHelper):
         result = self.parse("/edit m.py::x[1:2]::x[1::2]")
         self.assertEqual(result.input["search"], "x[1:2]")
         self.assertEqual(result.input["replace"], "x[1::2]")
-
 
 class PatchTests(unittest.TestCase, ParseHelper):
     def test_single_pair(self) -> None:
@@ -238,13 +225,12 @@ class PatchTests(unittest.TestCase, ParseHelper):
         self.assertIsNone(self.parse("/patch ::s1::r1"))
 
     def test_replacements_have_no_replace_all_key(self) -> None:
-        """原版不设 `replaceAll`，因此一律是「只替换第一处」。
+        """
 
         凭空塞一个键会改变工具行为（全部替换），那是超出用户输入的意思。
         """
         result = self.parse("/patch a.txt::s::r")
         self.assertNotIn("replaceAll", result.input["replacements"][0])
-
 
 class CommandTests(unittest.TestCase, ParseHelper):
     def test_command_with_args(self) -> None:
@@ -278,13 +264,12 @@ class CommandTests(unittest.TestCase, ParseHelper):
         self.assertNotIn("cwd", result.input)
 
     def test_quotes_are_not_parsed(self) -> None:
-        """原版用朴素空白切分，不做引号解析。保持一致。
+        """保持一致。
 
         需要复杂引号时应当直接用 `run_command` 工具（它的 `args` 数组不做拆分）。
         """
         result = self.parse('/cmd git commit -m "a b"')
         self.assertEqual(result.input["args"], ["commit", "-m", '"a', 'b"'])
-
 
 class UsageListTests(unittest.TestCase):
     def test_all_eight_shortcuts_are_listed(self) -> None:
@@ -342,7 +327,7 @@ class UsageListTests(unittest.TestCase):
         指向不存在的工具时，用户会看到「Unknown tool」而不是语法错误，
         这会让人以为是程序坏了。
         """
-        from minicode.tools import create_default_registry
+        from corecode.tools import create_default_registry
 
         registered = {t.name for t in create_default_registry(".").list()}
         for sample in (
@@ -360,7 +345,6 @@ class UsageListTests(unittest.TestCase):
             self.assertIn(
                 result.tool_name, registered, f"{sample} 指向未注册的工具"
             )
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

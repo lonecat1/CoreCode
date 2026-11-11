@@ -3,13 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "minicode"
+name = "corecode"
 version = "0.1.0"
-description = "A lightweight terminal coding assistant: a Claude Code-like agent loop, written in Python."
+description = "A terminal coding agent with tool use, skills, long-term memory and layered context compaction."
 readme = "README.md"
 requires-python = ">=3.11"
 # 刻意保持零运行时依赖：终端交互、HTTP、HTML 抽取、JSONL 全部用标准库手写。
-# 这条约束沿用自 TypeScript 版（只依赖 diff 与 zod），它让核心循环保持可通读。
+# 这条约束让核心循环保持可通读，也让安装与分发不依赖网络。
 dependencies = []
 
 [project.optional-dependencies]
@@ -17,7 +17,7 @@ dependencies = []
 dev = ["pytest>=8.0.0"]
 
 [project.scripts]
-minicode = "minicode.cli:main"
+corecode = "corecode.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

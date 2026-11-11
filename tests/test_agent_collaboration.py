@@ -21,23 +21,23 @@ from unittest.mock import patch
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.agents.manager import SubAgentError, SubAgentManager  # noqa: E402
-from minicode.agents.types import (  # noqa: E402
+from corecode.agents.manager import SubAgentError, SubAgentManager  # noqa: E402
+from corecode.agents.types import (  # noqa: E402
     MODE_FORK,
     MODE_WORKTREE,
     ROLE_IMPLEMENTER,
     ROLE_INVESTIGATOR,
 )
-from minicode.agents.worker_permissions import WorkerPermissionManager  # noqa: E402
-from minicode.permissions import PermissionDenied  # noqa: E402
-from minicode.tooling import ToolContext  # noqa: E402
-from minicode.tools import (  # noqa: E402
+from corecode.agents.worker_permissions import WorkerPermissionManager  # noqa: E402
+from corecode.permissions import PermissionDenied  # noqa: E402
+from corecode.tooling import ToolContext  # noqa: E402
+from corecode.tools import (  # noqa: E402
     create_coder_registry,
     create_root_registry,
     create_worker_registry,
 )
-from minicode.tools.subagents import create_subagent_tools  # noqa: E402
-from minicode.types import AgentStep, ToolCall  # noqa: E402
+from corecode.tools.subagents import create_subagent_tools  # noqa: E402
+from corecode.types import AgentStep, ToolCall  # noqa: E402
 
 
 class _WriteAdapter:
@@ -129,7 +129,7 @@ def _git(repo: Path, *args: str) -> None:
 @unittest.skipUnless(shutil.which("git"), "需要安装 git")
 class CollaborationTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="minicode-collab-"))
+        self.root = Path(tempfile.mkdtemp(prefix="corecode-collab-"))
         self.home = self.root / "home"
         self.repo = self.root / "repo"
         self.home.mkdir()
@@ -140,7 +140,7 @@ class CollaborationTestCase(unittest.TestCase):
         (self.repo / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
         _git(self.repo, "add", "app.py")
         _git(self.repo, "commit", "-m", "initial")
-        self._env = patch.dict(os.environ, {"MINICODE_HOME": str(self.home)})
+        self._env = patch.dict(os.environ, {"CORECODE_HOME": str(self.home)})
         self._env.start()
 
     def tearDown(self) -> None:

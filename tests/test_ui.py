@@ -25,7 +25,7 @@ from unittest.mock import patch
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.ui.animate import (  # noqa: E402
+from corecode.ui.animate import (  # noqa: E402
     ERASE_LINE,
     ERASE_TO_END,
     BlockAnimator,
@@ -33,12 +33,12 @@ from minicode.ui.animate import (  # noqa: E402
     cursor_up,
     spinner_glyph,
 )
-from minicode.ui.caps import (  # noqa: E402
+from corecode.ui.caps import (  # noqa: E402
     set_animation_enabled,
     supports_animation,
 )
-from minicode.ui.console import ConsoleUI, _shorten  # noqa: E402
-from minicode.ui.render import (  # noqa: E402
+from corecode.ui.console import ConsoleUI, _shorten  # noqa: E402
+from corecode.ui.render import (  # noqa: E402
     MAX_BODY_WIDTH,
     StreamPrinter,
     output_width,
@@ -57,7 +57,7 @@ from minicode.ui.render import (  # noqa: E402
     supports_color,
     wrap_body,
 )
-from minicode.ui.theme import (  # noqa: E402
+from corecode.ui.theme import (  # noqa: E402
     GLYPH_RESULT,
     GLYPH_TOOL,
     GLYPH_USER,
@@ -65,7 +65,7 @@ from minicode.ui.theme import (  # noqa: E402
     paint,
     set_color_enabled,
 )
-from minicode.ui.width import (  # noqa: E402
+from corecode.ui.width import (  # noqa: E402
     string_display_width,
     strip_ansi,
 )
@@ -76,13 +76,11 @@ unittest.TestCase.maxDiff = None
 COLOR_ON = {"NO_COLOR": "", "TERM": "xterm-256color"}
 COLOR_OFF = {"NO_COLOR": "1"}
 
-
 class _FakeTty(io.StringIO):
     """一个「看起来像终端」的流，用于探测动画能力。"""
 
     def isatty(self) -> bool:
         return True
-
 
 class ColorEnvMixin(unittest.TestCase):
     def setUp(self) -> None:
@@ -94,11 +92,9 @@ class ColorEnvMixin(unittest.TestCase):
         self._env.stop()
         set_color_enabled(None)
 
-
 # ---------------------------------------------------------------------------
 # 宽度
 # ---------------------------------------------------------------------------
-
 
 class WidthTests(unittest.TestCase):
     def test_output_width_is_bounded(self) -> None:
@@ -122,11 +118,9 @@ class WidthTests(unittest.TestCase):
     def test_wrap_body_keeps_blank_lines(self) -> None:
         self.assertEqual(wrap_body("a\n\nb", 20), ["a", "", "b"])
 
-
 # ---------------------------------------------------------------------------
 # 颜色
 # ---------------------------------------------------------------------------
-
 
 class ColorTests(ColorEnvMixin):
     def test_paint_wraps_and_resets(self) -> None:
@@ -175,11 +169,9 @@ class ColorTests(ColorEnvMixin):
         with self.assertRaises(AssertionError):
             paint("\x1b[38;5;245m", "───")
 
-
 # ---------------------------------------------------------------------------
 # 渲染
 # ---------------------------------------------------------------------------
-
 
 class RenderTests(ColorEnvMixin):
     def test_user_echo_has_prompt_prefix(self) -> None:
@@ -241,8 +233,6 @@ class RenderTests(ColorEnvMixin):
                 width=200,
             )
         )
-        # **字段与原版一致**：session / provider / model / messages / events /
-        # skills / mcp。会话 id 与工作目录不在其中——原版的徽章行里没有它们
         # （它的 `_cwd` 参数是下划线开头的未用参数）。
         for field in ("[session] local", "[provider] api.deepseek.com",
                       "[model] qwen3.8-27b", "[messages]", "[events] 0",
@@ -253,8 +243,6 @@ class RenderTests(ColorEnvMixin):
     def test_banner_omits_absent_sections(self) -> None:
         """没有 MCP 服务器时，`mcp-wait` / `mcp-err` 徽章不出现。
 
-        原版这两个徽章是条件渲染的（`...(connecting > 0 ? [...] : [])`），
-        所以「没有」时不该留下空白标记。`[mcp] 0/0` 本体总是有。
         """
         rendered = strip_ansi(
             render_banner(model="m", session_id="s", cwd="/x", width=200)
@@ -276,11 +264,7 @@ class RenderTests(ColorEnvMixin):
                 self.assertIn(badge, rendered)
 
     def test_banner_has_the_original_five_line_structure(self) -> None:
-        """**行结构与原版一致**：边框 / 标题 / 空行 / 徽章行 / 边框。
 
-        第三行那个空行不是多余的：原版 `renderPanel` 在标题后固定插一个
-        `emptyPanelRow`（`tui/chrome.ts`）。少了它，「标题贴着徽章」——
-        用户一眼就能看出与原版不同。
         """
         rendered = strip_ansi(
             render_banner(model="m", session_id="s", cwd="/x", width=80)
@@ -288,7 +272,7 @@ class RenderTests(ColorEnvMixin):
         lines = rendered.split("\n")
         self.assertEqual(len(lines), 5, f"应为 5 行，实际 {len(lines)}：{lines}")
         self.assertTrue(lines[0].startswith("╭"), lines[0])
-        self.assertIn("MiniCode", lines[1])
+        self.assertIn("CoreCode", lines[1])
         # 第 3 行：边框内除两侧竖线与内边距外，应为空
         inner = lines[2].strip().strip("│").strip()
         self.assertEqual(inner, "", f"第 3 行应为空行，实际 {lines[2]!r}")
@@ -296,8 +280,6 @@ class RenderTests(ColorEnvMixin):
         self.assertTrue(lines[4].startswith("╰"), lines[4])
 
     def test_banner_uses_the_original_field_order(self) -> None:
-        """**字段顺序与原版一致**：session → provider → model → messages →
-        events → skills → mcp。
 
         顺序不是随意的：`messages`/`events` 紧跟在 model 后面，才能一眼看出
         「这次会话已经有多少内容」；`skills` 与 `mcp` 是外部能力，放最后。
@@ -314,10 +296,9 @@ class RenderTests(ColorEnvMixin):
             "[events]", "[skills]", "[mcp]",
         ]
         positions = [rendered.index(tag) for tag in order]
-        self.assertEqual(positions, sorted(positions), "徽章顺序与原版不一致")
+        self.assertEqual(positions, sorted(positions), "徽章顺序不一致")
 
     def test_banner_provider_falls_back_to_offline(self) -> None:
-        """没有 baseUrl → `offline`（原版 `runtime?.baseUrl ? … : 'offline'`）。"""
         rendered = strip_ansi(
             render_banner(model="", session_id="s", cwd="/x", width=200)
         )
@@ -352,7 +333,7 @@ class RenderTests(ColorEnvMixin):
         正文封顶是为了长段落可读；横幅是该多宽就多宽。早先两者共用
         `output_width()`，200 列的终端也只画出 100 列宽的框。
         """
-        from minicode.ui.render import MAX_BODY_WIDTH
+        from corecode.ui.render import MAX_BODY_WIDTH
 
         rendered = render_banner(
             model="m", session_id="s", cwd="/x", width=MAX_BODY_WIDTH + 60
@@ -361,7 +342,6 @@ class RenderTests(ColorEnvMixin):
         self.assertEqual(widest, MAX_BODY_WIDTH + 60)
 
     def test_banner_survives_narrow_width(self) -> None:
-        # 面板宽度有下限 60（原版 `Math.max(60, columns ?? 100)`），
         # 所以「窄宽度」要断言的是**截断生效且所有行等宽**，而不是能压到 50。
         rendered = render_banner(
             model="很长的模型名字" * 5,
@@ -375,7 +355,6 @@ class RenderTests(ColorEnvMixin):
         self.assertLessEqual(widths.pop(), 60)
 
     def test_banner_truncates_with_ellipsis_when_too_narrow(self) -> None:
-        """放不下时以 ` ...` 收尾（原版 `joinSegmentsWithinWidth`）。"""
         rendered = strip_ansi(
             render_banner(
                 model="m" * 40, session_id="s", cwd="/x", width=60,
@@ -386,7 +365,6 @@ class RenderTests(ColorEnvMixin):
         self.assertIn("...", meta[0])
 
     def test_banner_survives_narrow_width(self) -> None:
-        # 面板宽度有下限 60（原版 `Math.max(60, columns ?? 100)`），
         # 所以「窄宽度」要断言的是**截断生效且所有行等宽**，而不是能压到 50。
         rendered = render_banner(
             model="很长的模型名字" * 5,
@@ -415,7 +393,7 @@ class RenderTests(ColorEnvMixin):
                     render_banner(
                         model="qwen3.8-27b",
                         session_id="a1b2c3d4",
-                        cwd=r"D:\CoreCode\minicode-py",
+                        cwd=r"D:\CoreCode\corecode",
                         tool_count=17,
                         readonly_tool_count=6,
                         skill_count=2,
@@ -573,11 +551,9 @@ class RenderTests(ColorEnvMixin):
                 final, "m", f"只允许 SGR(m) 序列，发现 \\x1b[{params}{final}"
             )
 
-
 # ---------------------------------------------------------------------------
 # 流式输出
 # ---------------------------------------------------------------------------
-
 
 class StreamPrinterTests(ColorEnvMixin):
     def test_partial_line_is_buffered(self) -> None:
@@ -633,11 +609,9 @@ class StreamPrinterTests(ColorEnvMixin):
         printer2 = StreamPrinter(width=40, indent="  ", color="")
         self.assertTrue(printer2.feed("内容\n").startswith("  "))
 
-
 # ---------------------------------------------------------------------------
 # 控制台界面
 # ---------------------------------------------------------------------------
-
 
 class ConsoleUITests(ColorEnvMixin):
     def _ui(self) -> tuple[ConsoleUI, io.StringIO]:
@@ -807,7 +781,6 @@ class ConsoleUITests(ColorEnvMixin):
         for forbidden in ("\x1b[2J", "\x1b[H", "\x1b[?25", "\x1b[1A", "\x1b[2K"):
             self.assertNotIn(forbidden, output, f"不该出现 {forbidden!r}")
 
-
 class AnimationCapabilityTests(unittest.TestCase):
     """动画是**可选增强**，绝不能成为可用性的前提。
 
@@ -851,7 +824,7 @@ class AnimationCapabilityTests(unittest.TestCase):
         Windows 上 ANSI 默认关闭；不确认的话 `ESC[1A` 会以字面量打印出来。
         """
         with patch.dict(os.environ, {"NO_COLOR": "", "TERM": "xterm"}):
-            with patch("minicode.ui.caps.enable_virtual_terminal", return_value=False):
+            with patch("corecode.ui.caps.enable_virtual_terminal", return_value=False):
                 self.assertFalse(
                     supports_animation(_FakeTty(), require_vt=True),
                     "VT 不可用时不得做需要光标移动的动画",
@@ -860,7 +833,6 @@ class AnimationCapabilityTests(unittest.TestCase):
                     supports_animation(_FakeTty(), require_vt=False),
                     "只用 \\r 的动画不依赖 VT",
                 )
-
 
 class SpinnerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -931,17 +903,16 @@ class SpinnerTests(unittest.TestCase):
 
     def test_ascii_fallback_glyphs(self) -> None:
         """终端字体缺盲文字形时的退路。"""
-        from minicode.ui.animate import SPINNER_ASCII, spinner_glyph
+        from corecode.ui.animate import SPINNER_ASCII, spinner_glyph
 
         for index in range(len(SPINNER_ASCII)):
             self.assertEqual(spinner_glyph(index, ascii_only=True), SPINNER_ASCII[index])
 
     def test_glyph_cycles(self) -> None:
-        from minicode.ui.animate import SPINNER_FRAMES
+        from corecode.ui.animate import SPINNER_FRAMES
 
         self.assertEqual(spinner_glyph(0), SPINNER_FRAMES[0])
         self.assertEqual(spinner_glyph(len(SPINNER_FRAMES)), SPINNER_FRAMES[0])
-
 
 class BlockAnimatorTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -1044,7 +1015,6 @@ class BlockAnimatorTests(unittest.TestCase):
         animator.play(frames, interval=0.0, should_abort=should_abort)
         self.assertLessEqual(len(played), 2, "应在 should_abort 后立刻停下")
 
-
 class StartupAnimationTests(unittest.TestCase):
     def setUp(self) -> None:
         set_color_enabled(None)
@@ -1057,7 +1027,7 @@ class StartupAnimationTests(unittest.TestCase):
 
     def test_frames_have_constant_height(self) -> None:
         """帧高必须一致，否则多行动画的相对移动会算错。"""
-        from minicode.ui.startup import StartupAnimation
+        from corecode.ui.startup import StartupAnimation
 
         animation = StartupAnimation(width=40, height=5, enabled=True)
         frames = animation.frames()
@@ -1066,7 +1036,7 @@ class StartupAnimationTests(unittest.TestCase):
         self.assertEqual(len(heights), 1, f"帧高不一致: {heights}")
 
     def test_frames_fit_width(self) -> None:
-        from minicode.ui.startup import StartupAnimation
+        from corecode.ui.startup import StartupAnimation
 
         animation = StartupAnimation(width=20, height=5, enabled=True)
         for frame in animation.frames():
@@ -1079,7 +1049,7 @@ class StartupAnimationTests(unittest.TestCase):
         像素画被截断会变成一堆无意义的方块——不如直接不播。
         这是「宁可没有动画」原则的体现。
         """
-        from minicode.ui.startup import StartupAnimation
+        from corecode.ui.startup import StartupAnimation
 
         self.assertEqual(
             StartupAnimation(width=10, height=5, enabled=True).frames(),
@@ -1088,13 +1058,13 @@ class StartupAnimationTests(unittest.TestCase):
         )
 
     def test_wide_enough_terminal_has_frames(self) -> None:
-        from minicode.ui.startup import StartupAnimation
+        from corecode.ui.startup import StartupAnimation
 
         self.assertTrue(StartupAnimation(width=40, height=5, enabled=True).frames())
 
     def test_animation_progressively_lights_up(self) -> None:
         """动画应当是「逐渐点亮」，不是每帧全变。"""
-        from minicode.ui.startup import PIXEL_ON, StartupAnimation
+        from corecode.ui.startup import PIXEL_ON, StartupAnimation
 
         frames = StartupAnimation(width=40, height=5, enabled=True).frames()
         counts = [sum(row.count(PIXEL_ON) for row in frame) for frame in frames]
@@ -1103,7 +1073,7 @@ class StartupAnimationTests(unittest.TestCase):
 
     def test_disabled_animation_outputs_nothing(self) -> None:
         """非终端环境下必须完全静默，不留空行。"""
-        from minicode.ui.startup import StartupAnimation
+        from corecode.ui.startup import StartupAnimation
 
         stream = io.StringIO()
         StartupAnimation(width=40, enabled=False, stream=stream).play()
@@ -1111,7 +1081,7 @@ class StartupAnimationTests(unittest.TestCase):
 
     def test_play_clears_afterwards(self) -> None:
         """播放完必须擦掉，否则残影留在屏幕上。"""
-        from minicode.ui.startup import StartupAnimation
+        from corecode.ui.startup import StartupAnimation
 
         stream = io.StringIO()
         StartupAnimation(
@@ -1126,7 +1096,7 @@ class StartupAnimationTests(unittest.TestCase):
         多出来的部分就是停留。只断言「擦除发生了」是没用的——那在
         「不停留」的实现里同样成立（变异检查抓到过这一点）。
         """
-        from minicode.ui.startup import StartupAnimation
+        from corecode.ui.startup import StartupAnimation
 
         stream = io.StringIO()
         animation = StartupAnimation(
@@ -1152,7 +1122,7 @@ class StartupAnimationTests(unittest.TestCase):
 
     def test_hold_can_be_disabled(self) -> None:
         """`hold_seconds=0` 时不该多等——留给不需要停留的场景。"""
-        from minicode.ui.startup import StartupAnimation
+        from corecode.ui.startup import StartupAnimation
 
         animation = StartupAnimation(
             width=40,
@@ -1169,13 +1139,12 @@ class StartupAnimationTests(unittest.TestCase):
 
     def test_static_title_is_available_without_animation(self) -> None:
         """动画只是开场；跳过时用户仍要能看到完整信息。"""
-        from minicode.ui.startup import banner_title_lines, startup_hint
+        from corecode.ui.startup import banner_title_lines, startup_hint
 
         lines = banner_title_lines()
         self.assertTrue(lines)
-        self.assertIn("MiniCode", strip_ansi("\n".join(lines)))
+        self.assertIn("CoreCode", strip_ansi("\n".join(lines)))
         self.assertTrue(startup_hint())
-
 
 class AnimatedConsoleTests(ColorEnvMixin):
     """动画与普通输出的协作。"""
@@ -1237,7 +1206,6 @@ class AnimatedConsoleTests(ColorEnvMixin):
         self.assertNotIn("\r", output, "不该有回车")
         self.assertNotIn("\x1b[2K", output, "不该有擦行")
         self.assertNotIn("\x1b[", output, "不该有光标移动")
-
 
 class StreamingTests(ColorEnvMixin):
     """流式输出。
@@ -1432,14 +1400,13 @@ class StreamingTests(ColorEnvMixin):
         ui.assistant_delta("")
         self.assertEqual(stream.getvalue(), "")
 
-
 class TurnStatsDisplayTests(ColorEnvMixin):
     def _ui(self) -> tuple[ConsoleUI, io.StringIO]:
         stream = io.StringIO()
         return ConsoleUI(stream=stream, width=60, animate=False), stream
 
     def test_stats_line_is_shown(self) -> None:
-        from minicode.stats import SessionStats, TurnStats
+        from corecode.stats import SessionStats, TurnStats
 
         stats = SessionStats()
         stats.record(TurnStats(duration_seconds=3.2, tool_calls=4))
@@ -1462,21 +1429,20 @@ class TurnStatsDisplayTests(ColorEnvMixin):
         )
 
     def test_stats_without_turns_is_silent(self) -> None:
-        from minicode.stats import SessionStats
+        from corecode.stats import SessionStats
 
         ui, stream = self._ui()
         ui.turn_stats(SessionStats())
         self.assertEqual(stream.getvalue(), "")
 
     def test_stats_omits_tool_count_when_zero(self) -> None:
-        from minicode.stats import SessionStats, TurnStats
+        from corecode.stats import SessionStats, TurnStats
 
         stats = SessionStats()
         stats.record(TurnStats(duration_seconds=1.5, tool_calls=0))
         ui, stream = self._ui()
         ui.turn_stats(stats)
         self.assertNotIn("工具调用", stream.getvalue())
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -14,7 +14,7 @@ install one, so this script does the one check that matters:
   2. every imported name is actually defined (or re-exported) in that module.
 
 It also reports modules that are never imported, which is usually a sign of a
-filesystem path constant that drifted (see config.MINICODE_HOME / MINICODE_DIR).
+filesystem path constant that drifted (see config.CORECODE_HOME / CORECODE_DIR).
 
 Usage:  python tools/check_imports.py
 Exit 0 when clean, 1 when problems are found.
@@ -30,7 +30,7 @@ from _shared import force_utf8_output
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, "src")
-PACKAGE = "minicode"
+PACKAGE = "corecode"
 
 
 def module_files() -> dict[str, tuple[str, bool]]:
@@ -81,9 +81,9 @@ def resolve(module: str, node: ast.ImportFrom, is_package: bool) -> str | None:
     `from .x import y` means `package.x`, not "go up one and look for x".
     Inside a regular module `a.b.c`, `from .x import y` means `a.b.x`.
 
-    Concretely: `minicode/adapters/__init__.py` with `from .anthropic import X`
-    resolves to `minicode.adapters.anthropic` — the first version of this
-    checker wrongly produced `minicode.anthropic`.
+    Concretely: `corecode/adapters/__init__.py` with `from .anthropic import X`
+    resolves to `corecode.adapters.anthropic` — the first version of this
+    checker wrongly produced `corecode.anthropic`.
     """
     if node.level == 0:
         return node.module

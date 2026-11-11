@@ -22,24 +22,24 @@ from unittest.mock import patch
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.agent_loop import run_agent_turn  # noqa: E402
-from minicode.agents.manager import SubAgentManager  # noqa: E402
-from minicode.evolution import EvolvedMemory, MemoryAsset  # noqa: E402
-from minicode.host import SessionHost  # noqa: E402
-from minicode.permissions import PermissionManager  # noqa: E402
-from minicode.prompt import build_system_prompt  # noqa: E402
-from minicode.runtime.plan import PlanManager  # noqa: E402
-from minicode.runtime.turn import TurnRequest  # noqa: E402
-from minicode.skill_metadata import parse_skill_metadata, split_frontmatter  # noqa: E402
-from minicode.skill_routing import SkillRouter, detect_intents  # noqa: E402
-from minicode.skills import discover_skills  # noqa: E402
-from minicode.tooling import ToolContext  # noqa: E402
-from minicode.tools import create_default_registry, create_worker_registry  # noqa: E402
-from minicode.types import AgentStep  # noqa: E402
+from corecode.agent_loop import run_agent_turn  # noqa: E402
+from corecode.agents.manager import SubAgentManager  # noqa: E402
+from corecode.evolution import EvolvedMemory, MemoryAsset  # noqa: E402
+from corecode.host import SessionHost  # noqa: E402
+from corecode.permissions import PermissionManager  # noqa: E402
+from corecode.prompt import build_system_prompt  # noqa: E402
+from corecode.runtime.plan import PlanManager  # noqa: E402
+from corecode.runtime.turn import TurnRequest  # noqa: E402
+from corecode.skill_metadata import parse_skill_metadata, split_frontmatter  # noqa: E402
+from corecode.skill_routing import SkillRouter, detect_intents  # noqa: E402
+from corecode.skills import discover_skills  # noqa: E402
+from corecode.tooling import ToolContext  # noqa: E402
+from corecode.tools import create_default_registry, create_worker_registry  # noqa: E402
+from corecode.types import AgentStep  # noqa: E402
 
 
 def write_skill(root: Path, name: str, markdown: str) -> None:
-    directory = root / ".mini-code" / "skills" / name
+    directory = root / ".corecode" / "skills" / name
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "SKILL.md").write_text(markdown, encoding="utf-8")
 
@@ -65,12 +65,12 @@ Inspect the patch and report concrete risks.
 
 class SkillRoutingTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="minicode-skill-routing-"))
+        self.root = Path(tempfile.mkdtemp(prefix="corecode-skill-routing-"))
         self.home = self.root / "home"
         self.cwd = self.root / "project"
         self.home.mkdir()
         self.cwd.mkdir()
-        self._env = patch.dict(os.environ, {"MINICODE_HOME": str(self.home)})
+        self._env = patch.dict(os.environ, {"CORECODE_HOME": str(self.home)})
         self._env.start()
 
     def tearDown(self) -> None:

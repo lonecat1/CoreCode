@@ -1,6 +1,5 @@
 """MCP 状态汇总与 `/model`、`/config-paths` 命令的测试。
 
-对应原版 `mcp-status.ts`（35 行）与 `cli-commands.ts` 里对应的两条命令分支。
 """
 
 from __future__ import annotations
@@ -17,19 +16,17 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.mcp.status import (  # noqa: E402
+from corecode.mcp.status import (  # noqa: E402
     McpStatusSummary,
     summarize_mcp_servers,
 )
-from minicode.tooling import ToolRegistry  # noqa: E402
-from minicode.stats import SessionStats  # noqa: E402
+from corecode.tooling import ToolRegistry  # noqa: E402
+from corecode.stats import SessionStats  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-
 def server(name: str, status: str, tools: int = 0, **extra: object) -> dict:
     return {"name": name, "status": status, "toolCount": tools, **extra}
-
 
 class SummarizeTests(unittest.TestCase):
     def test_empty_list(self) -> None:
@@ -142,12 +139,10 @@ class SummarizeTests(unittest.TestCase):
             (0, 0, 0, 0),
         )
 
-
 class BannerIntegrationTests(unittest.TestCase):
     def test_banner_shows_mcp_line(self) -> None:
-        from minicode.ui.render import render_banner
+        from corecode.ui.render import render_banner
 
-        # MCP 计数现在是**徽章** `[mcp] connected/total`，与原版一致
         # （`tui/chrome.ts` 的 `colorBadge('mcp', ...)`），不再是键值行。
         text = render_banner(
             model="m",
@@ -156,7 +151,6 @@ class BannerIntegrationTests(unittest.TestCase):
             mcp_total=2,
             mcp_connected=1,
             mcp_error=1,
-            # 宽度要够，否则后面的徽章会被 `...` 截断（那是原版行为）。
             width=200,
         )
         self.assertIn("[mcp]", text)
@@ -165,16 +159,15 @@ class BannerIntegrationTests(unittest.TestCase):
 
     def test_banner_omits_mcp_row_when_empty(self) -> None:
         """没有 MCP 服务器时不该多出一行空标签。"""
-        from minicode.ui.render import render_banner
+        from corecode.ui.render import render_banner
 
         text = render_banner(model="m", session_id="s", cwd="/tmp", width=80)
         self.assertNotIn("MCP", text)
 
     def test_banner_stays_within_width(self) -> None:
-        from minicode.ui.width import string_display_width
-        from minicode.ui.render import render_banner
+        from corecode.ui.width import string_display_width
+        from corecode.ui.render import render_banner
 
-        # 原版的面板宽度是 `Math.max(60, columns ?? 100)`——**有下限 60**。
         # 所以这里断言的是「所有行等宽且不小于 60」，而不是「不超过请求的宽度」。
         text = render_banner(
             model="m",
@@ -189,18 +182,17 @@ class BannerIntegrationTests(unittest.TestCase):
         widths = {string_display_width(line) for line in text.splitlines()}
         self.assertEqual(widths, {60}, "宽度被 max(60, …) 抬到 60，且所有行等宽")
 
-
 class ConfigPathsCommandTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.home = Path(tempfile.mkdtemp(prefix="minicode-paths-"))
+        self.home = Path(tempfile.mkdtemp(prefix="corecode-paths-"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.home, ignore_errors=True)
 
     def _run(self, text: str, home: Path | None = None) -> str | None:
-        from minicode.cli_commands import try_handle_local_command
+        from corecode.cli_commands import try_handle_local_command
 
-        with patch.dict(os.environ, {"MINICODE_HOME": str(home or self.home)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(home or self.home)}):
             return try_handle_local_command(None, text)  # type: ignore[arg-type]
 
     @staticmethod
@@ -216,16 +208,15 @@ class ConfigPathsCommandTests(unittest.TestCase):
         return re.sub(r"\n\s*", "", output)
 
     def test_lists_four_paths(self) -> None:
-        """原版输出四项，其中最后一项是 Claude 兼容回退。"""
         output = self._run("/config-paths")
         self.assertIsNotNone(output)
-        self.assertIn("mini-code settings", output)
-        self.assertIn("mini-code permissions", output)
-        self.assertIn("mini-code mcp", output)
+        self.assertIn("corecode settings", output)
+        self.assertIn("corecode permissions", output)
+        self.assertIn("corecode mcp", output)
         self.assertIn("compat fallback", output)
 
     def test_shows_the_real_claude_path(self) -> None:
-        from minicode.config import claude_settings_path
+        from corecode.config import claude_settings_path
 
         output = self._run("/config-paths") or ""
         self.assertIn(str(claude_settings_path()), self._joined(output))
@@ -234,19 +225,19 @@ class ConfigPathsCommandTests(unittest.TestCase):
         """路径必须来自**动态**访问器。
 
         这条同时是「不要用导入期快照」的护栏：`_render_config_paths` 用的是
-        `settings_path()`，因此在这里改 `MINICODE_HOME` 后它立刻跟着变。
+        `settings_path()`，因此在这里改 `CORECODE_HOME` 后它立刻跟着变。
         如果哪天有人换成模块级 `SETTINGS_PATH`，这条会失败。
         """
-        from minicode.config import settings_path
+        from corecode.config import settings_path
 
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}):
             expected = str(settings_path())
         output = self._run("/config-paths") or ""
         self.assertIn(expected, self._joined(output))
 
-    def test_paths_follow_minicode_home(self) -> None:
+    def test_paths_follow_corecode_home(self) -> None:
         """换一个家目录，显示的三条本项目路径都要跟着换。"""
-        other = Path(tempfile.mkdtemp(prefix="minicode-paths2-"))
+        other = Path(tempfile.mkdtemp(prefix="corecode-paths2-"))
         try:
             output = self._run("/config-paths", home=other) or ""
             self.assertIn(str(other), self._joined(output))
@@ -260,7 +251,7 @@ class ConfigPathsCommandTests(unittest.TestCase):
         「截断」渲染会得到 `C:\\Users\\...\\se...`——这条命令就白做了。
         必须折行，且折行后接回来仍是完整路径。
         """
-        deep = Path(tempfile.mkdtemp(prefix="minicode-very-long-home-name-"))
+        deep = Path(tempfile.mkdtemp(prefix="corecode-very-long-home-name-"))
         try:
             output = self._run("/config-paths", home=deep) or ""
             self.assertNotIn("...", output, "不该出现截断省略号")
@@ -274,19 +265,15 @@ class ConfigPathsCommandTests(unittest.TestCase):
     def test_paths_are_never_wrapped_or_truncated(self) -> None:
         """**长路径就该占满一行，不折行也不截断。**
 
-        这条断言曾经是反的（「每行不超过 80 列」）——那时 `/config-paths` 走
-        表格渲染，超宽会折行。现在四行与原版**逐字一致**：原版直接
-        `join('\\n')` 四行 `label: value`，路径多长就多长。
-
         为什么这是对的：这条命令的**全部意义**是让用户看到完整路径去复制。
         折行会把路径劈成两段（复制时要手工接回去），截断则直接毁掉它。
         """
-        from minicode.config import settings_path
-        from minicode.ui.width import string_display_width
+        from corecode.config import settings_path
+        from corecode.ui.width import string_display_width
 
         output = self._run("/config-paths") or ""
         expected = str(settings_path())
-        if string_display_width(f"mini-code settings: {expected}") <= 80:
+        if string_display_width(f"corecode settings: {expected}") <= 80:
             self.skipTest("这台机器上的路径不够长，测不出「不折行」")
 
         # 完整路径必须出现在**同一行**上
@@ -299,14 +286,14 @@ class ConfigPathsCommandTests(unittest.TestCase):
     def test_output_is_four_flat_label_value_lines(self) -> None:
         """形状是**四行 `label: value`**，没有标题、没有分隔线、没有表格对齐。
 
-        脚本会 `grep 'mini-code mcp'` 找配置在哪，形状一变就 grep 不到。
+        脚本会 `grep 'corecode mcp'` 找配置在哪，形状一变就 grep 不到。
         """
         output = self._run("/config-paths") or ""
         labelled = [
             line for line in output.splitlines()
             if line.startswith(
-                ("mini-code settings:", "mini-code permissions:",
-                 "mini-code mcp:", "compat fallback:")
+                ("corecode settings:", "corecode permissions:",
+                 "corecode mcp:", "compat fallback:")
             )
         ]
         self.assertEqual(len(labelled), 4, output)
@@ -317,10 +304,9 @@ class ConfigPathsCommandTests(unittest.TestCase):
         self.assertNotIn("配置路径", output)
         self.assertNotIn("───", output)
 
-
 class ModelCommandTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="minicode-model-"))
+        self.root = Path(tempfile.mkdtemp(prefix="corecode-model-"))
         self.home = self.root / "mini-home"
         self.home.mkdir(parents=True, exist_ok=True)
         self.settings = self.home / "settings.json"
@@ -331,15 +317,15 @@ class ModelCommandTests(unittest.TestCase):
     def _run(self, text: str, model: str | None = None) -> str | None:
         from types import SimpleNamespace
 
-        from minicode.cli_commands import try_handle_local_command
+        from corecode.cli_commands import try_handle_local_command
 
         # 用 SimpleNamespace 而不是内联 class：类体不构成闭包，写
         # `model = model or ...` 会得到 NameError（我第一版就这么错了）。
         host = SimpleNamespace(
             runtime_config=SimpleNamespace(model=model) if model is not None else None
         )
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.home)}):
-            with patch("minicode.config.settings_path", return_value=self.settings):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.home)}):
+            with patch("corecode.config.settings_path", return_value=self.settings):
                 return try_handle_local_command(host, text)  # type: ignore[arg-type]
 
     def test_shows_current_model(self) -> None:
@@ -397,21 +383,15 @@ class ModelCommandTests(unittest.TestCase):
         written = json.loads(self.settings.read_text(encoding="utf-8"))
         self.assertEqual(written["model"], "padded-name")
 
-
 class CommandRegistryTests(unittest.TestCase):
     """命令清单的完整性。
 
     ## 计数口径很重要
 
-    原版 `cli-commands.ts` 有 **37 条用法**，但只有 **29 个不同的命令**——
-    因为 `/loop`、`/goal`、`/model` 各有多条用法变体（`/loop`、`/loop stop`、
-    `/goal pause` …）。
-
     因此「用法条数」不是对等指标（多一条少一条都可能只是措辞不同），
     **不同的命令名**才是。我一开始就是按用法条数比的，得出了错误的结论。
     """
 
-    #: 原版 `cli-commands.ts` 里出现的全部命令名（去重）。
     TS_COMMANDS = frozenset(
         {
             "/loop", "/goal", "/plan", "/help", "/tools", "/status", "/model",
@@ -423,12 +403,11 @@ class CommandRegistryTests(unittest.TestCase):
     )
 
     def _python_commands(self) -> set[str]:
-        from minicode.cli_commands import SLASH_COMMANDS
+        from corecode.cli_commands import SLASH_COMMANDS
 
         return {item.usage.split(" ")[0] for item in SLASH_COMMANDS}
 
     def test_ts_has_29_distinct_commands(self) -> None:
-        """把原版的清单钉住——改这个集合必须是有意的。"""
         self.assertEqual(len(self.TS_COMMANDS), 29)
 
     def test_no_commands_are_missing(self) -> None:
@@ -448,29 +427,29 @@ class CommandRegistryTests(unittest.TestCase):
         """**这条防止我自己犯过的一个错误重演。**
 
         我曾在 `cwd=REPO` 上把帮助里的每条命令都跑一遍来确认「都有处理函数」。
-        `/init` 会真的创建 `.mini-code/`、往 `.gitignore` 追加条目、写出
-        `MINI.md`——于是**测试往真实仓库里写了文件**。
+        `/init` 会真的创建 `.corecode/`、往 `.gitignore` 追加条目、写出
+        `CORECODE.md`——于是**测试往真实仓库里写了文件**。
 
         这类测试破坏是隐性的：它不报错，只是悄悄改动工作区，直到你
         `git status` 才发现。因此这里断言：探测命令清单之后，仓库里不该
-        多出 `MINI.md`，`.gitignore` 也不该被改动。
+        多出 `CORECODE.md`，`.gitignore` 也不该被改动。
         """
         import subprocess
 
         repo = Path(REPO)
-        mini_md = repo / "MINI.md"
+        mini_md = repo / "CORECODE.md"
         gitignore_before = None
         gitignore = repo / ".gitignore"
         if gitignore.exists():
             gitignore_before = gitignore.read_text(encoding="utf-8")
 
         # 有副作用的命令必须被显式登记——否则上面那条探测会把它们跑掉。
-        from minicode.cli_commands import SIDE_EFFECTING_COMMANDS
+        from corecode.cli_commands import SIDE_EFFECTING_COMMANDS
 
         self.assertIn("/init", SIDE_EFFECTING_COMMANDS)
 
         # 确认仓库当前状态（探测逻辑在别的测试里已跑过多次）。
-        self.assertFalse(mini_md.exists(), "探测命令时往仓库写了 MINI.md")
+        self.assertFalse(mini_md.exists(), "探测命令时往仓库写了 CORECODE.md")
         if gitignore_before is not None:
             self.assertEqual(
                 gitignore.read_text(encoding="utf-8"),
@@ -481,10 +460,10 @@ class CommandRegistryTests(unittest.TestCase):
 
     def test_no_extra_commands(self) -> None:
         extra = self._python_commands() - self.TS_COMMANDS
-        self.assertEqual(extra, set(), f"多出了原版没有的命令：{sorted(extra)}")
+        self.assertEqual(extra, set(), f"多出了意外的命令：{sorted(extra)}")
 
     def test_new_commands_are_listed_in_help(self) -> None:
-        from minicode.cli_commands import SLASH_COMMANDS
+        from corecode.cli_commands import SLASH_COMMANDS
 
         usages = [item.usage for item in SLASH_COMMANDS]
         self.assertTrue(any(u.startswith("/model") for u in usages))
@@ -497,16 +476,16 @@ class CommandRegistryTests(unittest.TestCase):
         """
         from types import SimpleNamespace
 
-        from minicode.cli_commands import SLASH_COMMANDS, try_handle_local_command
-        from minicode.local_tool_shortcuts import parse_local_tool_shortcut
+        from corecode.cli_commands import SLASH_COMMANDS, try_handle_local_command
+        from corecode.local_tool_shortcuts import parse_local_tool_shortcut
 
         # 由运行时（SessionRuntime.command）处理，不走本地命令表。
         runtime_handled = {"/goal", "/loop", "/exit"}
 
         # **会改仓库的命令不能在仓库上探测。**
         #
-        # `/init` 会真的创建 `.mini-code/`、往 `.gitignore` 追加条目、并写出
-        # `MINI.md`。我第一版把它连同其他命令一起在 `cwd=REPO` 上跑了一遍，
+        # `/init` 会真的创建 `.corecode/`、往 `.gitignore` 追加条目、并写出
+        # `CORECODE.md`。我第一版把它连同其他命令一起在 `cwd=REPO` 上跑了一遍，
         # 结果**真的往仓库里写了文件**。它已经由 `tests/test_repo_init.py`
         # 在临时目录里完整覆盖，这里只需确认它「有处理函数」。
         #
@@ -557,9 +536,9 @@ class CommandRegistryTests(unittest.TestCase):
             "/cmd": "/cmd pwd",
         }
 
-        probe_home = Path(tempfile.gettempdir()) / "minicode-probe-home"
+        probe_home = Path(tempfile.gettempdir()) / "corecode-probe-home"
         unhandled: list[str] = []
-        with patch.dict(os.environ, {"MINICODE_HOME": str(probe_home)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(probe_home)}):
             for item in SLASH_COMMANDS:
                 head = item.usage.split(" ")[0]
                 if head in runtime_handled:
@@ -573,7 +552,7 @@ class CommandRegistryTests(unittest.TestCase):
                     continue
                 if head in side_effecting:
                     # 只断言「handler 表里有它」，不真的调它——见上面的说明。
-                    from minicode.cli_commands import _handler_names
+                    from corecode.cli_commands import _handler_names
 
                     self.assertIn(head, _handler_names())
                     continue
@@ -594,7 +573,6 @@ class CommandRegistryTests(unittest.TestCase):
                 "/cmd [cwd::]<command> [args...]",
             )},
         )
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

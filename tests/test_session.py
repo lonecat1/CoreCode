@@ -1,10 +1,6 @@
 """会话持久化的行为测试。
 
-重点在**恢复正确性**：存档、恢复、剪裁回放、压缩边界切分、fork 之后
-能否还原出一致的消息序列。以及本实现相对原实现修掉的几处静默数据问题
-（docs/divergences.md 的 D11–D15）。
-
-测试用仓库内的临时目录作为 `MINI_CODE_HOME`，不污染真实用户数据。
+测试用仓库内的临时目录作为 `CORECODE_HOME`，不污染真实用户数据。
 """
 
 from __future__ import annotations
@@ -18,15 +14,15 @@ from pathlib import Path
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-# 家目录隔离由 tests/__init__.py 在任何 minicode 导入之前完成。
+# 家目录隔离由 tests/__init__.py 在任何 corecode 导入之前完成。
 # 这里只是取回已生效的路径，绝不自己设环境变量（那样在 config 已被导入后无效）。
 # 用**动态访问器**而不是模块级常量：后者已删除（见 config.py 的说明）——
 # 而且它本来就是这套隔离要防的东西。
-from minicode.config import minicode_home  # noqa: E402
+from corecode.config import corecode_home  # noqa: E402
 
-_TMP_HOME = str(minicode_home())
+_TMP_HOME = str(corecode_home())
 
-from minicode.session import (  # noqa: E402
+from corecode.session import (  # noqa: E402
     MAX_TITLE_LENGTH,
     append_compact_boundary,
     append_context_collapse_span,
@@ -51,7 +47,6 @@ unittest.TestCase.maxDiff = None
 
 CWD = "D:\\CoreCode\\demo"
 
-
 def user(content: str, ident: str | None = None, internal: str | None = None) -> dict:
     message: dict = {"role": "user", "content": content}
     if ident:
@@ -60,13 +55,11 @@ def user(content: str, ident: str | None = None, internal: str | None = None) ->
         message["internal"] = internal
     return message
 
-
 def assistant(content: str, ident: str | None = None) -> dict:
     message: dict = {"role": "assistant", "content": content}
     if ident:
         message["id"] = ident
     return message
-
 
 def tool_call(tool_use_id: str, tool_name: str = "read_file", ident: str | None = None) -> dict:
     return {
@@ -77,7 +70,6 @@ def tool_call(tool_use_id: str, tool_name: str = "read_file", ident: str | None 
         "id": ident or f"call-{tool_use_id}",
     }
 
-
 def tool_result(tool_use_id: str, content: str, is_error: bool = False, ident: str | None = None) -> dict:
     return {
         "role": "tool_result",
@@ -87,7 +79,6 @@ def tool_result(tool_use_id: str, content: str, is_error: bool = False, ident: s
         "isError": is_error,
         "id": ident or f"res-{tool_use_id}",
     }
-
 
 class SessionTestCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -104,16 +95,14 @@ class SessionTestCase(unittest.TestCase):
     def load(self, session_id: str | None = None):
         return load_session(CWD, session_id or self.session_id)
 
-
 # ---------------------------------------------------------------------------
 # 路径变换
 # ---------------------------------------------------------------------------
 
-
 class ProjectDirNameTests(unittest.TestCase):
     def test_windows_and_posix_paths(self) -> None:
         cases = {
-            "D:\\CoreCode\\MiniCode": "D-CoreCode-MiniCode",
+            "D:\\CoreCode\\CoreCode": "D-CoreCode-CoreCode",
             "C:\\Users\\bob\\proj": "C-Users-bob-proj",
             "D:/CoreCode": "D-CoreCode",
             "/home/bob/proj": "home-bob-proj",
@@ -136,10 +125,9 @@ class ProjectDirNameTests(unittest.TestCase):
     def test_unc_prefix_is_eaten(self) -> None:
         self.assertEqual(project_dir_name("\\\\server\\share\\proj"), "server-share-proj")
 
-
 class SessionPathTests(SessionTestCase):
     def test_path_traversal_is_rejected(self) -> None:
-        """原实现不净化 sessionId，会读写项目目录之外。这里加固为拒绝。"""
+        """这里加固为拒绝。"""
         with self.assertRaises(ValueError):
             session_file_path(CWD, "..\\..\\escape")
 
@@ -147,11 +135,9 @@ class SessionPathTests(SessionTestCase):
         path = session_file_path(CWD, "abc12345")
         self.assertTrue(str(path).endswith("abc12345.jsonl"))
 
-
 # ---------------------------------------------------------------------------
 # 保存与去重
 # ---------------------------------------------------------------------------
-
 
 class SaveSessionTests(SessionTestCase):
     def test_first_save_writes_all_non_system_messages(self) -> None:
@@ -170,7 +156,6 @@ class SaveSessionTests(SessionTestCase):
         self.assertTrue(all(e.get("type") != "system" for e in events))
 
     def test_leading_non_system_message_is_not_dropped(self) -> None:
-        """本实现对原实现的修正（D14）：原实现盲切下标 0，会吞掉首条消息。"""
         messages = [user("第一条必须保住", "first"), assistant("ok", "a1")]
         self.save(messages)
         loaded = self.load()
@@ -229,7 +214,6 @@ class SaveSessionTests(SessionTestCase):
         self.assertEqual(len(self.load() or []), 2)
 
     def test_missing_trailing_newline_is_repaired(self) -> None:
-        """原实现会把新行拼到旧行尾部，制造无法解析的一行。"""
         path = session_file_path(CWD, self.session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"type":"user","uuid":"x1","message":{"role":"user","content":"旧"}}', encoding="utf-8")
@@ -238,11 +222,9 @@ class SaveSessionTests(SessionTestCase):
         self.assertEqual(len(events), 2, "缺少结尾换行时新行不应被拼接")
         self.assertEqual(len(self.load() or []), 2)
 
-
 # ---------------------------------------------------------------------------
 # 压缩边界
 # ---------------------------------------------------------------------------
-
 
 class CompactBoundaryTests(SessionTestCase):
     def test_boundary_writes_three_parts(self) -> None:
@@ -267,7 +249,6 @@ class CompactBoundaryTests(SessionTestCase):
         self.assertEqual((loaded or [])[0]["content"], "摘要")
 
     def test_retained_messages_are_not_written_twice_with_same_uuid(self) -> None:
-        """本实现对原实现的修正（D11）：不再产生重复 uuid 行。"""
         self.save([user("a", "u1"), assistant("b", "a1")])
         append_compact_boundary(
             CWD, self.session_id, "摘要", "auto", 100, 10,
@@ -291,7 +272,6 @@ class CompactBoundaryTests(SessionTestCase):
         self.assertIn("[Context compacted:", bodies)
 
     def test_transcript_does_not_duplicate_retained_segment(self) -> None:
-        """原实现因重复 uuid + 不做边界切分，会让 retained 段重复显示。"""
         append_compact_boundary(
             CWD, self.session_id, "摘要", "auto", 100, 10,
             retained_messages=[assistant("只应出现一次", "a1")],
@@ -300,11 +280,9 @@ class CompactBoundaryTests(SessionTestCase):
         count = sum(1 for e in entries if e["body"] == "只应出现一次")
         self.assertEqual(count, 1)
 
-
 # ---------------------------------------------------------------------------
 # snip 回放
 # ---------------------------------------------------------------------------
-
 
 class SnipReplayTests(SessionTestCase):
     def _boundary(self, removed_ids: list[str], removed: int = 2) -> dict:
@@ -348,11 +326,9 @@ class SnipReplayTests(SessionTestCase):
         _, dropped = load_session_with_report(CWD, self.session_id)
         self.assertEqual(len(dropped), 1, "合成 id 无法匹配磁盘 uuid，边界必然丢失")
 
-
 # ---------------------------------------------------------------------------
 # 折叠跨度 / 列表 / 标题
 # ---------------------------------------------------------------------------
-
 
 class CollapsePersistenceTests(SessionTestCase):
     def test_committed_span_round_trips(self) -> None:
@@ -390,7 +366,6 @@ class CollapsePersistenceTests(SessionTestCase):
         self.assertTrue(state.enabled)
         self.assertEqual(state.consecutive_failures, 0)
 
-
 class TitleTests(SessionTestCase):
     def test_first_user_message_is_the_title(self) -> None:
         self.save([user("帮我重构这个模块", "u1"), assistant("好", "a1")])
@@ -424,16 +399,13 @@ class TitleTests(SessionTestCase):
         self.assertFalse(rename_session(CWD, "nope", "x"))
 
     def test_message_count_is_event_line_count(self) -> None:
-        """与原实现一致：messageCount 是 JSONL 行数，不是消息条数。"""
         self.save([user("a", "u1"), assistant("b", "a1")])
         rename_session(CWD, self.session_id, "t")
         self.assertEqual(list_sessions(CWD)[0].message_count, 3)
 
-
 # ---------------------------------------------------------------------------
 # fork / clear / cleanup
 # ---------------------------------------------------------------------------
-
 
 class ForkTests(SessionTestCase):
     def test_fork_copies_messages(self) -> None:
@@ -459,7 +431,6 @@ class ForkTests(SessionTestCase):
         self.assertIn("t_fork1_fork1", titles)
 
     def test_fork_preserves_snip_boundary(self) -> None:
-        """本实现对原实现的修正（D15）：原实现 fork 后 snip 边界必然丢失。"""
         self.save([user("被剪的", "u1"), assistant("被剪的2", "a1")])
         boundary = {
             "id": "snip-1-u1",
@@ -481,7 +452,6 @@ class ForkTests(SessionTestCase):
     def test_fork_of_missing_session_returns_none(self) -> None:
         self.assertIsNone(fork_session(CWD, "nope"))
 
-
 class ClearSessionTests(SessionTestCase):
     def test_clear_removes_the_file(self) -> None:
         self.save([user("a", "u1")])
@@ -489,7 +459,6 @@ class ClearSessionTests(SessionTestCase):
         self.assertIsNone(self.load())
 
     def test_on_cleared_callback_purges_memory(self) -> None:
-        """本实现对原实现的修正（D13）：删除必须同时清内存，否则会被复活。"""
         self.save([user("a", "u1")])
         state = {"messages": [user("a", "u1")], "cursor": 1}
 
@@ -504,7 +473,6 @@ class ClearSessionTests(SessionTestCase):
         self.assertIsNone(self.load(), "清空后不应残留会话文件")
 
     def test_resurrection_when_memory_is_not_purged(self) -> None:
-        """反证：不传回调时，旧内存会被下一次保存写回（原实现的行为）。"""
         messages = [user("a", "u1"), assistant("b", "a1")]
         self.save(messages)
         clear_session(CWD, self.session_id)
@@ -513,7 +481,6 @@ class ClearSessionTests(SessionTestCase):
 
     def test_clear_missing_session_returns_false(self) -> None:
         self.assertFalse(clear_session(CWD, "nope"))
-
 
 class CleanupTests(SessionTestCase):
     def test_expired_sessions_are_removed(self) -> None:
@@ -531,11 +498,9 @@ class CleanupTests(SessionTestCase):
         self.assertEqual(removed, 0)
         self.assertIsNotNone(self.load())
 
-
 # ---------------------------------------------------------------------------
 # transcript 渲染
 # ---------------------------------------------------------------------------
-
 
 class TranscriptTests(SessionTestCase):
     def test_tool_call_and_result_are_paired_in_place(self) -> None:
@@ -579,7 +544,6 @@ class TranscriptTests(SessionTestCase):
 
     def test_missing_session_returns_none(self) -> None:
         self.assertIsNone(load_transcript(CWD, "nope"))
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

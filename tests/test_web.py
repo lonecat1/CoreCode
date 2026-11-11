@@ -1,7 +1,5 @@
 """Web 能力的测试：重试、域名过滤、双后端解析、抓取。
 
-对应原版 `utils/web.ts`（506 行）。
-
 ## 这个模块此前没有任何测试
 
 `utils/web.py` 此前完全没被测过（`test_tools.py` 只覆盖 `list_files`）。
@@ -28,7 +26,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.utils.web import (  # noqa: E402
+from corecode.utils.web import (  # noqa: E402
     BACKOFF_BASE_MS,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_RESULTS,
@@ -79,7 +77,6 @@ SOGOU_SAMPLE = """
 </div>
 """
 
-
 class HtmlHelperTests(unittest.TestCase):
     def test_decode_html_common_entities(self) -> None:
         self.assertEqual(decode_html("a &amp; b &lt;c&gt; &quot;d&quot;"), 'a & b <c> "d"')
@@ -90,7 +87,6 @@ class HtmlHelperTests(unittest.TestCase):
     def test_decode_html_amp_is_first(self) -> None:
         """**双重解码**：`&amp;lt;` → `&lt;`（第一步）→ `<`（第二步）。
 
-        这是 replace 链的必然结果，原版也是这个行为（它的 `decodeHtml` 同样
         是一条 `.replace()` 链）。我原先以为「`&amp;` 先解就能保住 `&lt;`」，
         写错了期望——链会继续往下走。
 
@@ -135,14 +131,12 @@ class HtmlHelperTests(unittest.TestCase):
         self.assertNotIn(".a{}", text)
 
     def test_readable_text_keeps_paragraph_breaks(self) -> None:
-        """**D36**：本实现保留段落结构，原版把所有空白折成一行。"""
         text, _ = extract_readable_text("<p>第一段</p><p>第二段</p>")
         self.assertIn("\n", text)
 
     def test_readable_text_malformed_html_does_not_raise(self) -> None:
         text, _ = extract_readable_text("<p>unclosed <b>tags")
         self.assertIn("unclosed", text)
-
 
 class RetryDecisionTests(unittest.TestCase):
     def test_429_is_retryable(self) -> None:
@@ -180,7 +174,6 @@ class RetryDecisionTests(unittest.TestCase):
         outer = urllib.error.URLError(inner)
         self.assertTrue(is_retryable_network_error(outer))
 
-
 class ErrorMessageTests(unittest.TestCase):
     def test_timeout_mentions_the_duration(self) -> None:
         message = format_web_error_message("https://x", socket.timeout(), 12000)
@@ -195,20 +188,17 @@ class ErrorMessageTests(unittest.TestCase):
     def test_no_error_still_mentions_url(self) -> None:
         self.assertIn("https://x", format_web_error_message("https://x", None, 1000))
 
-
 class NodeErrorCodeTests(unittest.TestCase):
     """Python 的异常 → **Node 风格的错误码**。
 
     ## 为什么这层翻译必须存在
 
-    原版的文案是 `request failed (${code}) for ${url}`，`code` 来自
     `getErrorCode(error)`——Node 把 `'ECONNREFUSED'` 这类字符串放在
     `error.code` 上。Python 没有 `.code`：信息散在异常类型、`errno` 整数、
     以及 `URLError.reason` 里。
 
     不翻译的直接后果是用户看到
     `URLError: <urlopen error [Errno 11001] getaddrinfo failed> (https://…)`
-    ——把 Python 内部细节漏出来，且与原版对不上。
     """
 
     def test_dns_failures_map_to_enotfound_or_eai_again(self) -> None:
@@ -282,9 +272,7 @@ class NodeErrorCodeTests(unittest.TestCase):
         error.__cause__ = error
         self.assertIsNone(node_error_code(error))
 
-
 class FormatBranchesTests(unittest.TestCase):
-    """四条分支的**顺序**与原版对应（原版：码 → AbortError → message → 兜底）。"""
 
     def test_coded_error_shows_the_code(self) -> None:
         message = format_web_error_message(
@@ -299,7 +287,6 @@ class FormatBranchesTests(unittest.TestCase):
         self.assertEqual(message, "request failed (ENOTFOUND) for https://x.test/p")
 
     def test_timeout_wins_over_the_code_branch(self) -> None:
-        """超时优先——原版 `AbortError` 也没有码，所以走的是带时长那句。"""
         message = format_web_error_message(
             "https://x.test/p", urllib.error.URLError(TimeoutError("t")), 7000
         )
@@ -325,7 +312,6 @@ class FormatBranchesTests(unittest.TestCase):
                 message = format_web_error_message("https://x.test/p", error, 5000)
                 self.assertNotIn("urlopen", message)
                 self.assertNotIn("URLError", message)
-
 
 class RetryClassificationTests(unittest.TestCase):
     """重试判据必须是**错误码**，不是对错误文本做子串匹配。"""
@@ -363,8 +349,7 @@ class RetryClassificationTests(unittest.TestCase):
                 self.assertFalse(is_retryable_network_error(error))
 
     def test_retryable_codes_match_the_original_list(self) -> None:
-        """原版逐个列举的 8 个码，这里必须齐。"""
-        from minicode.utils.web import _RETRYABLE_ERROR_CODES
+        from corecode.utils.web import _RETRYABLE_ERROR_CODES
 
         self.assertEqual(
             _RETRYABLE_ERROR_CODES,
@@ -374,8 +359,6 @@ class RetryClassificationTests(unittest.TestCase):
                 "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT",
             }),
         )
-
-
 
 def _fake_response(status: int = 200, body: bytes = b"ok", content_type: str = "text/html"):
     response = MagicMock()
@@ -388,11 +371,10 @@ def _fake_response(status: int = 200, body: bytes = b"ok", content_type: str = "
     response.__exit__ = lambda self, *a: False
     return response
 
-
 class FetchRetryTests(unittest.TestCase):
     def _call(self, side_effect, **kwargs):
         with patch("urllib.request.urlopen", side_effect=side_effect) as opener:
-            with patch("minicode.utils.web._sleep_ms") as sleeper:
+            with patch("corecode.utils.web._sleep_ms") as sleeper:
                 result = fetch_with_retry("https://x.example/", **kwargs)
         return result, opener, sleeper
 
@@ -477,8 +459,7 @@ class FetchRetryTests(unittest.TestCase):
     def test_user_agent_is_sent(self) -> None:
         _, opener, _ = self._call([_fake_response()])
         request = opener.call_args.args[0]
-        self.assertIn("MiniCode", request.get_header("User-agent"))
-
+        self.assertIn("CoreCode", request.get_header("User-agent"))
 
 class DomainListTests(unittest.TestCase):
     def test_lowercases(self) -> None:
@@ -502,7 +483,6 @@ class DomainListTests(unittest.TestCase):
         self.assertEqual(normalize_domain_list(None), [])
         self.assertEqual(normalize_domain_list([]), [])
 
-
 class DomainMatchTests(unittest.TestCase):
     def test_exact_match(self) -> None:
         self.assertTrue(matches_domain("python.org", "python.org"))
@@ -524,7 +504,6 @@ class DomainMatchTests(unittest.TestCase):
 
     def test_deeper_subdomain_matches(self) -> None:
         self.assertTrue(matches_domain("a.b.python.org", "python.org"))
-
 
 class DomainFilterTests(unittest.TestCase):
     def test_no_filters_passes_everything(self) -> None:
@@ -551,7 +530,6 @@ class DomainFilterTests(unittest.TestCase):
         """
         self.assertFalse(passes_domain_filter("not a url", ["python.org"], []))
         self.assertFalse(passes_domain_filter("", [], []))
-
 
 class LinkNormalizeTests(unittest.TestCase):
     def test_ddg_unwraps_uddg(self) -> None:
@@ -593,7 +571,6 @@ class LinkNormalizeTests(unittest.TestCase):
     def test_sogou_empty(self) -> None:
         self.assertEqual(normalize_sogou_link(""), "")
 
-
 class DuckDuckGoParserTests(unittest.TestCase):
     def test_parses_two_results(self) -> None:
         results = parse_duckduckgo_lite(DDG_SAMPLE)
@@ -617,7 +594,6 @@ class DuckDuckGoParserTests(unittest.TestCase):
         results = parse_duckduckgo_lite(DDG_SAMPLE)
         self.assertNotIn("example", results[0].snippet.lower())
         self.assertIn("example", results[1].snippet.lower())
-
 
 class SogouParserTests(unittest.TestCase):
     def test_parses_two_results(self) -> None:
@@ -643,7 +619,6 @@ class SogouParserTests(unittest.TestCase):
     def test_heading_without_link_is_skipped(self) -> None:
         self.assertEqual(parse_sogou_search("<h3>no anchor</h3>"), [])
 
-
 class ParseDispatchTests(unittest.TestCase):
     def test_duckduckgo_provider(self) -> None:
         self.assertEqual(len(parse_search_results("duckduckgo-lite", DDG_SAMPLE)), 2)
@@ -651,19 +626,17 @@ class ParseDispatchTests(unittest.TestCase):
     def test_other_provider_uses_sogou_parser(self) -> None:
         self.assertEqual(len(parse_search_results("sogou", SOGOU_SAMPLE)), 2)
 
-
 class SearchProviderTests(unittest.TestCase):
     def test_provider_order(self) -> None:
         self.assertEqual(SEARCH_PROVIDERS, ("duckduckgo-lite", "sogou"))
 
     def test_default_result_count_is_five(self) -> None:
-        """原版默认 **5** 条，不是 8。取少而准比取多而杂有用。"""
+        """取少而准比取多而杂有用。"""
         self.assertEqual(DEFAULT_MAX_RESULTS, 5)
 
     def test_duckduckgo_uses_the_lite_endpoint(self) -> None:
         """**端点必须是 lite。**
 
-        原版用 `lite.duckduckgo.com/lite/`（页面结构是 `result-link`），
         而不是 `html.duckduckgo.com`（那是 `result__a`）。端点与解析器必须配对，
         否则会得到「永远没有结果」——而且看起来像「确实没搜到」。
         """
@@ -673,7 +646,7 @@ class SearchProviderTests(unittest.TestCase):
             captured.append(url)
             return HttpResponse(200, "OK", "text/html", url, b"")
 
-        with patch("minicode.utils.web.fetch_with_retry", side_effect=fake):
+        with patch("corecode.utils.web.fetch_with_retry", side_effect=fake):
             fetch_search_page("duckduckgo-lite", "hello world")
         self.assertIn("lite.duckduckgo.com", captured[0])
         self.assertIn("q=hello", captured[0])
@@ -685,7 +658,7 @@ class SearchProviderTests(unittest.TestCase):
             captured.append(url)
             return HttpResponse(200, "OK", "text/html", url, b"")
 
-        with patch("minicode.utils.web.fetch_with_retry", side_effect=fake):
+        with patch("corecode.utils.web.fetch_with_retry", side_effect=fake):
             fetch_search_page("sogou", "你好")
         self.assertIn("sogou.com", captured[0])
         self.assertIn("query=", captured[0])
@@ -693,7 +666,6 @@ class SearchProviderTests(unittest.TestCase):
     def test_unknown_provider_raises(self) -> None:
         with self.assertRaises(WebError):
             fetch_search_page("bing", "x")
-
 
 class SearchWebTests(unittest.TestCase):
     def _patch(self, responses: dict):
@@ -707,7 +679,7 @@ class SearchWebTests(unittest.TestCase):
                 raise WebError(f"no response for {provider}")
             return value
 
-        return patch("minicode.utils.web.fetch_search_page", side_effect=fake)
+        return patch("corecode.utils.web.fetch_search_page", side_effect=fake)
 
     def test_uses_first_provider_when_it_has_results(self) -> None:
         with self._patch({"duckduckgo-lite": HttpResponse(200, "OK", "text/html", "u", DDG_SAMPLE.encode())}):
@@ -753,14 +725,12 @@ class SearchWebTests(unittest.TestCase):
         self.assertIn("all search providers failed", str(caught.exception))
 
     def test_no_results_from_any_provider_is_reported_as_an_error(self) -> None:
-        """**与原版一致**：只要有后端「失败」（含「没有结果」）就抛。
+        """
 
         因此「两个后端都返回 200 但都没解析出结果」得到的是一个**错误**，
         而不是空结果。`ok: false` 与「空结果」对模型是不同信号——前者会让它
         换关键词或换思路。
 
-        这条断言刻意写成「与原版一致」而不是「这样更好」：它确实是可争议的
-        设计，但这是原版的行为。
         """
         with self._patch(
             {
@@ -790,7 +760,6 @@ class SearchWebTests(unittest.TestCase):
         with self._patch({"duckduckgo-lite": HttpResponse(200, "OK", "text/html", "u", DDG_SAMPLE.encode())}):
             results, _ = search_web("python", max_results=1)
         self.assertEqual(len(results), 1)
-
 
 class RedirectTests(unittest.TestCase):
     def test_meta_refresh(self) -> None:
@@ -822,16 +791,15 @@ class RedirectTests(unittest.TestCase):
     def test_no_redirect(self) -> None:
         self.assertIsNone(extract_html_redirect_url("<html>nothing</html>", "https://a.com"))
 
-
 class FetchWebPageTests(unittest.TestCase):
     def _response(self, body: bytes, content_type: str = "text/html", status: int = 200, url: str = "https://final/"):
         return HttpResponse(status, "OK", content_type, url, body)
 
     def test_extracts_html(self) -> None:
-        from minicode.utils.web import fetch_web_page
+        from corecode.utils.web import fetch_web_page
 
         body = b"<html><title>T</title><script>x</script><p>Body text</p></html>"
-        with patch("minicode.utils.web.fetch_with_retry", return_value=self._response(body)):
+        with patch("corecode.utils.web.fetch_with_retry", return_value=self._response(body)):
             page = fetch_web_page("https://a.com")
         self.assertEqual(page.title, "T")
         self.assertIn("Body text", page.content)
@@ -839,28 +807,28 @@ class FetchWebPageTests(unittest.TestCase):
 
     def test_follows_html_redirect(self) -> None:
         """**跟进跳转。** 不跟进的话抓回来的是空壳。"""
-        from minicode.utils.web import fetch_web_page
+        from corecode.utils.web import fetch_web_page
 
         first = self._response(b'<meta http-equiv="refresh" content="0; url=/next">')
         second = self._response(b"<html><p>Real content</p></html>", url="https://a.com/next")
-        with patch("minicode.utils.web.fetch_with_retry", side_effect=[first, second]) as fetcher:
+        with patch("corecode.utils.web.fetch_with_retry", side_effect=[first, second]) as fetcher:
             page = fetch_web_page("https://a.com")
         self.assertEqual(fetcher.call_count, 2)
         self.assertIn("Real content", page.content)
 
     def test_does_not_refetch_when_redirect_equals_final_url(self) -> None:
-        from minicode.utils.web import fetch_web_page
+        from corecode.utils.web import fetch_web_page
 
         body = b'<html><p>x</p><meta http-equiv="refresh" content="0; url=https://final/"></html>'
-        with patch("minicode.utils.web.fetch_with_retry", return_value=self._response(body)) as fetcher:
+        with patch("corecode.utils.web.fetch_with_retry", return_value=self._response(body)) as fetcher:
             fetch_web_page("https://a.com")
         self.assertEqual(fetcher.call_count, 1)
 
     def test_plain_text_is_not_extracted(self) -> None:
-        from minicode.utils.web import fetch_web_page
+        from corecode.utils.web import fetch_web_page
 
         with patch(
-            "minicode.utils.web.fetch_with_retry",
+            "corecode.utils.web.fetch_with_retry",
             return_value=self._response(b'{"a": 1}', content_type="application/json"),
         ):
             page = fetch_web_page("https://a.com")
@@ -868,32 +836,30 @@ class FetchWebPageTests(unittest.TestCase):
         self.assertIsNone(page.title)
 
     def test_content_is_truncated(self) -> None:
-        from minicode.utils.web import fetch_web_page
+        from corecode.utils.web import fetch_web_page
 
         body = ("<p>" + "x" * 5000 + "</p>").encode()
-        with patch("minicode.utils.web.fetch_with_retry", return_value=self._response(body)):
+        with patch("corecode.utils.web.fetch_with_retry", return_value=self._response(body)):
             page = fetch_web_page("https://a.com", max_chars=100)
         self.assertEqual(len(page.content), 100)
 
     def test_status_is_reported(self) -> None:
-        from minicode.utils.web import fetch_web_page
+        from corecode.utils.web import fetch_web_page
 
         with patch(
-            "minicode.utils.web.fetch_with_retry",
+            "corecode.utils.web.fetch_with_retry",
             return_value=self._response(b"gone", status=404),
         ):
             page = fetch_web_page("https://a.com")
         self.assertEqual(page.status, 404)
 
-
 class WebSearchToolTests(unittest.TestCase):
     """工具层的 schema、校验与输出格式。
 
-    对应原版 `tools/web-search.ts`。
     """
 
     def setUp(self) -> None:
-        from minicode.tools.web import web_search_tool
+        from corecode.tools.web import web_search_tool
 
         self.tool = web_search_tool
 
@@ -909,7 +875,7 @@ class WebSearchToolTests(unittest.TestCase):
     def test_default_max_results_is_five(self) -> None:
         parsed = self.tool.validator({"query": "x"})
         self.assertNotIn("max_results", parsed)
-        from minicode.utils.web import DEFAULT_MAX_RESULTS as value
+        from corecode.utils.web import DEFAULT_MAX_RESULTS as value
 
         self.assertEqual(value, 5)
 
@@ -972,11 +938,11 @@ class WebSearchToolTests(unittest.TestCase):
             self.tool.validator({"query": "x", "allowed_domains": [123]})
 
     def test_output_format(self) -> None:
-        from minicode.tooling import ToolContext
-        from minicode.utils.web import SearchResult
+        from corecode.tooling import ToolContext
+        from corecode.utils.web import SearchResult
 
         with patch(
-            "minicode.tools.web.search_web",
+            "corecode.tools.web.search_web",
             return_value=(
                 [
                     SearchResult("Title A", "https://a.com", "Snippet A"),
@@ -1001,23 +967,23 @@ class WebSearchToolTests(unittest.TestCase):
         self.assertEqual(lines[7], "    URL: https://b.com")
 
     def test_empty_results_message(self) -> None:
-        from minicode.tooling import ToolContext
+        from corecode.tooling import ToolContext
 
-        with patch("minicode.tools.web.search_web", return_value=([], "fallback-empty")):
+        with patch("corecode.tools.web.search_web", return_value=([], "fallback-empty")):
             result = self.tool.run({"query": "x"}, ToolContext(cwd="."))
         self.assertTrue(result.ok)
         self.assertEqual(result.output, "No results found.")
 
     def test_failure_wraps_the_message(self) -> None:
-        from minicode.tooling import ToolContext
+        from corecode.tooling import ToolContext
 
-        with patch("minicode.tools.web.search_web", side_effect=WebError("boom")):
+        with patch("corecode.tools.web.search_web", side_effect=WebError("boom")):
             result = self.tool.run({"query": "x"}, ToolContext(cwd="."))
         self.assertFalse(result.ok)
         self.assertEqual(result.output, "Web search failed: boom")
 
     def test_domain_filters_are_passed_through(self) -> None:
-        from minicode.tooling import ToolContext
+        from corecode.tooling import ToolContext
 
         captured: dict = {}
 
@@ -1025,7 +991,7 @@ class WebSearchToolTests(unittest.TestCase):
             captured.update({"query": query, "limit": limit, **kwargs})
             return [], "fallback-empty"
 
-        with patch("minicode.tools.web.search_web", side_effect=fake):
+        with patch("corecode.tools.web.search_web", side_effect=fake):
             self.tool.run(
                 {"query": "x", "allowed_domains": ["a.com"], "max_results": 3},
                 ToolContext(cwd="."),
@@ -1034,12 +1000,10 @@ class WebSearchToolTests(unittest.TestCase):
         self.assertEqual(captured["allowed_domains"], ["a.com"])
         self.assertIsNone(captured["blocked_domains"])
 
-
 class WebFetchToolTests(unittest.TestCase):
-    """对应原版 `tools/web-fetch.ts`。"""
 
     def setUp(self) -> None:
-        from minicode.tools.web import web_fetch_tool
+        from corecode.tools.web import web_fetch_tool
 
         self.tool = web_fetch_tool
 
@@ -1051,7 +1015,7 @@ class WebFetchToolTests(unittest.TestCase):
             self.tool.validator({"url": "ftp://x"})
 
     def test_rejects_small_max_chars(self) -> None:
-        """原版 `z.number().int().min(500)`。给太少等于没抓。"""
+        """给太少等于没抓。"""
         with self.assertRaises(ValueError):
             self.tool.validator({"url": "https://x", "max_chars": 100})
 
@@ -1062,8 +1026,8 @@ class WebFetchToolTests(unittest.TestCase):
         )
 
     def test_output_format(self) -> None:
-        from minicode.tooling import ToolContext
-        from minicode.utils.web import WebPage
+        from corecode.tooling import ToolContext
+        from corecode.utils.web import WebPage
 
         page = WebPage(
             url="https://a.com",
@@ -1074,7 +1038,7 @@ class WebFetchToolTests(unittest.TestCase):
             content="Body",
             title="T",
         )
-        with patch("minicode.tools.web.fetch_web_page", return_value=page):
+        with patch("corecode.tools.web.fetch_web_page", return_value=page):
             result = self.tool.run({"url": "https://a.com"}, ToolContext(cwd="."))
         self.assertTrue(result.ok)
         lines = result.output.splitlines()
@@ -1086,28 +1050,28 @@ class WebFetchToolTests(unittest.TestCase):
         self.assertEqual(lines[5], "Body")
 
     def test_title_line_is_omitted_when_absent(self) -> None:
-        from minicode.tooling import ToolContext
-        from minicode.utils.web import WebPage
+        from corecode.tooling import ToolContext
+        from corecode.utils.web import WebPage
 
         page = WebPage("u", "u", 200, "OK", "text/plain", "Body", None)
-        with patch("minicode.tools.web.fetch_web_page", return_value=page):
+        with patch("corecode.tools.web.fetch_web_page", return_value=page):
             result = self.tool.run({"url": "https://a.com"}, ToolContext(cwd="."))
         self.assertNotIn("TITLE:", result.output)
 
     def test_http_error_status_is_a_failure(self) -> None:
-        from minicode.tooling import ToolContext
-        from minicode.utils.web import WebPage
+        from corecode.tooling import ToolContext
+        from corecode.utils.web import WebPage
 
         page = WebPage("u", "u", 404, "Not Found", "text/html", "", None)
-        with patch("minicode.tools.web.fetch_web_page", return_value=page):
+        with patch("corecode.tools.web.fetch_web_page", return_value=page):
             result = self.tool.run({"url": "https://a.com/x"}, ToolContext(cwd="."))
         self.assertFalse(result.ok)
         self.assertIn("HTTP 404", result.output)
 
     def test_network_error_is_a_failure(self) -> None:
-        from minicode.tooling import ToolContext
+        from corecode.tooling import ToolContext
 
-        with patch("minicode.tools.web.fetch_web_page", side_effect=WebError("timed out")):
+        with patch("corecode.tools.web.fetch_web_page", side_effect=WebError("timed out")):
             result = self.tool.run({"url": "https://a.com"}, ToolContext(cwd="."))
         self.assertFalse(result.ok)
         self.assertEqual(result.output, "Web fetch failed: timed out")
@@ -1119,7 +1083,6 @@ class WebFetchToolTests(unittest.TestCase):
             "Fetch a web page and extract its readable text content. "
             "Use this after web_search when you need the full content of a specific page.",
         )
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -39,10 +39,10 @@ mock 模式、CI 与无 API 环境都能跑通。
 
 ## 持久化
 
-根目录由 `MINICODE_HOME` 决定：
+根目录由 `CORECODE_HOME` 决定：
 
 ```
-<MINICODE_HOME>/evolved-memory/
+<CORECODE_HOME>/evolved-memory/
   global/
     assets.json
     index.json
@@ -57,10 +57,10 @@ mock 模式、CI 与无 API 环境都能跑通。
 自动生长的 Skill 写到项目内：
 
 ```
-<cwd>/.mini-code/skills/evolved-<稳定摘要>/SKILL.md
+<cwd>/.corecode/skills/evolved-<稳定摘要>/SKILL.md
 ```
 
-文件内带 `managed-by: minicode-self-evolution` 标记；没有标记的同名文件不会被
+文件内带 `managed-by: corecode-self-evolution` 标记；没有标记的同名文件不会被
 覆盖。
 
 ## 反思与提炼规则

@@ -1,6 +1,4 @@
-"""管理子命令（`minicode mcp ...` / `minicode skills ...`）的测试。
-
-对应原版 `manage-cli.ts`（290 行）。
+"""管理子命令（`corecode mcp ...` / `corecode skills ...`）的测试。
 
 ## 为什么这些测试重要
 
@@ -10,11 +8,11 @@
 三类要钉住的性质：
 
 **① 作用域不会串。** `--project` 写 `<cwd>/.mcp.json`，默认写
-`<MINICODE_HOME>/mcp.json`。写错位置意味着项目配置进了用户目录（或反过来），
+`<CORECODE_HOME>/mcp.json`。写错位置意味着项目配置进了用户目录（或反过来），
 两者都会被静默地当成「配置没生效」。
 
 **② `--` 之后不是本命令的参数。** `mcp add fs -- npx -y pkg` 里的 `-y` 属于
-要启动的命令，不属于 `minicode`。解析器必须在这里切换语义。
+要启动的命令，不属于 `corecode`。解析器必须在这里切换语义。
 
 **③ 失败要明确。** 同时给 `--url` 和本地命令、给了 `--protocol streamable-http`
 却没给 `--url`——这些组合一定起不来，提前挡住比让它连不上再排查好。
@@ -35,12 +33,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.config import (  # noqa: E402
+from corecode.config import (  # noqa: E402
     load_scoped_mcp_servers,
     project_mcp_path,
     read_mcp_tokens_file,
 )
-from minicode.manage_cli import (  # noqa: E402
+from corecode.manage_cli import (  # noqa: E402
     USAGE,
     ManageError,
     handle_mcp_command,
@@ -53,12 +51,11 @@ from minicode.manage_cli import (  # noqa: E402
     take_repeat_option,
 )
 
-
 class ManageTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.home = Path(tempfile.mkdtemp(prefix="minicode-manage-home-"))
-        self.cwd = Path(tempfile.mkdtemp(prefix="minicode-manage-cwd-"))
-        self._env = patch.dict(os.environ, {"MINICODE_HOME": str(self.home)})
+        self.home = Path(tempfile.mkdtemp(prefix="corecode-manage-home-"))
+        self.cwd = Path(tempfile.mkdtemp(prefix="corecode-manage-cwd-"))
+        self._env = patch.dict(os.environ, {"CORECODE_HOME": str(self.home)})
         self._env.start()
 
     def tearDown(self) -> None:
@@ -79,7 +76,6 @@ class ManageTestCase(unittest.TestCase):
     def project_mcp_file(self) -> Path:
         return project_mcp_path(str(self.cwd))
 
-
 class ScopeParsingTests(unittest.TestCase):
     def test_default_scope_is_user(self) -> None:
         scope, rest = parse_scope(["list"])
@@ -99,7 +95,6 @@ class ScopeParsingTests(unittest.TestCase):
 
     def test_no_args(self) -> None:
         self.assertEqual(parse_scope([]), ("user", []))
-
 
 class OptionParsingTests(unittest.TestCase):
     def test_take_option_removes_it(self) -> None:
@@ -133,7 +128,6 @@ class OptionParsingTests(unittest.TestCase):
         with self.assertRaises(ManageError):
             take_repeat_option(["--env"], "--env")
 
-
 class EnvPairTests(unittest.TestCase):
     def test_parses_pairs(self) -> None:
         self.assertEqual(parse_env_pairs(["A=1", "B=2"]), {"A": 1 and "1", "B": "2"})
@@ -161,18 +155,17 @@ class EnvPairTests(unittest.TestCase):
     def test_empty_list(self) -> None:
         self.assertEqual(parse_env_pairs([]), {})
 
-
 class UsageTests(unittest.TestCase):
     def test_usage_lists_all_subcommands(self) -> None:
         for fragment in (
-            "minicode mcp list",
-            "minicode mcp add",
-            "minicode mcp login",
-            "minicode mcp logout",
-            "minicode mcp remove",
-            "minicode skills list",
-            "minicode skills add",
-            "minicode skills remove",
+            "corecode mcp list",
+            "corecode mcp add",
+            "corecode mcp login",
+            "corecode mcp logout",
+            "corecode mcp remove",
+            "corecode skills list",
+            "corecode skills add",
+            "corecode skills remove",
         ):
             self.assertIn(fragment, USAGE)
 
@@ -180,8 +173,7 @@ class UsageTests(unittest.TestCase):
         capture = io.StringIO()
         with redirect_stdout(capture):
             print_usage()
-        self.assertIn("minicode mcp list", capture.getvalue())
-
+        self.assertIn("corecode mcp list", capture.getvalue())
 
 class McpListTests(ManageTestCase):
     def test_empty_names_the_config_path(self) -> None:
@@ -234,7 +226,7 @@ class McpListTests(ManageTestCase):
         self.assertIn("p: cmd", output)
 
     def test_empty_list_names_the_project_path(self) -> None:
-        """**只在空列表时**才报配置路径（原版如此）。
+        """
 
         有内容时逐条列出条目即可——路径是固定的，每条都印一遍是噪音。
         空列表时路径才是关键信息：用户要知道该去哪个文件里加。
@@ -255,7 +247,6 @@ class McpListTests(ManageTestCase):
         self.assertNotIn("proj-only", user_out)
         self.assertIn("proj-only", proj_out)
         self.assertNotIn("user-only", proj_out)
-
 
 class McpAddTests(ManageTestCase):
     def test_add_url_server_writes_to_user_path(self) -> None:
@@ -280,7 +271,6 @@ class McpAddTests(ManageTestCase):
         """可选字段为空时省略：配置文件是给人看的，一堆空字段掩盖真正有意义的那几个。
 
         **例外是 `command`**：远端型服务器也会写出 `"command": ""`。这看着冗余，
-        但与**原版一致**且无害——transport 的选择是「有 `url` 就走 HTTP」，
         空 command 永远走不到 stdio 分支（那一分支另外会抛明确的错误）。
         """
         self.run_cmd(handle_mcp_command, "add", "fs", "--", "cmd")
@@ -292,7 +282,6 @@ class McpAddTests(ManageTestCase):
         self.assertNotIn("protocol", entry)
 
     def test_url_server_writes_empty_command(self) -> None:
-        """与原版一致：远端型服务器留一个空 `command` 字段。"""
         self.run_cmd(handle_mcp_command, "add", "r", "--url", "https://x")
         entry = load_scoped_mcp_servers("user", str(self.cwd))["r"]
         self.assertEqual(entry["command"], "")
@@ -368,7 +357,7 @@ class McpAddTests(ManageTestCase):
     def test_double_dash_stops_option_parsing(self) -> None:
         """`--` 之后是**要启动的命令**，不是本命令的选项。
 
-        没有这个切换，`-y` 之类的参数会被当成 `minicode` 自己的选项——
+        没有这个切换，`-y` 之类的参数会被当成 `corecode` 自己的选项——
         于是 `--url` 出现在命令参数里也会被误认为本命令的选项。
         """
         self.run_cmd(handle_mcp_command, "add", "s", "--", "cmd", "--url", "not-mine")
@@ -381,7 +370,6 @@ class McpAddTests(ManageTestCase):
         raw = self.user_mcp_file().read_text(encoding="utf-8")
         self.assertTrue(raw.endswith("\n"))
         self.assertIn("\n  ", raw)
-
 
 class McpRemoveTests(ManageTestCase):
     def test_removes_existing(self) -> None:
@@ -405,7 +393,6 @@ class McpRemoveTests(ManageTestCase):
         self.run_cmd(handle_mcp_command, "remove", "s", "--project")
         # 项目级本来就没有它，用户级的必须还在。
         self.assertIn("s", load_scoped_mcp_servers("user", str(self.cwd)))
-
 
 class McpTokenTests(ManageTestCase):
     def tokens_file(self) -> Path:
@@ -454,18 +441,16 @@ class McpTokenTests(ManageTestCase):
         self.run_cmd(handle_mcp_command, "login", "a", "--token", "new")
         self.assertEqual(read_mcp_tokens_file()["a"], "new")
 
-
 class McpDispatchTests(ManageTestCase):
     def test_no_subcommand_prints_usage(self) -> None:
         handled, output = self.run_cmd(handle_mcp_command)
         self.assertTrue(handled)
-        self.assertIn("minicode mcp list", output)
+        self.assertIn("corecode mcp list", output)
 
     def test_unknown_subcommand_prints_usage(self) -> None:
         handled, output = self.run_cmd(handle_mcp_command, "frobnicate")
         self.assertTrue(handled)
-        self.assertIn("minicode mcp list", output)
-
+        self.assertIn("corecode mcp list", output)
 
 class SkillsCommandTests(ManageTestCase):
     def make_skill(self, name: str = "demo") -> Path:
@@ -519,8 +504,7 @@ class SkillsCommandTests(ManageTestCase):
 
     def test_no_subcommand_prints_usage(self) -> None:
         _, output = self.run_cmd(handle_skills_command)
-        self.assertIn("minicode skills list", output)
-
+        self.assertIn("corecode skills list", output)
 
 class EntryPointTests(ManageTestCase):
     def test_non_management_argv_returns_false(self) -> None:
@@ -541,7 +525,7 @@ class EntryPointTests(ManageTestCase):
                 with redirect_stdout(capture):
                     handled = maybe_handle_management_command(str(self.cwd), [flag])
                 self.assertTrue(handled)
-                self.assertIn("minicode mcp list", capture.getvalue())
+                self.assertIn("corecode mcp list", capture.getvalue())
 
     def test_mcp_returns_true(self) -> None:
         capture = io.StringIO()
@@ -572,14 +556,13 @@ class EntryPointTests(ManageTestCase):
         capture = io.StringIO()
         with redirect_stdout(capture):
             maybe_handle_management_command(str(self.cwd), ["mcp"])
-        self.assertIn("minicode mcp list", capture.getvalue())
-
+        self.assertIn("corecode mcp list", capture.getvalue())
 
 class CliIntegrationTests(ManageTestCase):
     """`cli.main` 必须在 argparse **之前**拦截管理子命令。"""
 
     def test_main_handles_mcp_list(self) -> None:
-        from minicode.cli import main
+        from corecode.cli import main
 
         capture = io.StringIO()
         with redirect_stdout(capture):
@@ -592,7 +575,7 @@ class CliIntegrationTests(ManageTestCase):
 
         如果拦截发生在 argparse 之后，这里会直接报错退出。
         """
-        from minicode.cli import main
+        from corecode.cli import main
 
         capture = io.StringIO()
         with redirect_stdout(capture):
@@ -603,7 +586,7 @@ class CliIntegrationTests(ManageTestCase):
         self.assertEqual(servers["fs"]["args"], ["-y", "pkg"])
 
     def test_main_uses_cwd_option_for_project_scope(self) -> None:
-        from minicode.cli import _cwd_from_argv, main
+        from corecode.cli import _cwd_from_argv, main
 
         capture = io.StringIO()
         with redirect_stdout(capture):
@@ -612,7 +595,7 @@ class CliIntegrationTests(ManageTestCase):
         self.assertTrue(self.project_mcp_file().exists())
 
     def test_cwd_from_argv(self) -> None:
-        from minicode.cli import _cwd_from_argv
+        from corecode.cli import _cwd_from_argv
 
         self.assertEqual(_cwd_from_argv(["--cwd", "/x"]), "/x")
         self.assertEqual(_cwd_from_argv(["--cwd=/y"]), "/y")
@@ -620,12 +603,11 @@ class CliIntegrationTests(ManageTestCase):
 
     def test_normal_argv_still_reaches_argparse(self) -> None:
         """非管理命令必须**照常**走原来的路径。"""
-        from minicode.cli import build_parser
+        from corecode.cli import build_parser
 
         args = build_parser().parse_args(["--mock", "-p", "/help"])
         self.assertEqual(args.prompt, "/help")
         self.assertTrue(args.mock)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

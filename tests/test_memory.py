@@ -6,13 +6,11 @@
 看到哪些规则。没有测试意味着这类缺陷不会被发现，而它恰好就藏了两处：
 
 **① 引用行判定用了字面空格而不是 `\\s`。**
-原版是 `/^@([^\\s]+)\\s*$/`。早先这里是 `" " in stripped`，于是
 `@foo\\tbar`（制表符分隔）在 Python 里会被当成引用、在 TS 里只是普通文本。
 症状很隐蔽：产出一行 `include skipped: not found`，看起来像「文件不存在」，
 而实际是「这行根本不是引用」。
 
 **② `visited` 从不移除。**
-原版在递归返回后 `visited.delete(...)`，因此同一个文件可以从**不同分支**
 各被包含一次；只有真正回到自己祖先时才判环。早先这里从不移除，于是第二次
 包含同一个文件会报 `cycle detected`——**原因说错了**（那不是环），而且
 **内容静默缺失**。
@@ -29,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.memory import (  # noqa: E402
+from corecode.memory import (  # noqa: E402
     CANDIDATES_PER_DIR,
     MAX_INCLUDE_DEPTH,
     MAX_PER_FILE_CHARS,
@@ -37,10 +35,9 @@ from minicode.memory import (  # noqa: E402
     _resolve_includes,
 )
 
-
 class MemoryTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="minicode-memory-"))
+        self.root = Path(tempfile.mkdtemp(prefix="corecode-memory-"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root, ignore_errors=True)
@@ -51,16 +48,15 @@ class MemoryTestCase(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         return path
 
-
 class ConstantsTests(unittest.TestCase):
     def test_candidate_order_matches_the_original(self) -> None:
         """候选清单的顺序就是优先级——先命中者胜，不叠加。"""
         self.assertEqual(
             CANDIDATES_PER_DIR,
             (
-                "MINI.md",
-                "MINI.local.md",
-                os.path.join(".mini-code", "MINI.md"),
+                "CORECODE.md",
+                "CORECODE.local.md",
+                os.path.join(".corecode", "CORECODE.md"),
                 "CLAUDE.md",
                 "CLAUDE.local.md",
                 os.path.join(".claude", "CLAUDE.md"),
@@ -68,22 +64,20 @@ class ConstantsTests(unittest.TestCase):
         )
 
     def test_char_limits_match_the_original(self) -> None:
-        """原版 `MAX_PER_FILE_CHARS = 8000` / `MAX_TOTAL_CHARS = 20000`。"""
         self.assertEqual(MAX_PER_FILE_CHARS, 8_000)
         self.assertEqual(MAX_TOTAL_CHARS, 20_000)
 
     def test_local_variants_come_right_after_their_base_name(self) -> None:
-        """`MINI.local.md` 紧跟 `MINI.md`、`CLAUDE.local.md` 紧跟 `CLAUDE.md`。
+        """`CORECODE.local.md` 紧跟 `CORECODE.md`、`CLAUDE.local.md` 紧跟 `CLAUDE.md`。
 
         顺序错了会改变「谁覆盖谁」——local 变体存在的意义就是覆盖基础文件。
         """
-        for base, local in (("MINI.md", "MINI.local.md"), ("CLAUDE.md", "CLAUDE.local.md")):
+        for base, local in (("CORECODE.md", "CORECODE.local.md"), ("CLAUDE.md", "CLAUDE.local.md")):
             with self.subTest(base=base):
                 self.assertEqual(
                     CANDIDATES_PER_DIR.index(local),
                     CANDIDATES_PER_DIR.index(base) + 1,
                 )
-
 
 class IncludeParsingTests(MemoryTestCase):
     """`@path` 引用行的判定。"""
@@ -100,7 +94,6 @@ class IncludeParsingTests(MemoryTestCase):
         self.assertIn("<!-- end include target.md -->", result)
 
     def test_line_with_trailing_space_is_still_an_include(self) -> None:
-        """原版先 `trim()` 再匹配，因此行尾空白不影响判定。"""
         self.write("target.md", "TARGET CONTENT")
         result = self._resolve("@target.md   ")
         self.assertIn("TARGET CONTENT", result)
@@ -111,7 +104,7 @@ class IncludeParsingTests(MemoryTestCase):
         self.assertIn("TARGET CONTENT", result)
 
     def test_tab_separated_line_is_not_an_include(self) -> None:
-        """**原版的 `\\s` 涵盖制表符。**
+        """**
 
         只判断字面空格时，`@foo\\tbar` 会被误当作引用，产出
         `include skipped: not found`——看起来像「文件不存在」，
@@ -147,7 +140,6 @@ class IncludeParsingTests(MemoryTestCase):
         self.assertLess(result.index("FIRST"), result.index("MIDDLE"))
         self.assertLess(result.index("MIDDLE"), result.index("LAST"))
 
-
 class IncludeSafetyTests(MemoryTestCase):
     def _resolve(self, content: str) -> str:
         origin = self.write("origin.md", content)
@@ -175,7 +167,6 @@ class IncludeSafetyTests(MemoryTestCase):
         result = self._resolve("@sub/target.md")
         self.assertIn("SUB CONTENT", result)
 
-
 class IncludeCycleTests(MemoryTestCase):
     """环判定必须是「回到祖先」而不是「见过一次」。"""
 
@@ -194,7 +185,6 @@ class IncludeCycleTests(MemoryTestCase):
     def test_same_file_from_two_branches_is_not_a_cycle(self) -> None:
         """**这条钉住一处真实差异。**
 
-        原版在递归返回后从 `visited` 移除，因此同一个文件可以从**不同分支**
         各被包含一次。早先本实现从不移除，于是第二次会报 `cycle detected`
         ——原因说错了（那不是环），而且**内容静默缺失**。
         """
@@ -216,10 +206,8 @@ class IncludeCycleTests(MemoryTestCase):
         result = _resolve_includes("@mid1.md\n@mid2.md", origin, {origin.resolve()})
         self.assertEqual(result.count("LEAF"), 2, result)
 
-
 class IncludeDepthTests(MemoryTestCase):
     def test_deep_chain_is_capped(self) -> None:
-        """深度上限是本实现的加固（原版没有）。"""
         # 造一条比上限更长的链：f0 -> f1 -> ... -> fN
         depth = MAX_INCLUDE_DEPTH + 5
         for index in range(depth):
@@ -245,7 +233,6 @@ class IncludeDepthTests(MemoryTestCase):
         origin = self.write("origin.md", "@f0.md")
         result = _resolve_includes("@f0.md", origin, {origin.resolve()})
         self.assertIn("<!-- include skipped: too deep", result)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

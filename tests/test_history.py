@@ -1,10 +1,7 @@
 """输入历史（`history.ts`）的测试。
 
-对应原版 `MiniCode/src/history.ts`（71 行）。
-
 ## 三条值得钉住的性质
 
-**① 只追加不重复。** 原版先读回已有条目、过滤掉出现过的，没有新条目就
 **直接返回不碰文件**。少了这个判断，每次退出都会把整份历史再写一遍，
 文件成倍增长——而且增长是静默的。
 
@@ -26,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.history import (  # noqa: E402
+from corecode.history import (  # noqa: E402
     MAX_ENTRIES,
     HistoryEntry,
     append_history,
@@ -36,10 +33,9 @@ from minicode.history import (  # noqa: E402
     save_history_entries,
 )
 
-
 class HistoryTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="minicode-history-"))
+        self.root = Path(tempfile.mkdtemp(prefix="corecode-history-"))
         self.path = self.root / "history.jsonl"
 
     def tearDown(self) -> None:
@@ -53,7 +49,6 @@ class HistoryTestCase(unittest.TestCase):
             for line in self.path.read_text(encoding="utf-8").strip().split("\n")
             if line
         ]
-
 
 class LoadTests(HistoryTestCase):
     def test_missing_file_is_empty(self) -> None:
@@ -123,7 +118,6 @@ class LoadTests(HistoryTestCase):
         append_history("帮我看看这个项目", "/proj", "s1", self.path)
         self.assertEqual(load_history(self.path), ["帮我看看这个项目"])
 
-
 class SaveTests(HistoryTestCase):
     def test_appends_new_entries(self) -> None:
         count = save_history_entries(["a", "b"], "/proj", "s1", self.path)
@@ -140,7 +134,6 @@ class SaveTests(HistoryTestCase):
     def test_no_new_entries_does_not_touch_the_file(self) -> None:
         """**没有新条目时必须完全不碰文件。**
 
-        原版 `if (newEntries.length === 0) return`。少了它，每次退出都会把
         整份历史再写一遍，文件成倍增长——而且增长是静默的。
         """
         save_history_entries(["a"], "/proj", "s1", self.path)
@@ -181,9 +174,8 @@ class SaveTests(HistoryTestCase):
             json.loads(line)  # 不抛即通过
 
     def test_stored_keys_match_the_original(self) -> None:
-        """字段名与原版一致（`display` / `timestamp` / `project` / `sessionId`）。
+        """
 
-        用驼峰 `sessionId` 是刻意的：它与原版的 JSON 结构逐字段对应，
         便于用同一个文件在两种实现之间切换。
         """
         save_history_entries(["a"], "/proj", "s1", self.path)
@@ -195,7 +187,6 @@ class SaveTests(HistoryTestCase):
     def test_explicit_timestamp_is_used(self) -> None:
         save_history_entries(["a"], "/proj", "s1", self.path, now=1234.5)
         self.assertEqual(load_history_entries(self.path)[0].timestamp, 1234.5)
-
 
 class TrimTests(HistoryTestCase):
     def test_trims_to_max_entries(self) -> None:
@@ -225,7 +216,7 @@ class TrimTests(HistoryTestCase):
         """
         from unittest.mock import patch
 
-        from minicode import history as module
+        from corecode import history as module
 
         with patch.object(module, "MAX_ENTRIES", 5):
             for index in range(8):
@@ -236,13 +227,12 @@ class TrimTests(HistoryTestCase):
     def test_trim_keeps_the_most_recent_when_called_repeatedly(self) -> None:
         from unittest.mock import patch
 
-        from minicode import history as module
+        from corecode import history as module
 
         with patch.object(module, "MAX_ENTRIES", 3):
             for index in range(6):
                 append_history(f"e{index}", "/proj", "s1", self.path)
         self.assertEqual(load_history(self.path), ["e3", "e4", "e5"])
-
 
 class AppendHistoryTests(HistoryTestCase):
     def test_appends_one_entry(self) -> None:
@@ -254,7 +244,6 @@ class AppendHistoryTests(HistoryTestCase):
         self.assertEqual(append_history("hi", "/proj", "s1", self.path), 0)
         self.assertEqual(load_history(self.path), ["hi"])
 
-
 class ClearTests(HistoryTestCase):
     def test_removes_the_file(self) -> None:
         append_history("a", "/proj", "s1", self.path)
@@ -264,7 +253,6 @@ class ClearTests(HistoryTestCase):
 
     def test_missing_file_is_not_an_error(self) -> None:
         clear_history(self.path)  # 不应抛
-
 
 class HistoryEntryTests(unittest.TestCase):
     def test_to_json_uses_camel_case_session_id(self) -> None:
@@ -279,27 +267,25 @@ class HistoryEntryTests(unittest.TestCase):
         with self.assertRaises(Exception):
             entry.display = "y"  # type: ignore[misc]
 
-
 class DefaultPathTests(HistoryTestCase):
     """默认路径必须走**动态**访问器（`history_path()`）。"""
 
-    def test_default_path_follows_minicode_home(self) -> None:
+    def test_default_path_follows_corecode_home(self) -> None:
         from unittest.mock import patch
 
         append_history("via-default", "/proj", "s1")  # 不传 path
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.root)}):
-            from minicode.config import history_path
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.root)}):
+            from corecode.config import history_path
 
             self.assertEqual(history_path(), self.root / "history.jsonl")
 
     def test_writes_to_the_current_home(self) -> None:
         from unittest.mock import patch
 
-        with patch.dict(os.environ, {"MINICODE_HOME": str(self.root)}):
+        with patch.dict(os.environ, {"CORECODE_HOME": str(self.root)}):
             append_history("scoped", "/proj", "s1")
         self.assertTrue((self.root / "history.jsonl").exists())
         self.assertEqual(load_history(self.root / "history.jsonl"), ["scoped"])
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

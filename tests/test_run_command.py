@@ -1,7 +1,5 @@
 """run_command 与 background_tasks 的测试。
 
-对应原版 `MiniCode/src/tools/run-command.ts` 与 `src/background-tasks.ts`。
-
 ## 这个工具的安全边界值得单独测
 
 `run_command` 是唯一能执行动作的工具，因此它的**判断逻辑**（哪些命令免审批、
@@ -19,13 +17,13 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode import background_tasks  # noqa: E402
-from minicode.permissions import (  # noqa: E402
+from corecode import background_tasks  # noqa: E402
+from corecode.permissions import (  # noqa: E402
     PermissionManager,
     PermissionPromptResult,
 )
-from minicode.tooling import ToolContext  # noqa: E402
-from minicode.tools.run_command import (  # noqa: E402
+from corecode.tooling import ToolContext  # noqa: E402
+from corecode.tools.run_command import (  # noqa: E402
     DEVELOPMENT_COMMANDS,
     READONLY_COMMANDS,
     _is_wsl_shim,
@@ -43,11 +41,9 @@ from minicode.tools.run_command import (  # noqa: E402
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = sys.executable
 
-
 # ---------------------------------------------------------------------------
 # 纯函数
 # ---------------------------------------------------------------------------
-
 
 class CommandClassificationTests(unittest.TestCase):
     """允许清单的语义。"""
@@ -83,7 +79,6 @@ class CommandClassificationTests(unittest.TestCase):
             self.assertNotIn(name, READONLY_COMMANDS)
             self.assertNotIn(name, DEVELOPMENT_COMMANDS)
 
-
 class SplitCommandLineTests(unittest.TestCase):
     """命令行的拆分（引号与转义）。"""
 
@@ -114,14 +109,12 @@ class SplitCommandLineTests(unittest.TestCase):
         self.assertEqual(split_command_line('"a"'), ["a"])
 
     def test_backslash_inside_quotes_still_escapes(self) -> None:
-        """**原版行为**：转义在引号内同样生效。
+        """
 
         这会让 Windows 路径在单行形式里被破坏（`C:\\x` → `C:x`），
         因此 `args` 数组才是传 Windows 路径的正确方式。这条测试把这个
-        事实钉住，避免以后有人「顺手修好它」而破坏与原版的一致性。
         """
         self.assertEqual(split_command_line('"C:\\path"'), ["C:path"])
-
 
 class NormalizeCommandInputTests(unittest.TestCase):
     def test_args_take_precedence_and_are_not_split(self) -> None:
@@ -148,7 +141,6 @@ class NormalizeCommandInputTests(unittest.TestCase):
         command, args = normalize_command_input("git status", [])
         self.assertEqual(command, "git")
         self.assertEqual(args, ["status"])
-
 
 class ShellSnippetDetectionTests(unittest.TestCase):
     """什么必须交给 shell。"""
@@ -192,7 +184,6 @@ class ShellSnippetDetectionTests(unittest.TestCase):
         self.assertTrue(looks_like_shell_snippet("echo > out.txt", None))
         self.assertTrue(looks_like_shell_snippet("rg a|b", None))
 
-
 class BackgroundSnippetDetectionTests(unittest.TestCase):
     def test_trailing_ampersand_is_background(self) -> None:
         self.assertTrue(is_background_shell_snippet("sleep 5 &", None))
@@ -226,7 +217,6 @@ class BackgroundSnippetDetectionTests(unittest.TestCase):
     def test_strip_leaves_double_ampersand_alone(self) -> None:
         """`&&` 只去掉一个 `&`，否则会把顺序执行改写成别的意思。"""
         self.assertEqual(strip_trailing_background_operator("a &&"), "a &")
-
 
 class ShellResolutionTests(unittest.TestCase):
     """shell 解释器的解析。
@@ -264,7 +254,7 @@ class ShellResolutionTests(unittest.TestCase):
         """
         from unittest.mock import patch
 
-        from minicode.tools import run_command as module
+        from corecode.tools import run_command as module
 
         if os.name != "nt":
             self.skipTest("WSL 转发器只在 Windows 上存在")
@@ -280,7 +270,7 @@ class ShellResolutionTests(unittest.TestCase):
         """有真 bash 时必须用它。"""
         from unittest.mock import patch
 
-        from minicode.tools import run_command as module
+        from corecode.tools import run_command as module
 
         fake = r"C:\Program Files\Git\bin\bash.exe"
         with patch.object(module, "_windows_bash_candidates", return_value=[fake]):
@@ -303,11 +293,9 @@ class ShellResolutionTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("ok", completed.stdout)
 
-
 # ---------------------------------------------------------------------------
 # 权限交互
 # ---------------------------------------------------------------------------
-
 
 class RecordingPrompt:
     """记录每一次审批请求，并总是允许。
@@ -323,7 +311,6 @@ class RecordingPrompt:
     def __call__(self, request, signal=None):  # noqa: ANN001
         self.requests.append(request)
         return PermissionPromptResult(decision="allow_once")
-
 
 class PermissionIntegrationTests(unittest.TestCase):
     """三种命令应当走三条不同的审批路径。
@@ -353,13 +340,13 @@ class PermissionIntegrationTests(unittest.TestCase):
         from unittest.mock import patch
 
         self._patch = patch.dict(
-            os.environ, {"MINICODE_HOME": os.path.join(REPO, "tests", "_tmp", "rc-home")}
+            os.environ, {"CORECODE_HOME": os.path.join(REPO, "tests", "_tmp", "rc-home")}
         )
         self._patch.start()
         background_tasks.reset_background_tasks()
 
         # **系统临时目录**，不在仓库内 —— 见类文档。
-        self._temp_root = tempfile.mkdtemp(prefix="minicode-rc-")
+        self._temp_root = tempfile.mkdtemp(prefix="corecode-rc-")
         self.workspace = os.path.join(self._temp_root, "workspace")
         os.makedirs(self.workspace, exist_ok=True)
         self._shutil = shutil
@@ -381,7 +368,7 @@ class PermissionIntegrationTests(unittest.TestCase):
         return manager, manager._prompt
 
     def _run(self, data: dict, manager=None):  # noqa: ANN001
-        from minicode.tools import create_default_registry
+        from corecode.tools import create_default_registry
 
         registry = create_default_registry(str(self.workspace))
         registry.add_tools([run_command_tool])
@@ -503,11 +490,9 @@ class PermissionIntegrationTests(unittest.TestCase):
         self.assertIn("denied", result.output.lower())
         self.assertFalse(os.path.exists(target), "被拒绝的命令不该产生副作用")
 
-
 # ---------------------------------------------------------------------------
 # 真实执行
 # ---------------------------------------------------------------------------
-
 
 class ExecutionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -537,7 +522,7 @@ class ExecutionTests(unittest.TestCase):
         self.assertIn("exit code 3", result.output)
 
     def test_nonzero_exit_is_fatal(self) -> None:
-        """**与原版一致**：原版让 execFile 抛异常，最终变成 fatal。
+        """
 
         fatal 只在 goal/loop 模式下会终止回合，普通对话只是标记为错误。
         """
@@ -587,9 +572,8 @@ class ExecutionTests(unittest.TestCase):
         self.assertIn("HELLO", result.output)
 
     def test_large_output_is_truncated_with_a_note(self) -> None:
-        """**与原版的有意差异。**
+        """**
 
-        原版用 Node `execFile` 的 `maxBuffer: 1MB`，超限会让整次调用**失败**。
         本实现改成截断并注明——对编码助手来说，把「输出太多」变成硬失败会让
         agent 无法处理 `pytest` 这类输出量大的正常命令。
 
@@ -597,7 +581,7 @@ class ExecutionTests(unittest.TestCase):
         """
         from unittest.mock import patch
 
-        from minicode.tools import run_command as module
+        from corecode.tools import run_command as module
 
         with patch.object(module, "MAX_OUTPUT_BYTES", 200):
             result = self._run(
@@ -610,13 +594,12 @@ class ExecutionTests(unittest.TestCase):
     def test_output_under_the_limit_is_not_truncated(self) -> None:
         from unittest.mock import patch
 
-        from minicode.tools import run_command as module
+        from corecode.tools import run_command as module
 
         with patch.object(module, "MAX_OUTPUT_BYTES", 1_000_000):
             result = self._run({"command": PYTHON, "args": ["-c", "print('short')"]})
         self.assertTrue(result.ok)
         self.assertNotIn("已截断", result.output)
-
 
 class BackgroundExecutionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -665,11 +648,9 @@ class BackgroundExecutionTests(unittest.TestCase):
     def test_unknown_task_id_returns_none(self) -> None:
         self.assertIsNone(background_tasks.get_background_task("shell_nope_000000"))
 
-
 # ---------------------------------------------------------------------------
 # 后台任务注册表
 # ---------------------------------------------------------------------------
-
 
 class BackgroundTaskRegistryTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -719,12 +700,12 @@ class BackgroundTaskRegistryTests(unittest.TestCase):
             command="x", pid=os.getpid(), cwd="/tmp"
         )
         done = replace(task, status="completed")
-        from minicode.background_tasks import _refresh
+        from corecode.background_tasks import _refresh
 
         self.assertEqual(_refresh(done).status, "completed")
 
     def test_running_task_with_dead_process_becomes_completed(self) -> None:
-        from minicode.background_tasks import _refresh
+        from corecode.background_tasks import _refresh
 
         child = subprocess.Popen([PYTHON, "-c", "pass"])
         child.wait()
@@ -747,7 +728,6 @@ class BackgroundTaskRegistryTests(unittest.TestCase):
         background_tasks.register_background_shell_task(command="x", pid=1, cwd="/tmp")
         background_tasks.reset_background_tasks()
         self.assertEqual(background_tasks.list_background_tasks(), [])
-
 
 class ToolSchemaTests(unittest.TestCase):
     def test_schema_shape_matches_the_original(self) -> None:
@@ -772,7 +752,6 @@ class ToolSchemaTests(unittest.TestCase):
 
     def test_name_is_stable(self) -> None:
         self.assertEqual(run_command_tool.name, "run_command")
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

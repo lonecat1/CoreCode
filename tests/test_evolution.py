@@ -21,8 +21,8 @@ from unittest.mock import patch
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.agent_loop import run_agent_turn  # noqa: E402
-from minicode.evolution import (  # noqa: E402
+from corecode.agent_loop import run_agent_turn  # noqa: E402
+from corecode.evolution import (  # noqa: E402
     MEMORY_KIND_EPISODIC,
     MEMORY_KIND_PROCEDURAL,
     MEMORY_KIND_PROFILE,
@@ -32,13 +32,13 @@ from minicode.evolution import (  # noqa: E402
     redact_sensitive,
     reflect_turn,
 )
-from minicode.evolution.index import tokenize  # noqa: E402
-from minicode.host import SessionHost  # noqa: E402
-from minicode.permissions import PermissionManager  # noqa: E402
-from minicode.runtime.plan import PlanManager  # noqa: E402
-from minicode.runtime.turn import TurnRequest  # noqa: E402
-from minicode.tools import create_default_registry  # noqa: E402
-from minicode.types import AgentStep, ToolCall  # noqa: E402
+from corecode.evolution.index import tokenize  # noqa: E402
+from corecode.host import SessionHost  # noqa: E402
+from corecode.permissions import PermissionManager  # noqa: E402
+from corecode.runtime.plan import PlanManager  # noqa: E402
+from corecode.runtime.turn import TurnRequest  # noqa: E402
+from corecode.tools import create_default_registry  # noqa: E402
+from corecode.types import AgentStep, ToolCall  # noqa: E402
 
 
 def _call(call_id: str, name: str, payload: dict) -> dict:
@@ -85,12 +85,12 @@ def _turn(
 
 class EvolutionTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="minicode-evolution-"))
+        self.root = Path(tempfile.mkdtemp(prefix="corecode-evolution-"))
         self.home = self.root / "home"
         self.cwd = self.root / "project"
         self.home.mkdir()
         self.cwd.mkdir()
-        self._env = patch.dict(os.environ, {"MINICODE_HOME": str(self.home)})
+        self._env = patch.dict(os.environ, {"CORECODE_HOME": str(self.home)})
         self._env.start()
 
     def tearDown(self) -> None:
@@ -260,7 +260,7 @@ class ReuseTests(EvolutionTestCase):
         skill_path = Path(run.skills[0]["path"])
         self.assertTrue(skill_path.is_file())
         content = skill_path.read_text(encoding="utf-8")
-        self.assertIn("managed-by: minicode-self-evolution", content)
+        self.assertIn("managed-by: corecode-self-evolution", content)
         self.assertIn("Proven steps", content)
         skills = memory.project.list_assets(kind=MEMORY_KIND_SKILL)
         self.assertEqual(len(skills), 1)

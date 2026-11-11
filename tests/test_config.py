@@ -23,7 +23,7 @@ from unittest.mock import patch
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.config import (  # noqa: E402
+from corecode.config import (  # noqa: E402
     ConfigError,
     RuntimeConfig,
     load_runtime_config,
@@ -35,23 +35,20 @@ unittest.TestCase.maxDiff = None
 
 _TMP = Path(_HERE) / "_tmp" / "config"
 
-
 def write_settings(payload: dict) -> Path:
     _TMP.mkdir(parents=True, exist_ok=True)
     target = _TMP / "settings.json"
     target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return target
 
-
 def _env_without(*names: str) -> dict[str, str]:
     """复制当前环境，去掉指定变量。
 
-    刻意**不用** `patch.dict(..., clear=True)`：那会把 `MINICODE_HOME` 也删掉，
+    刻意**不用** `patch.dict(..., clear=True)`：那会把 `CORECODE_HOME` 也删掉，
     而 `tests/__init__.py` 正是靠它把家目录钉在仓库内。清空它会让后续测试
     去读写真实用户目录——这个坑在本项目真实发生过。
     """
     return {k: v for k, v in os.environ.items() if k not in names}
-
 
 class PrecedenceTests(unittest.TestCase):
     """settings.json 必须压过进程环境变量。"""
@@ -98,29 +95,29 @@ class PrecedenceTests(unittest.TestCase):
         self.assertEqual(config.base_url, "https://ambient.example")
         self.assertEqual(config.api_key, "sk-fromfile")
 
-    def test_minicode_prefixed_variable_beats_settings(self) -> None:
-        """`MINICODE_*` 是本工具专有前缀，允许临时覆盖配置文件。"""
+    def test_corecode_prefixed_variable_beats_settings(self) -> None:
+        """`CORECODE_*` 是本工具专有前缀，允许临时覆盖配置文件。"""
         path = write_settings(
             {
                 "model": "from-file",
-                "env": {"MINICODE_MODEL": "from-file-env", "ANTHROPIC_API_KEY": "sk-x"},
+                "env": {"CORECODE_MODEL": "from-file-env", "ANTHROPIC_API_KEY": "sk-x"},
             }
         )
-        with patch.dict(os.environ, {"MINICODE_MODEL": "from-process"}, clear=False):
+        with patch.dict(os.environ, {"CORECODE_MODEL": "from-process"}, clear=False):
             config = load_runtime_config(path)
         self.assertEqual(config.model, "from-process")
 
     def test_settings_model_key_beats_ambient_anthropic_model(self) -> None:
         """`settings.model` 压过环境的 `ANTHROPIC_MODEL`。
 
-        注意排除 `MINICODE_MODEL`：按设计它是本工具专有前缀、**始终优先**，
-        用于临时覆盖（`MINICODE_MODEL=x minicode`）。它若在场会遮蔽本用例要
+        注意排除 `CORECODE_MODEL`：按设计它是本工具专有前缀、**始终优先**，
+        用于临时覆盖（`CORECODE_MODEL=x corecode`）。它若在场会遮蔽本用例要
         验证的那条规则，所以这里显式去掉。
         """
         path = write_settings(
             {"model": "qwen3.8-max-0902", "env": {"ANTHROPIC_API_KEY": "sk-x"}}
         )
-        ambient = _env_without("MINICODE_MODEL")
+        ambient = _env_without("CORECODE_MODEL")
         ambient["ANTHROPIC_MODEL"] = "deepseek-v4-pro"
         with patch.dict(os.environ, ambient, clear=True):
             config = load_runtime_config(path)
@@ -139,7 +136,6 @@ class PrecedenceTests(unittest.TestCase):
     def test_missing_credentials_message_says_where_to_set_them(self) -> None:
         """**报错必须说明「去哪设置」。**
 
-        只说「未配置凭据」时，用户知道缺什么但不知道该往哪写。原版的信息里
         带了位置，这里跟上。
 
         注意设置文件路径来自**动态**访问器：`load_runtime_config` 的参数名
@@ -163,7 +159,6 @@ class PrecedenceTests(unittest.TestCase):
     def test_unknown_credential_names_are_not_accepted(self) -> None:
         """**只认那两个名字。**
 
-        别的常见变量（例如 `DASHSCOPE_API_KEY`）在原版与本实现里都不被识别。
         真实踩过：settings.json 里放着 `DASHSCOPE_API_KEY`，两边都忽略它——
         而程序报「未配置凭据」，用户对照自己的配置会一头雾水。
         这条钉住「不识别」这个事实，避免有人「顺手」加上别名却没同步文档。
@@ -181,12 +176,11 @@ class PrecedenceTests(unittest.TestCase):
         path = write_settings({"env": {"ANTHROPIC_API_KEY": "sk-x"}})
         with patch.dict(
             os.environ,
-            _env_without("ANTHROPIC_MODEL", "MINICODE_MODEL"),
+            _env_without("ANTHROPIC_MODEL", "CORECODE_MODEL"),
             clear=True,
         ):
             with self.assertRaises(ConfigError):
                 load_runtime_config(path)
-
 
 class ResolveEnvValueTests(unittest.TestCase):
     def test_file_wins_for_anthropic_keys(self) -> None:
@@ -196,11 +190,11 @@ class ResolveEnvValueTests(unittest.TestCase):
             "from-file",
         )
 
-    def test_process_wins_for_minicode_keys(self) -> None:
-        """`MINICODE_*` 用于临时覆盖，例如 `MINICODE_MODEL=x minicode`。"""
-        settings = {"env": {"MINICODE_MODEL": "from-file"}}
+    def test_process_wins_for_corecode_keys(self) -> None:
+        """`CORECODE_*` 用于临时覆盖，例如 `CORECODE_MODEL=x corecode`。"""
+        settings = {"env": {"CORECODE_MODEL": "from-file"}}
         self.assertEqual(
-            resolve_env_value("MINICODE_MODEL", settings, {"MINICODE_MODEL": "from-env"}),
+            resolve_env_value("CORECODE_MODEL", settings, {"CORECODE_MODEL": "from-env"}),
             "from-env",
         )
 
@@ -212,7 +206,6 @@ class ResolveEnvValueTests(unittest.TestCase):
 
     def test_empty_when_nowhere(self) -> None:
         self.assertEqual(resolve_env_value("ANTHROPIC_MODEL", {}, {}), "")
-
 
 class ThinkingTests(unittest.TestCase):
     """思考开关：百炼的 qwen3.8-max 默认开启思考，会把正文挤成空。"""
@@ -261,15 +254,13 @@ class ThinkingTests(unittest.TestCase):
         path = write_settings(
             {"model": "m", "env": {"ANTHROPIC_API_KEY": "sk-x"}}
         )
-        with patch.dict(os.environ, {"MINICODE_THINKING": "disabled"}, clear=False):
+        with patch.dict(os.environ, {"CORECODE_THINKING": "disabled"}, clear=False):
             config = load_runtime_config(path)
         self.assertEqual(config.thinking, "disabled")
 
-
 class UnknownModelBudgetTests(unittest.TestCase):
-    """兜底预算与原版一致，且对「思考与正文共享 max_tokens」的模型足够宽。
+    """
 
-    此前这里有一条本实现自拟的 `qwen` 规则 (16000, 32768)。对齐到原版后
     qwen **不匹配任何规则**，走兜底 (32000, 64000)——反而**更宽松**，
     因此当初加那条规则的动机（百炼的思考 token 会挤占正文预算）被更好地
     满足了。这条测试保留下来，因为它钉住的正是那个动机。
@@ -283,7 +274,6 @@ class UnknownModelBudgetTests(unittest.TestCase):
         self.assertEqual(resolve_max_output_tokens("qwen3.8-max-0902", 999_999), 64_000)
 
     def test_unknown_fallback_matches_the_original(self) -> None:
-        """原版 `UNKNOWN_MODEL_MAX_OUTPUT_TOKENS` 是 (32000, 64000)。"""
         self.assertEqual(resolve_max_output_tokens("unknown-model"), 32_000)
         self.assertEqual(resolve_max_output_tokens("unknown-model", 999_999), 64_000)
 
@@ -292,7 +282,6 @@ class UnknownModelBudgetTests(unittest.TestCase):
         self.assertEqual(resolve_max_output_tokens("claude-3-5-sonnet"), 8_192)
         self.assertEqual(resolve_max_output_tokens("deepseek-chat"), 4_000)
         self.assertEqual(resolve_max_output_tokens("gpt-4o"), 16_384)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

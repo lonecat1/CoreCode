@@ -1,8 +1,7 @@
-"""权限存储的**跨实现契约**：能读原版写出来的 `permissions.json`。
+"""
 
 ## 为什么单独测这个
 
-两份实现的权限存储是同一个文件：`<HOME>/permissions.json`。一个从原版过来的
 用户已经攒了一堆「始终允许」的规则，如果本实现读不懂它们，**每次操作都会重新
 问一遍**——不报错，只是把人烦死。
 
@@ -18,7 +17,7 @@
 ## 选择项也是契约
 
 提示里每个选项的**按键与 decision 字符串**都要对上，否则自动化脚本（`printf
-'4\\n' | minicode`）在两种实现下会做出不同的事：
+'4\\n' | corecode`）在两种实现下会做出不同的事：
 
 | 按键 | 路径/命令 | 编辑 |
 |---|---|---|
@@ -46,7 +45,7 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, os.path.join(_REPO, "src"))
 
-from minicode.permissions import (  # noqa: E402
+from corecode.permissions import (  # noqa: E402
     PathIntent,
     PermissionManager,
     PermissionRequest,
@@ -55,7 +54,6 @@ from minicode.permissions import (  # noqa: E402
     write_permission_store,
 )
 
-#: 原版 `permissions.ts` 的 `PermissionStore` 字段（顺序也照抄）。
 TS_STORE_FIELDS = [
     "allowedDirectoryPrefixes",
     "deniedDirectoryPrefixes",
@@ -65,13 +63,11 @@ TS_STORE_FIELDS = [
     "deniedEditPatterns",
 ]
 
-
 def _reject_all(request: PermissionRequest, signal=None):  # noqa: ANN001
     """永远拒绝的假提示——用来证明「没问」而不是「问了但被拒」。"""
-    from minicode.permissions import PermissionPromptResult
+    from corecode.permissions import PermissionPromptResult
 
     raise AssertionError(f"不该走到提示：{request}")
-
 
 class _StoreCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -79,9 +75,8 @@ class _StoreCase(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(self._tmp, True))
         home = os.path.join(self._tmp, "home")
         os.makedirs(home, exist_ok=True)
-        self._env = patch.dict(os.environ, {"MINICODE_HOME": home}, clear=False)
+        self._env = patch.dict(os.environ, {"CORECODE_HOME": home}, clear=False)
         self._env.start()
-        os.environ.pop("MINI_CODE_HOME", None)
         self.home = Path(home)
         self.store_path = self.home / "permissions.json"
         self.workspace = os.path.join(self._tmp, "workspace")
@@ -92,16 +87,13 @@ class _StoreCase(unittest.TestCase):
             self._env.stop()
 
     def write_ts_store(self, payload: dict) -> Path:
-        """按**原版的写法**落盘：2 空格缩进 + 结尾换行。"""
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
         self.store_path.write_text(
             json.dumps(payload, indent=2) + "\n", encoding="utf-8"
         )
         return self.store_path
 
-
 class ReadsOriginalStoreTests(_StoreCase):
-    """按原版的形状写，本实现必须读得懂并**直接放行**。"""
 
     def test_an_allowed_directory_prefix_is_honored(self) -> None:
         target = os.path.join(self.workspace, "sub", "file.txt")
@@ -128,7 +120,7 @@ class ReadsOriginalStoreTests(_StoreCase):
 
     def test_a_denied_directory_prefix_is_honored(self) -> None:
         """**拒绝规则也要生效**——只读能放行、拒绝不生效，等于没有拒绝规则。"""
-        from minicode.permissions import PermissionDenied
+        from corecode.permissions import PermissionDenied
 
         outside = os.path.join(self._tmp, "outside")
         os.makedirs(outside, exist_ok=True)
@@ -145,9 +137,8 @@ class ReadsOriginalStoreTests(_StoreCase):
 
         ⚠️ 注意顺序：`ensure_command` 先判「这条命令危不危险」，**不危险就直接
         放行**，之后才查允许/拒绝表。所以给 `pwd` 加一条拒绝规则不会有任何
-        效果——原版（`permissions.ts` 的 `if (!reason) return`）完全一样。
         """
-        from minicode.permissions import PermissionDenied
+        from corecode.permissions import PermissionDenied
 
         # `git push --force` 是分类器认定的危险命令，会走到提示那一层。
         self.write_ts_store({"deniedCommandPatterns": ["git push --force"]})
@@ -161,7 +152,6 @@ class ReadsOriginalStoreTests(_StoreCase):
         `deniedCommandPatterns` 里写了 `pwd` 也不会拦住 `pwd`：拒绝检查在
         「危险命令」这道门之后，而 `pwd` 不危险。
 
-        看起来像漏洞，但这是原版行为（`permissions.ts`：
         `const reason = …; if (!reason) return`，之后才查 denied）。
         """
         self.write_ts_store({"deniedCommandPatterns": ["pwd"]})
@@ -169,13 +159,11 @@ class ReadsOriginalStoreTests(_StoreCase):
         manager.ensure_command("pwd", [], self.workspace)  # 不抛 = 放行
 
     def test_the_classifier_covers_the_same_commands(self) -> None:
-        """危险命令分类器的覆盖面与原版一致。
-
-        原版只分类 `git`（5 种形态）、`npm publish`、以及解释器命令
-        （`node` / `python3` / `bun` / `bash` / `sh`）。**`rm` 不在其中**——
-        `rm -rf /` 在原版与本实现里都不会触发提示（它会被允许清单先挡掉）。
         """
-        from minicode.permissions import classify_dangerous_command as classify
+
+        （`node` / `python3` / `bun` / `bash` / `sh`）。**`rm` 不在其中**——
+        """
+        from corecode.permissions import classify_dangerous_command as classify
 
         dangerous = [
             ("git", ["reset", "--hard"]),
@@ -200,7 +188,6 @@ class ReadsOriginalStoreTests(_StoreCase):
             ("echo", ["hi"]),
             ("git", ["status"]),
             ("npm", ["install"]),
-            # 原版不分类 rm —— 刻意保留
             ("rm", ["-rf", "/"]),
         ]
         for command, args in harmless:
@@ -208,9 +195,8 @@ class ReadsOriginalStoreTests(_StoreCase):
                 self.assertIsNone(classify(command, args))
 
     def test_the_classifier_is_strictly_wider_than_the_original(self) -> None:
-        """**本实现在两类命令上比原版更严**（D50，有意）。
+        """
 
-        | | 原版 | 本实现 |
         |---|---|---|
         | 发布命令 | 只认 `npm publish` | `npm` / `pnpm` / `yarn` |
         | 解释器 | `node` `python3` `bun` `bash` `sh` | 再加 `python` `pwsh` `powershell` |
@@ -220,11 +206,9 @@ class ReadsOriginalStoreTests(_StoreCase):
         漏掉提示才是真风险。
 
         这条测试的作用**不是**验证加严的细节，而是防止有人「为了对齐」把它
-        悄悄改回原版——那样控制台会少一次提示，且没有任何测试会变红。
         """
-        from minicode.permissions import classify_dangerous_command as classify
+        from corecode.permissions import classify_dangerous_command as classify
 
-        # 原版不拦、本实现拦的
         extra = [
             ("pnpm", ["publish"]),
             ("yarn", ["publish"]),
@@ -236,11 +220,10 @@ class ReadsOriginalStoreTests(_StoreCase):
             with self.subTest(command=command):
                 self.assertIsNotNone(
                     classify(command, args),
-                    f"{command} 应当被判为危险（本实现比原版更严，见 D50）",
+                    f"{command} 应当被判为危险（本实现更严，见 D50）",
                 )
 
     def test_unknown_fields_do_not_break_the_read(self) -> None:
-        """原版将来加字段时，本实现不该因为多一个键就整份读不出来。"""
         self.write_ts_store(
             {
                 "allowedCommandPatterns": ["pwd"],
@@ -256,9 +239,7 @@ class ReadsOriginalStoreTests(_StoreCase):
         store = read_permission_store()
         self.assertEqual(store.allowed_command_patterns, [])
 
-
 class WriteShapeTests(_StoreCase):
-    """本实现写出来的文件必须与原版的形状逐条一致。"""
 
     def test_written_json_has_exactly_the_original_fields(self) -> None:
         store = PermissionStore(allowed_command_patterns=["pwd"])
@@ -267,7 +248,7 @@ class WriteShapeTests(_StoreCase):
         self.assertEqual(list(payload), TS_STORE_FIELDS)
 
     def test_written_json_is_pretty_and_newline_terminated(self) -> None:
-        """原版是 `JSON.stringify(store, null, 2) + '\\n'`。
+        """
 
         缩进或结尾换行不一致的话，同一份文件在两种实现间来回改会**整篇重排**
         ——diff 里全是噪音。
@@ -294,7 +275,6 @@ class WriteShapeTests(_StoreCase):
         self.assertEqual(loaded.to_json(), original.to_json())
 
     def test_new_store_is_all_empty_lists(self) -> None:
-        """空存储也要写全 6 个键（原版同样不省略空数组）。"""
         write_permission_store(PermissionStore(), self.store_path)
         payload = json.loads(self.store_path.read_text(encoding="utf-8"))
         self.assertEqual(list(payload), TS_STORE_FIELDS)
@@ -302,11 +282,9 @@ class WriteShapeTests(_StoreCase):
             with self.subTest(key=key):
                 self.assertEqual(payload[key], [])
 
-
 class ChoiceContractTests(unittest.TestCase):
     """提示选项的按键与 decision 字符串是契约（自动化脚本依赖它）。"""
 
-    #: 原版 `permissions.ts` 的三组选项。
     TS_PATH_CHOICES = [("y", "allow_once"), ("a", "allow_always"),
                        ("n", "deny_once"), ("d", "deny_always")]
     TS_COMMAND_CHOICES = TS_PATH_CHOICES
@@ -321,7 +299,7 @@ class ChoiceContractTests(unittest.TestCase):
     ]
 
     def _choices(self, kind: str) -> list[tuple[str, str]]:
-        from minicode import permissions
+        from corecode import permissions
 
         for name in dir(permissions):
             if name.startswith("_") or not name.endswith("_CHOICES"):
@@ -331,10 +309,9 @@ class ChoiceContractTests(unittest.TestCase):
         return []
 
     def test_keys_and_decisions_match_the_original(self) -> None:
-        """三组选项都要与原版一致——直接列举，不靠命名猜测。"""
         import inspect
 
-        from minicode import permissions
+        from corecode import permissions
 
         source = inspect.getsource(permissions)
         for expected in (self.TS_PATH_CHOICES, self.TS_EDIT_CHOICES):
@@ -353,13 +330,12 @@ class ChoiceContractTests(unittest.TestCase):
         """编辑是唯一有 7 个选项的一组（其余两组 4 个）。"""
         import inspect
 
-        from minicode import permissions
+        from corecode import permissions
 
         source = inspect.getsource(permissions)
         for key in ("1", "2", "3", "4", "5", "6", "7"):
             with self.subTest(key=key):
                 self.assertIn(f'("{key}", "', source)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

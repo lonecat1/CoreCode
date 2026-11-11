@@ -25,8 +25,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from minicode.tooling import ToolContext, ToolRegistry  # noqa: E402
-from minicode.tools.grep_files import (  # noqa: E402
+from corecode.tooling import ToolContext, ToolRegistry  # noqa: E402
+from corecode.tools.grep_files import (  # noqa: E402
     MAX_MATCHES,
     SKIP_DIRECTORIES,
     _format_match,
@@ -40,7 +40,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class GrepTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = tempfile.mkdtemp(prefix="minicode-grep-")
+        self.root = tempfile.mkdtemp(prefix="corecode-grep-")
         self.context = ToolContext(cwd=self.root, permissions=None, signal=None)
         self.registry = ToolRegistry([grep_files_tool])
 
@@ -119,7 +119,7 @@ class PythonScannerTests(GrepTestCase):
 
     def test_oversized_files_are_skipped(self) -> None:
         self.write("big.txt", "needle\n")
-        with patch("minicode.tools.grep_files.MAX_FILE_BYTES", 1):
+        with patch("corecode.tools.grep_files.MAX_FILE_BYTES", 1):
             self.assertEqual(
                 _search_with_python("needle", self.root, self.root), "(no matches)"
             )
@@ -180,7 +180,7 @@ class GrepToolTests(GrepTestCase):
     def test_fallback_is_announced(self) -> None:
         """没有 rg 时要注明用了内置扫描器，便于排查「结果为何不同」。"""
         self.write("a.txt", "needle\n")
-        with patch("minicode.tools.grep_files._search_with_ripgrep", return_value=(False, "")):
+        with patch("corecode.tools.grep_files._search_with_ripgrep", return_value=(False, "")):
             result = self.run_grep({"pattern": "needle"})
         self.assertTrue(result.ok)
         self.assertIn("内置扫描器", result.output)
@@ -188,7 +188,7 @@ class GrepToolTests(GrepTestCase):
     def test_ripgrep_output_is_passed_through(self) -> None:
         self.write("a.txt", "needle\n")
         with patch(
-            "minicode.tools.grep_files._search_with_ripgrep",
+            "corecode.tools.grep_files._search_with_ripgrep",
             return_value=(True, "a.txt:1:needle"),
         ):
             result = self.run_grep({"pattern": "needle"})
@@ -223,7 +223,7 @@ class RealRepositoryTests(unittest.TestCase):
     """
 
     def test_finds_a_known_string_in_a_known_file(self) -> None:
-        from minicode.tools.grep_files import _search_with_python
+        from corecode.tools.grep_files import _search_with_python
 
         target = os.path.join(REPO, "pyproject.toml")
         output = _search_with_python(r"^name", target, REPO)

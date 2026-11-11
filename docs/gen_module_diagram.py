@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Render the minicode-py module dependency diagram to PNG (Pillow).
+"""Render the corecode module dependency diagram to PNG (Pillow).
 
 Layered by dependency depth: everything points downward, nothing points up.
 
@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 S = 2
 W, H = 1220, 1260
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "minicode-py-modules.png")
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "corecode-modules.png")
 
 FONT_CJK = r"C:\Windows\Fonts\msyh.ttc"
 FONT_CJK_B = r"C:\Windows\Fonts\msyhbd.ttc"
@@ -108,7 +108,7 @@ def arrow(x1, y1, x2, y2, color=GREY, dashed=False, label=None, lw=1.3):
 
 
 # ---------------- header ----------------
-d.text((px(30), px(18)), "minicode-py 模块依赖图", font=F["h1"], fill=INK)
+d.text((px(30), px(18)), "corecode 模块依赖图", font=F["h1"], fill=INK)
 d.text((px(30), px(50)),
        "箭头指向被依赖方（全部向下）· 零第三方运行时依赖 · 绿色数字为该模块的测试数",
        font=F["b"], fill=MUTED)

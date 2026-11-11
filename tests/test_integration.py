@@ -22,10 +22,10 @@ from unittest.mock import patch
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
-from minicode.cli import build_host, build_parser, main  # noqa: E402
-from minicode.agents.types import MODE_FORK  # noqa: E402
-from minicode.host import HostCallbacks  # noqa: E402
-from minicode.session import list_sessions, load_session  # noqa: E402
+from corecode.cli import build_host, build_parser, main  # noqa: E402
+from corecode.agents.types import MODE_FORK  # noqa: E402
+from corecode.host import HostCallbacks  # noqa: E402
+from corecode.session import list_sessions, load_session  # noqa: E402
 
 unittest.TestCase.maxDiff = None
 
@@ -33,7 +33,6 @@ unittest.TestCase.maxDiff = None
 WORKDIR = os.path.dirname(_HERE)
 #: 每个测试的隔离家目录根。
 _REPO_TMP = Path(_HERE) / "_tmp" / "integration-home"
-
 
 class IntegrationTestCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -47,7 +46,7 @@ class IntegrationTestCase(unittest.TestCase):
         self.home = Path(str(_REPO_TMP)) / self._testMethodName.replace("/", "_")
         shutil.rmtree(self.home, ignore_errors=True)
         self.home.mkdir(parents=True, exist_ok=True)
-        self._env = patch.dict(os.environ, {"MINICODE_HOME": str(self.home)})
+        self._env = patch.dict(os.environ, {"CORECODE_HOME": str(self.home)})
         self._env.start()
 
     def tearDown(self) -> None:
@@ -67,7 +66,6 @@ class IntegrationTestCase(unittest.TestCase):
             code = int(exit_signal.code or 0)
         return code, capture.getvalue()
 
-
 class CliWiringTests(IntegrationTestCase):
     """命令行装配本身。"""
 
@@ -82,8 +80,8 @@ class CliWiringTests(IntegrationTestCase):
         回调（默认是空的），我只会在自己的 StringIO 里看到统计行。
         第一版就漏了这一步，表现为「普通回合没有任何输出」。
         """
-        from minicode.cli import _attach_ui_callbacks, _dispatch
-        from minicode.ui.console import ConsoleUI
+        from corecode.cli import _attach_ui_callbacks, _dispatch
+        from corecode.ui.console import ConsoleUI
 
         stream = io.StringIO()
         ui = ConsoleUI(stream=stream, width=80, animate=False)
@@ -139,7 +137,6 @@ class CliWiringTests(IntegrationTestCase):
     def test_status_reports_real_state(self) -> None:
         code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/status"])
         self.assertEqual(code, 0)
-        # 原版那五行逐字在前（`model:` 这一行可被脚本 grep）
         self.assertIn("model: (offline mock)", output)
         self.assertIn("baseUrl: (offline mock)", output)
         self.assertIn("mcp servers: 0", output)
@@ -186,9 +183,6 @@ class CliWiringTests(IntegrationTestCase):
     def test_tool_shortcut_runs_locally_without_the_model(self) -> None:
         """`/ls` 由**本地快捷方式**直接执行，不经过模型。
 
-        这是原版的行为（`tty-app.ts:1385` 在把输入交给模型之前先解析快捷方式）。
-        判据看输出形状：`⏺ list_files` 是工具调用的记号；如果它交给了模型，
-        输出里会是「（mock 模型）收到指令：/ls」。
         """
         code, output = self._run_cli(["--mock", "--cwd", WORKDIR, "-p", "/ls"])
         self.assertEqual(code, 0, output)
@@ -234,7 +228,6 @@ class CliWiringTests(IntegrationTestCase):
         options = {action.dest for action in parser._actions}  # noqa: SLF001
         self.assertNotIn("agent", options)
 
-
 class RealTurnTests(IntegrationTestCase):
     """一个真实回合：model → tool → model → 落盘。"""
 
@@ -269,7 +262,7 @@ class RealTurnTests(IntegrationTestCase):
         result = host.runtime.submit("/read pyproject.toml")
         self.assertEqual(result.outcome, "final")
         joined = "\n".join(str(m.get("content", "")) for m in result.messages)
-        self.assertIn("minicode", joined)
+        self.assertIn("corecode", joined)
 
     def test_write_turn_goes_through_permissions(self) -> None:
         """写操作必须经过审批层——集成后这条链不能被绕过。"""
@@ -281,7 +274,7 @@ class RealTurnTests(IntegrationTestCase):
         seen_requests: list[str] = []
 
         def always_allow(request, signal):  # noqa: ANN001
-            from minicode.permissions import PermissionPromptResult
+            from corecode.permissions import PermissionPromptResult
 
             seen_requests.append(request.kind)
             return PermissionPromptResult(decision="allow_once")
@@ -308,13 +301,12 @@ class RealTurnTests(IntegrationTestCase):
         host = build_host(args, callbacks=callbacks)
 
         # mock 模式没有模型名，管线会跳过压缩，因此这里手动用真实模型名驱动一次。
-        from minicode.context.pipeline import ContextPipeline
+        from corecode.context.pipeline import ContextPipeline
 
         pipeline = ContextPipeline(model_adapter=None, on_stats=seen.append)
         pipeline.prepare(host.messages, step=0, model_name="claude-sonnet-4")
         self.assertTrue(seen, "统计回调应当被调用")
         self.assertTrue(hasattr(seen[0], "utilization"))
-
 
 class McpConfigTests(IntegrationTestCase):
     """MCP 配置装载与「无凭据也能用」这条解耦。
@@ -337,7 +329,7 @@ class McpConfigTests(IntegrationTestCase):
             }
         }
         if where == "home":
-            target = Path(os.environ["MINICODE_HOME"]) / "mcp.json"
+            target = Path(os.environ["CORECODE_HOME"]) / "mcp.json"
         else:
             target = Path(self.cwd_holder) / ".mcp.json"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -354,7 +346,7 @@ class McpConfigTests(IntegrationTestCase):
         ——结果是「没有 API key 就用不了 MCP」。这个耦合是错的：
         MCP 服务器与模型凭据毫无关系。这条测试钉住解耦。
         """
-        from minicode.config import load_mcp_servers
+        from corecode.config import load_mcp_servers
 
         self._write_mcp_config()
         servers = load_mcp_servers(cwd=str(self.home.parent))
@@ -383,7 +375,7 @@ class McpConfigTests(IntegrationTestCase):
         self.assertIn("mcp__server__tool", prompt, "命名约定必须告诉模型")
 
     def test_mcp_tool_is_callable_through_the_registry(self) -> None:
-        from minicode.tooling import ToolContext
+        from corecode.tooling import ToolContext
 
         self._write_mcp_config()
         args = build_parser().parse_args(["--mock", "--cwd", WORKDIR])
@@ -397,7 +389,7 @@ class McpConfigTests(IntegrationTestCase):
         self.assertIn("echo: 集成", result.output)
 
     def test_mcp_command_reports_connected(self) -> None:
-        from minicode.cli_commands import try_handle_local_command
+        from corecode.cli_commands import try_handle_local_command
 
         self._write_mcp_config()
         args = build_parser().parse_args(["--mock", "--cwd", WORKDIR])
@@ -412,7 +404,7 @@ class McpConfigTests(IntegrationTestCase):
         """`<cwd>/.mcp.json` 是 MCP 生态的惯例位置，必须支持。"""
         import json
 
-        from minicode.config import load_mcp_servers
+        from corecode.config import load_mcp_servers
 
         project = Path(WORKDIR)
         target = project / ".mcp.json"
@@ -429,7 +421,7 @@ class McpConfigTests(IntegrationTestCase):
                 target.unlink()
 
     def test_settings_json_overrides_mcp_json(self) -> None:
-        from minicode.config import load_mcp_servers
+        from corecode.config import load_mcp_servers
 
         self._write_mcp_config()
         servers = load_mcp_servers(
@@ -442,7 +434,7 @@ class McpConfigTests(IntegrationTestCase):
         import json
 
         config = {"mcpServers": {"broken": {"command": "definitely-not-real-xyz"}}}
-        target = Path(os.environ["MINICODE_HOME"]) / "mcp.json"
+        target = Path(os.environ["CORECODE_HOME"]) / "mcp.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(config), encoding="utf-8")
 
@@ -450,13 +442,12 @@ class McpConfigTests(IntegrationTestCase):
         host = build_host(args)  # 不应抛
         host._mcp_wait(timeout=15)  # noqa: SLF001
 
-        from minicode.cli_commands import try_handle_local_command
+        from corecode.cli_commands import try_handle_local_command
 
         output = try_handle_local_command(host, "/mcp") or ""
         self.assertIn("error", output)
         # 主流程仍然可用
         self.assertTrue(host.tools.find("read_file") is not None)
-
 
 class Utf8OutputTests(IntegrationTestCase):
     """Windows 控制台默认编码是 cp936，而程序输出是中文。
@@ -473,7 +464,7 @@ class Utf8OutputTests(IntegrationTestCase):
             "import sys; sys.path.insert(0, r'"
             + os.path.join(os.path.dirname(_HERE), "src")
             + "');"
-            "from minicode.cli import _ensure_utf8_output;"
+            "from corecode.cli import _ensure_utf8_output;"
             "_ensure_utf8_output();"
             "print('out=' + str(sys.stdout.encoding));"
             "print('in=' + str(sys.stdin.encoding))"
@@ -500,7 +491,7 @@ class Utf8OutputTests(IntegrationTestCase):
             "import sys; sys.path.insert(0, r'"
             + os.path.join(os.path.dirname(_HERE), "src")
             + "');"
-            "from minicode.cli import _ensure_utf8_output;"
+            "from corecode.cli import _ensure_utf8_output;"
             "_ensure_utf8_output();"
             "print(input())"
         )
@@ -521,7 +512,7 @@ class Utf8OutputTests(IntegrationTestCase):
         """stdout 被替换成不支持 reconfigure 的对象时不能抛。"""
         import io
 
-        from minicode.cli import _ensure_utf8_output
+        from corecode.cli import _ensure_utf8_output
 
         original = sys.stdout
         try:
@@ -530,12 +521,12 @@ class Utf8OutputTests(IntegrationTestCase):
         finally:
             sys.stdout = original
 
-    def test_python_dash_m_minicode_works(self) -> None:
-        """`python -m minicode` 必须可用。
+    def test_python_dash_m_corecode_works(self) -> None:
+        """`python -m corecode` 必须可用。
 
         包若只有 `__init__.py` 而没有 `__main__.py`，Python 会报
-        「'minicode' is a package and cannot be directly executed」。
-        这是标准的可运行包约定，少了它用户就得记住 `minicode.cli` 这个后缀。
+        「'corecode' is a package and cannot be directly executed」。
+        这是标准的可运行包约定，少了它用户就得记住 `corecode.cli` 这个后缀。
         """
         import subprocess
 
@@ -543,7 +534,7 @@ class Utf8OutputTests(IntegrationTestCase):
             [
                 sys.executable,
                 "-m",
-                "minicode",
+                "corecode",
                 "--mock",
                 "--cwd",
                 WORKDIR,
@@ -573,7 +564,6 @@ class Utf8OutputTests(IntegrationTestCase):
         text = (Path(WORKDIR) / "tools" / "mutation_check.py").read_text(encoding="utf-8")
         self.assertNotIn('REPO = r"', text, "REPO 不应是硬编码字符串字面量")
         self.assertIn("os.path.abspath(__file__)", text)
-
 
 class SessionLifecycleTests(IntegrationTestCase):
     """会话的装载 / 分叉 / 清空在装配后的行为。"""
@@ -609,7 +599,7 @@ class SessionLifecycleTests(IntegrationTestCase):
         before = len(host.messages)
         self.assertGreater(before, 1)
 
-        from minicode.cli_commands import try_handle_local_command
+        from corecode.cli_commands import try_handle_local_command
 
         output = try_handle_local_command(host, "/new")
         self.assertIn("新会话", output or "")
@@ -619,7 +609,7 @@ class SessionLifecycleTests(IntegrationTestCase):
     def test_plan_command_reflects_updates(self) -> None:
         host = self._host()
         host.plan.update([{"title": "第一步", "status": "in_progress"}])
-        from minicode.cli_commands import try_handle_local_command
+        from corecode.cli_commands import try_handle_local_command
 
         output = try_handle_local_command(host, "/plan") or ""
         self.assertIn("第一步", output)
@@ -635,7 +625,7 @@ class SessionLifecycleTests(IntegrationTestCase):
                 {"title": "待办的事", "status": "pending"},
             ]
         )
-        from minicode.cli_commands import try_handle_local_command
+        from corecode.cli_commands import try_handle_local_command
 
         output = try_handle_local_command(host, "/plan") or ""
         self.assertIn("✓", output)
@@ -643,11 +633,10 @@ class SessionLifecycleTests(IntegrationTestCase):
 
     def test_plan_command_when_empty(self) -> None:
         host = self._host()
-        from minicode.cli_commands import try_handle_local_command
+        from corecode.cli_commands import try_handle_local_command
 
         output = try_handle_local_command(host, "/plan") or ""
         self.assertIn("空", output)
-
 
 class SubAgentIntegrationTests(IntegrationTestCase):
     """子 Agent 在装配后的真实行为。"""
@@ -671,7 +660,7 @@ class SubAgentIntegrationTests(IntegrationTestCase):
         }
         # 根表里有 write_file，但 worker 注册表里没有
         self.assertIn("write_file", worker_names)
-        from minicode.tools import create_worker_registry
+        from corecode.tools import create_worker_registry
 
         self.assertNotIn("write_file", {t.name for t in create_worker_registry(host.tools).list()})
 
@@ -690,7 +679,6 @@ class SubAgentIntegrationTests(IntegrationTestCase):
         self.assertFalse(result.timed_out)
         self.assertEqual(result.agents[0].status, "completed")
         self.assertTrue(result.agents[0].result)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -5,12 +5,6 @@
 它们被**拼进 system 消息**，是模型判断「我现在在什么模式里、该做什么」的
 全部依据。而它的内容和形状都容易走样：
 
-1. **说明文案**（7 条 Goal 指引 / 3 条 Loop 指引）是逐字抄自原版的。改一个字
-   都可能改变模型的取舍，而且不会有任何测试变红——除非真的钉住全文。
-2. **JSON 快照的形状**。原版是 `JSON.stringify(snapshot)`，它对 `undefined`
-   的行为是**省略该键**。本实现若写成 `null`，模型看到的形状就不同了：`null`
-   读起来像「有值但为空」，而不是「这件事还没发生」。
-
 ## 两个序列化器必须一致
 
 同一份 Goal 会出现在两个地方：
@@ -36,18 +30,17 @@ _REPO = os.path.dirname(_HERE)
 if _REPO not in sys.path:
     sys.path.insert(0, os.path.join(_REPO, "src"))
 
-from minicode.runtime.context import (  # noqa: E402
+from corecode.runtime.context import (  # noqa: E402
     GOAL_CONTEXT_LINES,
     LOOP_CONTEXT_LINES,
     build_goal_context,
     build_loop_context,
     format_goal,
 )
-from minicode.runtime.goal import GoalManager, goal_to_json  # noqa: E402
-from minicode.runtime.loop import LoopScheduler  # noqa: E402
-from minicode.runtime.plan import PlanManager  # noqa: E402
+from corecode.runtime.goal import GoalManager, goal_to_json  # noqa: E402
+from corecode.runtime.loop import LoopScheduler  # noqa: E402
+from corecode.runtime.plan import PlanManager  # noqa: E402
 
-#: 原版 `goal/context.ts` 的 `goalContext()` 全文（7 条）。
 TS_GOAL_LINES = [
     "This is a user-created Goal. Follow its original description and the latest Plan.",
     "If needsReplan is true, call update_plan with a nonempty plan, then update_goal set_criteria.",
@@ -60,13 +53,11 @@ TS_GOAL_LINES = [
     "Goal completion.",
 ]
 
-#: 原版 `runtime/session-runtime.ts` 的 loop 上下文三条。
 TS_LOOP_LINES = [
     "Execute this recurring prompt once, then return a final. The next run is scheduled after the interval.",
     "Use the shared Plan if useful. Do not create or update a Goal. Ask the user when input is needed.",
     "The user can stop this Loop with /loop stop. There is no model-side stop tool in this MVP.",
 ]
-
 
 def make_loop() -> LoopScheduler:
     return LoopScheduler(
@@ -76,7 +67,6 @@ def make_loop() -> LoopScheduler:
         settle_workers=lambda: None,
     )
 
-
 def payload_of(text: str) -> dict:
     """取 `<current_goal>` / `<current_loop>` 之间那一行 JSON。"""
     lines = text.splitlines()
@@ -84,7 +74,6 @@ def payload_of(text: str) -> dict:
         if line.startswith("<current_"):
             return json.loads(lines[index + 1])
     raise AssertionError(f"没有找到上下文块：{text!r}")
-
 
 class ContextTextTests(unittest.TestCase):
     def test_goal_lines_match_the_original_word_for_word(self) -> None:
@@ -106,7 +95,6 @@ class ContextTextTests(unittest.TestCase):
         self.assertEqual(lines[2], "</current_loop>")
         self.assertEqual(lines[3:], TS_LOOP_LINES)
 
-
 class OptionalFieldTests(unittest.TestCase):
     """`JSON.stringify` 省略 `undefined`；本实现也必须**省略**而不是写 `null`。"""
 
@@ -118,7 +106,6 @@ class OptionalFieldTests(unittest.TestCase):
         self.assertNotIn("completion", payload)
 
     def test_goal_without_a_goal_serializes_to_null(self) -> None:
-        """没有 Goal 时原版 `JSON.stringify(undefined)` → `null`。"""
         goal = GoalManager(PlanManager("s"))
         self.assertEqual(build_goal_context(goal).splitlines()[1], "null")
 
@@ -157,10 +144,8 @@ class OptionalFieldTests(unittest.TestCase):
                     self.assertNotIn(key, payload)
 
     def test_no_loop_serializes_to_an_empty_object(self) -> None:
-        """原版 `JSON.stringify(undefined)` 在这里被 `snapshot ?? {}` 兜成 `{}`。"""
         self.assertEqual(build_loop_context(None).splitlines()[1], "{}")
         self.assertEqual(build_loop_context(make_loop().get_snapshot()).splitlines()[1], "{}")
-
 
 class SerializerAgreementTests(unittest.TestCase):
     """注入用的形状与工具输出用的形状**必须一致**。"""
@@ -181,7 +166,6 @@ class SerializerAgreementTests(unittest.TestCase):
     def test_without_a_goal_both_return_none(self) -> None:
         self.assertIsNone(goal_to_json(None))
         self.assertEqual(build_goal_context(GoalManager(PlanManager("s"))).splitlines()[1], "null")
-
 
 class FormatGoalTests(unittest.TestCase):
     """`formatGoal` 的行结构（用户可见）。"""
@@ -235,7 +219,6 @@ class FormatGoalTests(unittest.TestCase):
         goal = GoalManager(plan)
         goal.create("x")
         self.assertIn("Plan is empty.", format_goal(goal, plan.get_snapshot()))
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -22,7 +22,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
 sys.path.insert(0, os.path.join(_REPO, "src"))
 
-from minicode.mcp import (  # noqa: E402
+from corecode.mcp import (  # noqa: E402
     PROTOCOL_CONTENT_LENGTH,
     PROTOCOL_NEWLINE_JSON,
     JsonRpcError,
@@ -40,12 +40,11 @@ from minicode.mcp import (  # noqa: E402
     protocol_candidates,
     sanitize_tool_segment,
 )
-from minicode.tooling import ToolContext  # noqa: E402
+from corecode.tooling import ToolContext  # noqa: E402
 
 unittest.TestCase.maxDiff = None
 
 SERVER = str(Path(_HERE) / "fixtures" / "fake_mcp_server.py")
-
 
 def server_config(protocol: str = "content-length", **extra) -> dict:
     config = {
@@ -55,11 +54,9 @@ def server_config(protocol: str = "content-length", **extra) -> dict:
     config.update(extra)
     return config
 
-
 # ---------------------------------------------------------------------------
 # 1. 分帧状态机
 # ---------------------------------------------------------------------------
-
 
 class MessageBufferTests(unittest.TestCase):
     """分帧是传输层最容易写错的部分，所以脱离进程直接测。"""
@@ -141,7 +138,6 @@ class MessageBufferTests(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0]["result"]["text"], "中文内容")
 
-
 class ProtocolCandidateTests(unittest.TestCase):
     def test_explicit_protocol_is_the_only_candidate(self) -> None:
         self.assertEqual(
@@ -166,11 +162,9 @@ class ProtocolCandidateTests(unittest.TestCase):
             [PROTOCOL_CONTENT_LENGTH, PROTOCOL_NEWLINE_JSON],
         )
 
-
 # ---------------------------------------------------------------------------
 # 2. 协议协商（真实子进程）
 # ---------------------------------------------------------------------------
-
 
 class NegotiationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -178,7 +172,7 @@ class NegotiationTests(unittest.TestCase):
         self.tmp.mkdir(parents=True, exist_ok=True)
         for item in self.tmp.glob("*.json"):
             item.unlink()
-        self._env = patch.dict(os.environ, {"MINICODE_HOME": str(self.tmp)})
+        self._env = patch.dict(os.environ, {"CORECODE_HOME": str(self.tmp)})
         self._env.start()
 
     def tearDown(self) -> None:
@@ -239,7 +233,7 @@ class NegotiationTests(unittest.TestCase):
 
     def test_cached_protocol_is_used_first(self) -> None:
         """缓存的作用是省掉两次失败尝试。"""
-        from minicode.mcp import cache_protocol, get_cached_protocol
+        from corecode.mcp import cache_protocol, get_cached_protocol
 
         cache_protocol("srv::cmd", PROTOCOL_NEWLINE_JSON)
         self.assertEqual(get_cached_protocol("srv::cmd"), PROTOCOL_NEWLINE_JSON)
@@ -274,11 +268,9 @@ class NegotiationTests(unittest.TestCase):
         finally:
             client.close()
 
-
 # ---------------------------------------------------------------------------
 # 3. 格式化契约
 # ---------------------------------------------------------------------------
-
 
 class FormattingTests(unittest.TestCase):
     def test_tool_result_joins_text_blocks(self) -> None:
@@ -345,7 +337,6 @@ class FormattingTests(unittest.TestCase):
         )
         self.assertIn("片段", result.output)
 
-
 class NamingTests(unittest.TestCase):
     def test_tool_name_uses_double_underscore_prefix(self) -> None:
         self.assertEqual(mcp_tool_name("github", "list_prs"), "mcp__github__list_prs")
@@ -371,7 +362,6 @@ class NamingTests(unittest.TestCase):
             {"type": "object", "additionalProperties": True},
         )
 
-
 class SummaryTests(unittest.TestCase):
     def test_connecting_summaries_mark_disabled(self) -> None:
         summaries = build_connecting_summaries(
@@ -385,11 +375,9 @@ class SummaryTests(unittest.TestCase):
         summaries = build_connecting_summaries({"a": {"url": "https://x.test/mcp"}})
         self.assertEqual(summaries[0].command, "https://x.test/mcp")
 
-
 # ---------------------------------------------------------------------------
 # 4. 桥接：远端工具变成本地工具
 # ---------------------------------------------------------------------------
-
 
 class BridgeTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -397,7 +385,7 @@ class BridgeTests(unittest.TestCase):
         self.tmp.mkdir(parents=True, exist_ok=True)
         for item in self.tmp.glob("*.json"):
             item.unlink()
-        self._env = patch.dict(os.environ, {"MINICODE_HOME": str(self.tmp)})
+        self._env = patch.dict(os.environ, {"CORECODE_HOME": str(self.tmp)})
         self._env.start()
 
     def tearDown(self) -> None:
@@ -432,7 +420,6 @@ class BridgeTests(unittest.TestCase):
     # ------------------------------------------------------------------
     # 通用工具的注册与路由（`list/read_mcp_resource`、`list/get_mcp_prompt`）
     #
-    # 这一组钉住一个**真实缺陷**：那 4 个工具是**跨服务器共用**的，原版在
     # 循环外 `tools.push(...)` 只注册一份。本实现早先按服务器各注册一份，
     # 于是两台服务器都发布资源时模型会收到**两组同名工具声明**，而
     # `ToolRegistry.find()` 只返回第一个 —— 第二台的资源/提示彻底不可达。
@@ -509,9 +496,6 @@ class BridgeTests(unittest.TestCase):
     def test_list_resources_with_unknown_server_says_nothing_published(self) -> None:
         """未知服务器 → **不是**报错，而是「没有任何服务器发布」那条固定文案。
 
-        原版行为：`targetClients` 过滤后为空 → `lines` 为空 → 返回
-        `Connected MCP servers did not publish any MCP resources. …`
-        它刻意加了后半句「这不代表 MCP 工具不可用」，避免模型误判。
         """
         bridge = self._bridge()
         try:
@@ -700,10 +684,8 @@ class BridgeTests(unittest.TestCase):
     def test_failed_start_reports_the_configured_protocol(self) -> None:
         """**启动失败时报「配置里写的」协议，而不是协商结果。**
 
-        启动就失败了，协商结果必然是 `None`——报它等于什么都没说。用户需要
-        知道「我要求的是 content-length，它没成」。原版同理。
         """
-        from minicode.mcp.bridge import _configured_protocol
+        from corecode.mcp.bridge import _configured_protocol
 
         self.assertEqual(_configured_protocol({"protocol": "content-length"}), "content-length")
         self.assertIsNone(_configured_protocol({"protocol": "auto"}))
@@ -737,7 +719,7 @@ class BridgeTests(unittest.TestCase):
         「已报错」的服务器仍有一个活着的子进程/连接，一直挂到 dispose。
         摘要写着 error 而进程还在跑，对用户不可见。
         """
-        from minicode.mcp.bridge import McpBridge
+        from corecode.mcp.bridge import McpBridge
 
         closed: list[bool] = []
 
@@ -759,7 +741,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_close_failure_does_not_mask_the_original_error(self) -> None:
         """关闭本身失败时，报出的仍是**原始**错误。"""
-        from minicode.mcp.bridge import McpBridge
+        from corecode.mcp.bridge import McpBridge
 
         class ExplodingClient:
             protocol = None
@@ -780,11 +762,8 @@ class BridgeTests(unittest.TestCase):
     def test_tool_description_falls_back_when_blank(self) -> None:
         """**空白描述要回退到兜底文案。**
 
-        原版是 `descriptor.description?.trim() || 兜底`。只写 `or` 的话
-        `"   "` 是**真值**，于是模型拿到一条空白描述——等于没描述，
-        而它本来会得到「Call MCP tool X from server Y.」这句有用的兜底。
         """
-        from minicode.mcp.bridge import McpBridge
+        from corecode.mcp.bridge import McpBridge
 
         class NoopClient:
             def call_tool(self, name, arguments):
@@ -806,7 +785,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_tool_description_is_stripped(self) -> None:
         """有内容时也要去掉首尾空白——模型看到的是干净的一句。"""
-        from minicode.mcp.bridge import McpBridge
+        from corecode.mcp.bridge import McpBridge
 
         class NoopClient:
             def call_tool(self, name, arguments):
@@ -839,7 +818,6 @@ class BridgeTests(unittest.TestCase):
         )
         self.assertFalse(result.ok)
         self.assertEqual(result.output, "错误正文")
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -2,7 +2,7 @@
 
 ## 它抓什么
 
-`src/minicode` 里**定义了但没有任何地方引用**的模块级函数与类。
+`src/corecode` 里**定义了但没有任何地方引用**的模块级函数与类。
 
 这就是 `check_constants.py` 抓不到的那一类缺陷。它的存在有具体理由：
 
@@ -44,7 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _shared import force_utf8_output  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(REPO, "src", "minicode")
+SRC = os.path.join(REPO, "src", "corecode")
 TESTS = os.path.join(REPO, "tests")
 
 #: 故意零引用的函数/类，键是 `相对路径::名字`。每条都必须写清理由。

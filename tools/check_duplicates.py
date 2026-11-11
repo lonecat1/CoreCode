@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SRC = REPO / "src" / "minicode"
+SRC = REPO / "src" / "corecode"
 
 #: 允许重复绑定的名字（都带理由）。
 ALLOWED_DUPLICATES: dict[str, str] = {}
