@@ -12,8 +12,8 @@
 | 维度 | 状态 |
 |---|---|
 | 工具层（默认注册表，无/有 plan） | **12 / 13** ✅ 与原版逐个集合一致 |
-| 工具层（根注册表，含子 Agent 工具） | **17** ✅ |
-| 子 Agent 可见 | **6** ✅ |
+| 工具层（根注册表，含 7 个中心化多 Agent 工具） | **20** ✅ |
+| 调研/Fork 子 Agent 可见 | **6** ✅ |
 | 命令层 | **29 / 29** ✅ |
 | `src/` 各模块 | **全部有对应实现** ✅ |
 | 完全缺失（❌） | **0** |
@@ -36,11 +36,11 @@
 | 已映射到本实现 | 67 |
 | TUI 排除 | 10 |
 | 未映射 | 0 |
-| Python 模块 | 78 |
-| 模块级常量 | 270 |
-| 模块级函数/类 | 607 |
+| Python 模块 | 88 |
+| 模块级常量 | 334 |
+| 模块级函数/类 | 681 |
 | 变异用例 | 345 |
-| 单元测试 | 1628 |
+| 单元测试 | 1671 |
 
 <!-- END GENERATED STATS -->
 
@@ -89,8 +89,8 @@
 | `plan/context.ts` 的注入头 | `PLAN_CONTEXT_HEADER` **5 行逐字一致** |
 | `goal/context.ts` | `GOAL_CONTEXT_LINES` **7 条逐字一致**；`formatGoal` 行结构；JSON 省略空值（`tests/test_runtime_context.py`） |
 | loop 上下文 | `LOOP_CONTEXT_LINES` **3 条逐字一致**；快照驼峰且省略 `nextRunAt` / `stopReason` |
-| **全仓 270 个模块级常量** | `tools/check_constants.py`，零孤儿 |
-| **全仓 607 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
+| **全仓 334 个模块级常量** | `tools/check_constants.py`，零孤儿 |
+| **全仓 681 个模块级函数/类** | `tools/check_orphans.py`，零孤儿 |
 
 **整个 `utils/` 都已做过数据级比对**（六个文件逐一）：
 
@@ -394,7 +394,7 @@ Python 侧的单元测试当时**全绿**——因为它只测了「一台服务
 |---|---|---|
 | 默认注册表（**无** plan） | **12** | |
 | 默认注册表（**有** plan） | **13** | `update_plan` 是条件加入的：`...(args.plan ? [createUpdatePlanTool(args.plan)] : [])` |
-| 根注册表（runtime 再追加 4 个子 Agent 工具） | **17** | 横幅打印的就是这个数 |
+| 根注册表（runtime 再追加 7 个中心化多 Agent 工具） | **20** | 横幅打印的就是这个数 |
 | 子 Agent 可见（`SUB_AGENT_TOOL_NAMES`） | **6** | 只读子集 |
 
 Python 侧四个数字分别是 **12 / 13 / 17 / 6**，与原版逐个集合比对一致
@@ -416,9 +416,11 @@ Python 侧四个数字分别是 **12 / 13 / 17 / 6**，与原版逐个集合比�
 | `web_search` | `web-search.ts` | 87 | `tools/web.py` | ✅ **已补齐**（含域名过滤） |
 | `load_skill` | `load-skill.ts` | 42 | `tools/load_skill.py` | ✅ |
 | `update_goal` / `get_goal` | `goal.ts` | 33 | `tools/goal.py` | ✅ |
-| `spawn_agent` 等 4 个 | `sub-agents.ts` | 122 | `tools/subagents.py` | ✅ |
+| `spawn_agent` 等原生 4 个 | `sub-agents.ts` | 122 | `tools/subagents.py` | ✅ 对等；另新增 `spawn_team` / `inspect_agent_changes` / `apply_agent_changes` |
 
-**运行时工具集已完全对等**——逐个集合比对确认，无缺无多。
+**原版工具集已完全对等**——逐个集合比对确认，无缺。根注册表另有 3 个
+Worktree/Team 质量门禁工具，属于本实现的中心化协作扩展，见
+[`spec-agents.md`](spec-agents.md)。
 
 ### 三处「基础设施写好了但没接线」的缺口
 

@@ -20,3 +20,31 @@ tests/_out.txt
 # 变异检查的断点。它是**本机进度**，不是项目产物——换一台机器就该从头跑；
 # 提交它会让别人以为「这些条目已经验过了」。
 tests/.mutation_progress.json
+
+# ---- 本机分析材料与面试准备（不进公开仓库）------------------------------
+# src/_analysis/ 里混着三类东西：
+#   1. 探针运行时产物（runtime_home/、sandbox/、trs_*/、memory_demo/）
+#   2. 可再生的结构分析（metrics.json 189KB、structure.json 339KB、各 HTML）
+#   3. 面试题库与从简历 PDF 提取的全文（姓名 / 手机 / 邮箱 / 学校）
+# 尤其第 3 类：面试官能看到「简历哪几处会被戳穿」和全部背好的答案。
+# 整目录忽略，别逐条列文件名——新增文件会自动落进同一个保护域。
+src/_analysis/
+src/.workbuddy-ai/
+
+# 本机 MCP 服务器配置：可能带 token 与绝对路径，惯例不入版本库。
+.mcp.json
+
+# ---- 本机环境、缓存与编辑器 ----------------------------------------------
+.env
+.env.*
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

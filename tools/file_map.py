@@ -61,6 +61,26 @@ TUI_EXCLUDED: dict[str, str] = {
 #:   2. **打包入口**：`python -m minicode` 需要 `__main__.py`；TS 没有这个需要。
 PY_ONLY: dict[str, str] = {
     "__main__.py": "`python -m minicode` 的入口（TS 由 package.json 的 bin 承担）",
+    "evolution/engine.py": (
+        "本实现新增的自进化记忆编排：回合后沉淀、按需召回与 Skill 生长。"
+        "TS 原版只有静态 `memory.ts`，没有这套闭环。"
+    ),
+    "evolution/index.py": "自进化记忆的零依赖 BM25 倒排索引。",
+    "evolution/reflect.py": "执行轨迹的确定性反思与四类记忆资产提炼。",
+    "evolution/store.py": "项目/全局记忆资产库与索引的原子持久化。",
+    "evolution/types.py": "自进化记忆资产、检索命中与反思结果的数据模型。",
+    "agents/worktree.py": (
+        "本实现新增的 Git worktree 隔离：创建、patch 采集、冲突检查与应用。"
+    ),
+    "agents/worker_permissions.py": (
+        "Worktree worker 的非交互路径围栏与验证命令白名单。"
+    ),
+    "skill_metadata.py": (
+        "SKILL.md 元信息解析与旧格式回退，是本实现新增的分层路由基础。"
+    ),
+    "skill_routing.py": (
+        "Skill 目录分层、任务意图识别、两阶段召回精排与 Token 预算。"
+    ),
     "stats.py": (
         "回合/会话计时与统计。原版的 `getSessionStats` 只存在于 `tty-app.ts`"
         "（TUI-only），行模式要重新实现。"

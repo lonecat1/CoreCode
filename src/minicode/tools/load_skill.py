@@ -50,7 +50,7 @@ def create_load_skill_tool(cwd: str) -> ToolDefinition:
         name="load_skill",
         description=(
             "读取一个具名 SKILL.md 的完整内容，以便准确遵循该工作流。"
-            "系统提示里列出了可用技能的名称与描述。"
+            "任务相关的候选技能会由分层路由动态注入；这里按名称加载正文。"
         ),
         input_schema={
             "type": "object",

@@ -1,12 +1,14 @@
 """内置工具集合与默认注册表。
 
-两个注册表构造器体现了「根 Agent 与子 Agent 能力不同」这条结构边界：
+三个注册表构造器体现「根 Agent 与两类子 Agent 能力不同」这条结构边界：
 
     create_root_registry()      根：全部工具 + 子 Agent 管理工具
-    create_worker_registry()    子 Agent：只读子集（**看不到任何写工具**）
+    create_worker_registry()    调研/Fork worker：只读子集
+    create_coder_registry()     Worktree worker：读写子集，仍看不到 Agent 管理工具
 
 隔离发生在**注册表层**，不是靠每个工具的自觉——worker 根本看不到
-`write_file`，因此不存在「忘了检查权限」的可能。
+`spawn_agent` 或 `ask_user`；worktree worker 即使看到 `write_file`，也受
+`WorkerPermissionManager` 的目录与命令约束。
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import os
 from typing import Any
 
 from ..agents.manager import SubAgentManager
+from ..agents.types import CODER_SUBAGENT_TOOL_NAMES as _CODER_TOOL_NAMES
 from ..agents.types import SUBAGENT_TOOL_NAMES as _AGENT_TOOL_NAMES
 from ..tooling import ToolRegistry
 from ..types import ChatMessage
@@ -27,8 +30,10 @@ from .web import web_fetch_tool, web_search_tool
 
 __all__ = [
     "SUBAGENT_TOOL_NAMES",
+    "CODER_SUBAGENT_TOOL_NAMES",
     "ask_user_tool",
     "create_default_registry",
+    "create_coder_registry",
     "create_root_registry",
     "create_worker_registry",
     "edit_file_tool",
@@ -46,6 +51,7 @@ __all__ = [
 #: 子 Agent 能拿到的工具名白名单。只读——根 Agent 独占一切写操作。
 #: 权威定义在 `agents/types.py`，这里只是转出，避免两处不一致。
 SUBAGENT_TOOL_NAMES = _AGENT_TOOL_NAMES
+CODER_SUBAGENT_TOOL_NAMES = _CODER_TOOL_NAMES
 
 
 def create_default_registry(
@@ -106,6 +112,15 @@ def create_default_registry(
                     "description": item.description,
                     "path": item.path,
                     "source": item.source,
+                    "category": item.category,
+                    "subcategory": item.subcategory,
+                    "tags": list(item.tags or []),
+                    "intents": list(item.intents or []),
+                    "when_to_use": item.when_to_use,
+                    "when_not_to_use": item.when_not_to_use,
+                    "examples": list(item.examples or []),
+                    "priority": item.priority,
+                    "capabilities": list(item.capabilities or []),
                 }
                 for item in discover_skills(cwd)
             ]
@@ -140,6 +155,11 @@ def create_root_registry(
 def create_worker_registry(registry: ToolRegistry) -> ToolRegistry:
     """从根注册表裁出子 Agent 的只读子集。"""
     return registry.subset(SUBAGENT_TOOL_NAMES)
+
+
+def create_coder_registry(registry: ToolRegistry) -> ToolRegistry:
+    """裁出 worktree 编码 worker 的工具子集。"""
+    return registry.subset(CODER_SUBAGENT_TOOL_NAMES)
 
 
 #: 旧名保留，避免已有调用点失效。

@@ -25,7 +25,7 @@ minicode
 │ 模型  qwen3.8-27b                                                          │
 │ 会话  a1b2c3d4                                                             │
 │ 目录  D:\CoreCode\minicode-py                                              │
-│ 工具  17 个（子 Agent 可见 6 个只读工具）                                  │
+│ 工具  20 个（6 只读 · 11 受限 coder）                                      │
 │ 技能  2 个                                                                 │
 ╰────────────────────────────────────────────────────────────────────────────╯
 输入 /help 查看命令 · /exit 退出
@@ -190,10 +190,12 @@ for m in r.messages: print(' ', m['role'], '|', str(m.get('content'))[:60])
    │  ├─ types           消息联合类型、AgentStep、回合结局     │
    │  ├─ tooling         统一工具契约 + 注册表 + 控制位        │
    │  ├─ context/        四级上下文压缩 + provider-usage 计量  │
+   │  ├─ evolution/      自进化记忆：反思/提炼/索引/召回/Skill │
    │  ├─ session/        JSONL 会话树与恢复                    │
    │  ├─ runtime/        单飞回合、Goal、Loop 编排             │
    │  ├─ ui/             无框架 ANSI 界面（行模式）            │
    │  ├─ tools/          内置工具（文件/搜索/命令/提问）        │
+   │  ├─ agents/         Fork / Worktree / Team 中心化协作     │
    │  └─ adapters/       模型后端（Anthropic / mock）          │
    └──────────────────────────────────────────────────────────┘
 ```
@@ -223,20 +225,82 @@ for m in r.messages: print(' ', m['role'], '|', str(m.get('content'))[:60])
 ```
 for step in range(max_steps):
     ① 上下文工程     context_pipeline.prepare() → (真实消息, 模型可见投影)
-    ② 请求模型       model.next(模型可见投影, tools=...)
-    ③ 分类响应
+    ② 运行时/记忆注入 Goal/Loop/Plan + 按需召回记忆资产
+    ③ 请求模型       model.next(模型可见投影, tools=...)
+    ④ 分类响应
        ├─ 显式 <progress>       → 记进度、注入续跑提示、继续循环
        ├─ 空响应 + thinking 截断 → 注入续跑提示（上限 3 次）
        ├─ 普通空响应             → 注入续跑提示（上限 2 次）
        ├─ 空响应且重试用尽       → 带诊断信息兜底收尾，回合 failed
        └─ 正常文本               → 回合 final
-    ④ 若有工具调用 → 先为每个调用占位（保证 tool_use/tool_result 严格配对）
+    ⑤ 若有工具调用 → 先为每个调用占位（保证 tool_use/tool_result 严格配对）
                     → 逐个执行并就地回填结果
                     → 按控制位决定：继续循环 / 挂起 / 受控结束 / 失败
 ```
 
-`③` 这一层是整个循环健壮性的关键：它明确区分「模型真的完成了」与
+`④` 这一层是整个循环健壮性的关键：它明确区分「模型真的完成了」与
 「模型话说一半停了」，后者是这个循环能不能连续干活的分水岭。
+
+---
+
+## 自进化记忆沉淀
+
+每个完成或失败的回合结束后，系统会从真实执行轨迹中反思并提炼四类资产：
+
+| 类型 | 内容 | 复用方式 |
+|---|---|---|
+| 情景记忆 | 请求、动作、错误、结局 | 相似任务的历史上下文 |
+| 程序经验 | 成功的工具调用序列 | 重复出现后生长为 Skill |
+| 修复经验 | 错误签名与后续恢复动作 | 工具再次报错时优先召回 |
+| 用户画像 | 明确的长期偏好、约束、身份 | 跨会话、跨项目注入系统上下文 |
+
+资产保存在 `MINICODE_HOME/evolved-memory/`，使用增量 BM25 索引检索。检索发生在
+每一次模型调用之前，只修改模型可见投影，不污染真实会话。重复成功的流程写到
+项目 `.mini-code/skills/evolved-*/SKILL.md`，并在当前会话立即刷新到技能目录。
+完整机制见 [`docs/spec-evolution.md`](docs/spec-evolution.md)。
+
+---
+
+## 中心化多 Agent 协作
+
+主 Agent 始终是唯一的计划者、审批者、质量门禁和代码合并者。子 Agent 只能通过
+根 Agent 可见的 Tool Call 创建，没有 Agent 间消息通道，也不能继续创建 Agent。
+
+| 模式 | 工作方式 | 写权限 |
+|---|---|---|
+| `research` | 在主工作区只读调研，交回最短结论 | 无 |
+| `fork` | 接收主对话的不可变文本快照，并行分析 | 无 |
+| `worktree` | 在独立 Git worktree 内编码与验证 | 仅工作树内 |
+| `team` | 用 `spawn_team` 创建 1–3 个扁平角色分组 | 按成员模式 |
+
+Worktree 子 Agent 必须提供 `acceptance` 验收标准，只能使用受限的验证命令；
+它不能 commit、push、reset 或操作工作树外路径。完成后主 Agent 必须先调用
+`inspect_agent_changes` 审阅 patch，再调用 `apply_agent_changes`。后者会请求
+用户审批，并在 `git apply --check` 通过后才写入根工作区，冲突不会留下半合并状态。
+主 Agent 合并后仍需在根工作区运行最终验证。
+
+完整设计见 [`docs/spec-agents.md`](docs/spec-agents.md)。
+
+---
+
+## Skill 分层路由
+
+Skill 不再全量列表注入。系统提示只保留分类目录摘要，每次模型调用前按当前任务
+执行两阶段路由：
+
+1. **粗召回**：意图、标签、分类和词法重叠，从全部 Skill 中最多保留 32 个；
+2. **精排**：结合 tags、intents、适用边界、示例、priority，去重叠后只注入
+   top-3 技能卡片。
+
+Skill 支持可选 front matter：`category`、`tags`、`intents`、`when_to_use`、
+`when_not_to_use`、`examples`、`priority`、`capabilities`。旧 Skill 会自动从
+正文推导最小元信息。完整正文仍由 `load_skill` 按需读取，路由上下文默认限制在
+2,000 字符内。
+
+自进化生成的 Skill 现在自带可路由元信息；宿主刷新技能目录时会同步刷新路由
+缓存，根 Agent 与两类子 Agent 都能收到任务相关的 Skill 卡片。
+
+完整设计见 [`docs/spec-skill-routing.md`](docs/spec-skill-routing.md)。
 
 ---
 
@@ -250,13 +314,15 @@ for step in range(max_steps):
 | 写前审查 `file_review` | ✅ 完成 |
 | 路径围栏 `workspace` | ✅ 完成 |
 | 权限管理器 `permissions` | ✅ 完成（三入口 + 四级授权 + 持久化） |
-| 内置工具 | ✅ **13 / 13**。文件读写 · `edit_file` / `patch_file` / `modify_file` · grep · `run_command` · web_fetch / web_search · ask_user · load_skill · plan/goal · 子 Agent（见 [`docs/parity.md`](docs/parity.md)） |
+| 内置工具 | ✅ **13 / 13** + 7 个子 Agent 管理工具（根注册表 20） |
 | 离线 mock + Anthropic 适配器 | ✅ 完成（含 thinking 块原样回传） |
 | 上下文工程 `context/` | ✅ 完成（四级压缩 + 计量 + 大结果落盘） |
 | 会话持久化 `session/` | ✅ 完成（JSONL 树 + 边界 + fork/resume） |
 | 运行时编排 `runtime/` | ✅ 完成（Plan / Goal / Loop + 四道互斥闸门） |
-| 子 Agent `agents/` | ✅ 完成（隔离上下文 + 受限工具 + ≤3 并发） |
+| 中心化多 Agent `agents/` | ✅ 完成（Fork / Worktree / Agent Team + 审阅合并门禁） |
 | 项目记忆 `memory` + 系统提示 `prompt` | ✅ 完成 |
+| 自进化记忆沉淀 `evolution/` | ✅ 完成（执行-反思-提炼-分类储-索引-按需复用 + Skill 生长） |
+| Skill 分层路由 | ✅ 完成（目录分层 + 意图/标签/边界/示例 + 两阶段召回精排） |
 | CLI 入口 `cli` | ✅ 完成（行模式 REPL + 单次提问 + 本地命令） |
 | Skills `skills` | ✅ 完成（四层发现 + `load_skill` + 安装管理） |
 | MCP `mcp/` | ✅ 完成（stdio 双分帧协商 + HTTP + 工具桥接） |
@@ -541,6 +607,9 @@ src/minicode/                     行数    职责
   config.py                 549   配置装载、路径访问、Claude 兼容回退
   permissions.py            532   权限：只读白名单、审批、持久化
   memory.py                 279   MINI.md 发现与装载
+  evolution/                     自进化记忆：反思、资产库、BM25 索引、召回、Skill 生长
+  skill_metadata.py              SKILL.md 元信息解析与兼容回退
+  skill_routing.py               分层目录、一阶段召回、二阶段精排、Token 预算
   skills.py                 265   技能的发现、装载、安装、移除
   prompt.py                 125   系统提示
   types.py                  215   消息类型、AgentStep、回合结局
@@ -555,14 +624,14 @@ src/minicode/                     行数    职责
   ui/                       内置行模式界面（渲染、动画、宽度、主题）
   adapters/                 模型后端（anthropic 736 行 / mock）
   tools/                    内置工具（13 个）
-  agents/                   子 Agent：隔离上下文 + 受限工具 + ≤3 并发
+  agents/                   中心化多 Agent：Fork / Worktree / Team + 合并门禁
   context/                  上下文管线：四级压缩、投影式 collapse、token 估算
   runtime/                  单飞回合、Goal、Loop、计划（session 编排）
   session/                  JSONL 会话树存储与恢复
   mcp/                      MCP：stdio 双分帧协商、HTTP、工具桥接
   utils/                    网页抓取/搜索、其它辅助
 docs/                       行为规格：对等清单、有意差异
-tests/                      行为测试（1253 项）
+tests/                      行为测试（1671 项）
 tools/                      开发工具：导入检查、变异检查、自检
 ```
 

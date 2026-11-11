@@ -31,6 +31,7 @@ from .context.tool_result_storage import (
     ContentReplacementState,
     create_content_replacement_state,
 )
+from .evolution import EvolvedMemory, ReflectionResult
 from .permissions import PermissionDenied, PermissionManager, PermissionRequest
 from .runtime.context import (
     build_goal_context,
@@ -40,6 +41,7 @@ from .runtime.context import (
 from .runtime.plan import PlanManager, inject_plan_context
 from .runtime.session import SessionRuntime
 from .runtime.turn import TurnRequest
+from .skill_routing import SkillRouter
 from .stats import SessionStats, TurnStats, TurnTimer
 from .session import (
     append_compact_boundary,
@@ -97,16 +99,22 @@ class SessionHost:
         messages: list[ChatMessage] | None = None,
         callbacks: HostCallbacks | None = None,
         subagents: SubAgentManager | None = None,
+        evolved_memory: EvolvedMemory | None = None,
     ) -> None:
         self.cwd = cwd
         self.model = model
         self.runtime_config = runtime_config
         self.permissions = permissions
         self.tools = tools
+        self.skill_router = SkillRouter(cwd, tool_definitions=tools.list())
         self.plan = plan
         self.session_id = session_id
         self.callbacks = callbacks or HostCallbacks()
         self.subagents = subagents
+        #: 自进化记忆：回合后沉淀，下一回合/下一步按需召回。
+        self.evolved_memory = evolved_memory or EvolvedMemory(cwd)
+        self.last_reflection_error: str | None = None
+        self.last_memory_error: str | None = None
         #: 会话累计统计（回合数 / 总耗时 / 工具调用次数）。
         self.stats = SessionStats()
 
@@ -140,6 +148,19 @@ class SessionHost:
             settle_workers=self._settle_workers,
             is_busy=lambda: self.is_busy,
         )
+        if self.subagents is not None:
+            self.subagents.set_fork_context_provider(self._fork_context_snapshot)
+            self.subagents.set_skill_router(self.skill_router)
+
+    def _fork_context_snapshot(self) -> list[ChatMessage]:
+        """给 fork worker 一份只含文本对话的不可变快照。"""
+        with self._lock:
+            return [
+                dict(message)
+                for message in self.messages[1:]
+                if message.get("role") in ("user", "assistant")
+                and not message.get("internal")
+            ]
 
     # -- 会话装载 -----------------------------------------------------------
 
@@ -187,6 +208,7 @@ class SessionHost:
             try:
                 with self._lock:
                     self.messages = [*self.messages, request.input]
+                    turn_start = max(0, len(self.messages) - 1)
 
                 result = run_agent_turn(
                     model=self.model,
@@ -208,12 +230,19 @@ class SessionHost:
                         if request.mode
                         else None
                     ),
+                    memory_context=self._memory_context,
+                    skill_context=self._skill_context,
                     stop_on_fatal_tool_error=bool(request.mode),
                 )
 
                 with self._lock:
                     self.messages = list(result.messages)
                 self._persist()
+                self._reflect_after_turn(
+                    turn_start,
+                    request.input,
+                    result.outcome,
+                )
 
                 # 统计只记**根回合**的调用。`AgentTurnResult.tool_calls` 由
                 # agent loop 自己累计，比在这里重新数一遍更准确——它知道
@@ -232,6 +261,10 @@ class SessionHost:
                 self.permissions.end_turn()
                 self.pipeline.on_turn_end()
         finally:
+            try:
+                self.evolved_memory.flush()
+            except Exception:  # noqa: BLE001 - 访问统计落盘失败不能影响回合结果
+                pass
             with self._lock:
                 self.is_busy = False
 
@@ -260,6 +293,75 @@ class SessionHost:
         if mode == "loop":
             return build_loop_context(self.runtime.loop.get_snapshot())
         return ""
+
+    def _memory_context(self, messages: list[ChatMessage]) -> list[ChatMessage]:
+        """按当前任务和最近工具错误召回长期记忆，只改模型可见投影。"""
+        try:
+            context = self.evolved_memory.build_context(messages)
+            self.last_memory_error = None
+        except Exception as error:  # noqa: BLE001 - 记忆库故障不能中断任务
+            self.last_memory_error = f"{type(error).__name__}: {error}"
+            return messages
+        return inject_runtime_context(messages, context) if context else messages
+
+    def _skill_context(self, messages: list[ChatMessage]) -> list[ChatMessage]:
+        """按当前任务二阶段召回 Skill，并只注入精排后的紧凑卡片。"""
+        try:
+            context = self.skill_router.context_for_messages(messages)
+        except Exception:  # noqa: BLE001 - 路由失败不能中断任务
+            return messages
+        return inject_runtime_context(messages, context) if context else messages
+
+    def _reflect_after_turn(
+        self,
+        turn_start: int,
+        user_message: ChatMessage,
+        outcome: str,
+    ) -> None:
+        """回合结束后沉淀记忆；记忆故障不影响已经完成的回合。"""
+        with self._lock:
+            turn_messages = list(self.messages[turn_start:])
+            session_id = self.session_id
+        user_text = (
+            ""
+            if user_message.get("internal")
+            else str(user_message.get("content") or "")
+        )
+        try:
+            reflected: ReflectionResult = self.evolved_memory.reflect_turn(
+                turn_messages,
+                session_id=session_id,
+                user_text=user_text,
+                outcome=outcome,
+            )
+            self.last_reflection_error = None
+        except Exception as error:  # noqa: BLE001 - 记忆沉淀失败不能回滚任务
+            self.last_reflection_error = f"{type(error).__name__}: {error}"
+            return
+        if reflected.skills:
+            self._refresh_skills()
+
+    def _refresh_skills(self) -> None:
+        """让本轮自动生长的 Skill 立即进入系统提示与 load_skill 目录。"""
+        from .skills import discover_skills
+
+        try:
+            skills = [
+                {
+                    "name": item.name,
+                    "description": item.description,
+                    "path": item.path,
+                    "source": item.source,
+                }
+                for item in discover_skills(self.cwd)
+            ]
+        except Exception:  # noqa: BLE001 - 技能刷新失败不影响工具执行
+            return
+        self.tools.set_skills(skills)
+        self.skill_router.refresh(tool_definitions=self.tools.list())
+        if self.subagents is not None:
+            self.subagents.set_skill_router(self.skill_router)
+        self.refresh_system_prompt()
 
     # -- 压缩回调（把边界事件落盘） ------------------------------------------
 

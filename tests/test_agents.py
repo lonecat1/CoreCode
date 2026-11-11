@@ -129,7 +129,15 @@ class SubAgentManagerTests(unittest.TestCase):
         manager = self._manager(ReportingAdapter())
         worker = create_worker_registry(create_root_registry(manager))
 
-        for forbidden in ("spawn_agent", "list_agents", "wait_agent", "close_agent"):
+        for forbidden in (
+            "spawn_agent",
+            "spawn_team",
+            "list_agents",
+            "wait_agent",
+            "close_agent",
+            "inspect_agent_changes",
+            "apply_agent_changes",
+        ):
             self.assertIsNone(worker.find(forbidden), f"{forbidden} 不应可见")
 
     def test_root_registry_includes_agent_tools_only_when_given(self) -> None:
@@ -139,8 +147,29 @@ class SubAgentManagerTests(unittest.TestCase):
         manager = self._manager(ReportingAdapter())
         with_agents = {t.name for t in create_root_registry(manager).list()}
         self.assertIn("spawn_agent", with_agents)
+        self.assertIn("spawn_team", with_agents)
         self.assertIn("wait_agent", with_agents)
         self.assertIn("close_agent", with_agents)
+        self.assertIn("inspect_agent_changes", with_agents)
+        self.assertIn("apply_agent_changes", with_agents)
+
+    def test_coder_registry_has_write_tools_but_no_agent_or_user_tools(self) -> None:
+        manager = self._manager(ReportingAdapter())
+        root = create_root_registry(manager)
+        from minicode.tools import create_coder_registry
+
+        coder = create_coder_registry(root)
+        names = {tool.name for tool in coder.list()}
+        self.assertIn("write_file", names)
+        self.assertIn("edit_file", names)
+        self.assertIn("run_command", names)
+        for forbidden in (
+            "ask_user",
+            "spawn_agent",
+            "spawn_team",
+            "apply_agent_changes",
+        ):
+            self.assertIsNone(coder.find(forbidden), f"{forbidden} 不应可见")
 
     # -- spawn --------------------------------------------------------------
 

@@ -459,7 +459,11 @@ def _render_plan(host: "SessionHost") -> str:
 def _render_memory(host: "SessionHost") -> str:
     from .memory import render_memory_report
 
-    return render_memory_report(host.cwd)
+    static = render_memory_report(host.cwd)
+    evolved = getattr(host, "evolved_memory", None)
+    if evolved is None:
+        return static
+    return f"{static}\n\n{evolved.render_report()}"
 
 
 def _render_skills(host: "SessionHost") -> str:
@@ -471,10 +475,11 @@ def _render_skills(host: "SessionHost") -> str:
             "没有发现技能。技能来自 `.mini-code/skills/<name>/SKILL.md`"
             "（也兼容 `.claude/skills/`）。"
         )
-    rows = [
-        (str(item.get("name", "")), str(item.get("description", "")))
-        for item in skills
-    ]
+    rows = []
+    for item in skills:
+        category = str(item.get("category") or "general")
+        name = str(item.get("name", ""))
+        rows.append((f"{category}/{name}", str(item.get("description", ""))))
     return "\n".join(
         [
             render_status_line(label=f"{len(skills)} 个技能"),

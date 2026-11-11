@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from .memory import load_memory
@@ -28,7 +29,7 @@ If the user clearly asked you to build, modify, optimize, or generate something,
 If you need user clarification, call the ask_user tool with one concise question and wait for the user reply. Do not ask clarifying questions as plain assistant text.
 Do not choose subjective preferences such as colors, visual style, copy tone, or naming unless the user explicitly told you to decide yourself.
 When using read_file, pay attention to the header fields. If it says TRUNCATED: yes, continue reading with a larger offset before concluding that the file itself is cut off.
-If the user names a skill or clearly asks for a workflow that matches a listed skill, call load_skill before following it.
+If the user names a skill or a routed skill card clearly matches the task, call load_skill before following it.
 Structured response protocol:
 - When you are still working and will continue with more tool calls, start your text with <progress>.
 - Only when the task is actually complete and you are ready to hand control back, start your text with <final>.
@@ -37,11 +38,14 @@ Structured response protocol:
 - Plain assistant text without <progress> is treated as a completed assistant message for this turn."""
 
 SUBAGENT_SECTION = """Sub-agent coordination:
-- You may run at most {max_concurrent} read-only sub-agents concurrently with spawn_agent.
-- Delegate only independent investigation tasks. Sub-agents have separate message histories and cannot modify code or spawn more agents.
-- You are the root agent and the only agent allowed to edit files or run commands that change the project.
-- Use wait_agent to collect reports. Use close_agent when an agent is looping, no longer useful, or should stop consuming model calls.
-- Before giving a final answer, collect the reports you need and close any sub-agents that are still running."""
+- You are the sole planner, approver, verifier, and merger. Control never transfers to a sub-agent.
+- You may run at most {max_concurrent} sub-agents concurrently. They cannot message each other or spawn more agents.
+- Use mode=research for read-only investigation, mode=fork for an immutable snapshot of this conversation, and mode=worktree for coding in an isolated Git worktree.
+- Worktree tasks require a concrete acceptance string. The worker may edit only inside its worktree and run bounded verification commands.
+- For independent parallel work, use spawn_team with explicit roles. Teams are flat: no shared state, peer messaging, consensus, or hidden coordination.
+- Use wait_agent to collect minimal reports. For worktree workers, call inspect_agent_changes before apply_agent_changes.
+- apply_agent_changes requires user approval and a clean git apply --check. After applying, run the relevant verification in the root workspace before finalizing.
+- Use close_agent with delete_worktree=true only when discarding an unaccepted worktree. Never claim a change is merged before apply_agent_changes succeeds."""
 
 MCP_NAMING_HINT = (
     "Connected MCP tools are already exposed in the tool list with names prefixed "
@@ -72,12 +76,24 @@ def build_system_prompt(
 
     skill_list = skills or []
     if skill_list:
-        lines = "\n".join(
-            f"- {item.get('name')}: {item.get('description')}" for item in skill_list
+        categories = Counter(
+            str(item.get("category") or "general") for item in skill_list
         )
-        parts.append(f"Available skills:\n{lines}")
+        lines = [
+            f"Available skill catalog: {len(skill_list)} skills in "
+            f"{len(categories)} categories."
+        ]
+        ordered = sorted(categories.items())
+        lines.extend(f"- {category}: {count}" for category, count in ordered[:12])
+        if len(ordered) > 12:
+            lines.append(f"- … {len(ordered) - 12} more categories")
+        lines.append(
+            "Relevant skill cards are routed from the current task. "
+            "Use load_skill with a routed name to read the full workflow."
+        )
+        parts.append("\n".join(lines))
     else:
-        parts.append("Available skills:\n- none discovered")
+        parts.append("Available skill catalog: none discovered.")
 
     servers = mcp_servers or []
     if servers:

@@ -43,7 +43,11 @@ from .permissions import (
 )
 from .runtime.plan import PlanManager
 from .tooling import ToolContext
-from .tools import create_root_registry, create_worker_registry
+from .tools import (
+    create_coder_registry,
+    create_root_registry,
+    create_worker_registry,
+)
 from .types import ModelAdapter
 from .ui import (
     COLOR_HINT,
@@ -173,12 +177,14 @@ def build_host(
     # `create_default_registry` 的说明。
     tools = create_root_registry(cwd=cwd, plan=plan)
     worker_tools = create_worker_registry(tools)
+    coder_tools = create_coder_registry(tools)
 
     model = _build_model(runtime, mock_mode, subagents_holder)
 
     subagents = SubAgentManager(
         model=model,
         tools=worker_tools,
+        coder_tools=coder_tools,
         cwd=cwd,
     )
     from .tools.subagents import create_subagent_tools

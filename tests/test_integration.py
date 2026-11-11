@@ -23,6 +23,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "src"))
 
 from minicode.cli import build_host, build_parser, main  # noqa: E402
+from minicode.agents.types import MODE_FORK  # noqa: E402
 from minicode.host import HostCallbacks  # noqa: E402
 from minicode.session import list_sessions, load_session  # noqa: E402
 
@@ -673,6 +674,22 @@ class SubAgentIntegrationTests(IntegrationTestCase):
         from minicode.tools import create_worker_registry
 
         self.assertNotIn("write_file", {t.name for t in create_worker_registry(host.tools).list()})
+
+    def test_fork_mode_uses_the_live_host_snapshot(self) -> None:
+        host = self._host()
+        host.messages = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "root user context"},
+            {"role": "assistant", "content": "root assistant context"},
+        ]
+        snapshot = host.subagents.spawn(
+            "analyze the snapshot",
+            mode=MODE_FORK,
+        )
+        result = host.subagents.wait([snapshot.id], timeout_ms=10_000)
+        self.assertFalse(result.timed_out)
+        self.assertEqual(result.agents[0].status, "completed")
+        self.assertTrue(result.agents[0].result)
 
 
 if __name__ == "__main__":

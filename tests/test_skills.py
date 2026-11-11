@@ -256,6 +256,21 @@ class DiscoveryTests(SkillsTestCase):
             ["project", "user", "compat_project", "compat_user"],
         )
 
+    def test_category_directory_is_discovered_and_sets_default_category(self) -> None:
+        write_skill(
+            self.cwd / ".mini-code" / "skills" / "quality",
+            "review",
+            "# review\n\n代码审查流程",
+        )
+        found = discover_skills(str(self.cwd))
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].name, "review")
+        self.assertEqual(found[0].category, "quality")
+        loaded = load_skill(str(self.cwd), "review")
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        self.assertEqual(loaded.metadata.category, "quality")
+
 
 class LoadSkillTests(SkillsTestCase):
     def test_loads_content(self) -> None:
@@ -414,14 +429,15 @@ class SkillsWiringTests(SkillsTestCase):
         write_skill(self.cwd / ".mini-code" / "skills", "review", "# r\n\n代码审查流程")
         registry = create_default_registry(str(self.cwd))
         text = build_system_prompt(str(self.cwd), skills=registry.skills())
-        self.assertIn("Available skills:", text)
-        self.assertIn("review: 代码审查流程", text)
+        self.assertIn("Available skill catalog:", text)
+        self.assertIn("general: 1", text)
+        self.assertNotIn("review: 代码审查流程", text)
 
     def test_system_prompt_says_none_when_empty(self) -> None:
         from minicode.prompt import build_system_prompt
 
         text = build_system_prompt(str(self.cwd))
-        self.assertIn("Available skills:\n- none discovered", text)
+        self.assertIn("Available skill catalog: none discovered.", text)
 
     def test_worker_can_use_skills(self) -> None:
         """子 Agent 白名单里包含 load_skill —— 已随本模块落地。"""

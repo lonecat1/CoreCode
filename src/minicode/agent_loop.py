@@ -216,6 +216,8 @@ def run_agent_turn(
     content_replacement_state: ContentReplacementState | None = None,
     plan_context: Any | None = None,
     runtime_context: Any | None = None,
+    memory_context: Any | None = None,
+    skill_context: Any | None = None,
     stop_on_fatal_tool_error: bool = False,
 ) -> AgentTurnResult:
     """跑完一个回合。永远是「返回结果」而不是「抛异常」。
@@ -226,6 +228,12 @@ def run_agent_turn(
     `content_replacement_state` 建议由宿主在会话级创建并复用：它记住哪些
     大结果已经落盘过，从而保证同一个 toolUseId 永远得到字节相同的替换文本。
     不传则本次回合内部新建（回合结束即忘）。
+
+    `memory_context` 与 `runtime_context` 一样只改模型可见投影。宿主可以在
+    这里按当前消息与最近工具错误召回长期记忆，因此不会把记忆快照写进真实
+    会话历史，也不会在后续请求里重复累积。
+
+    `skill_context` 同样只改投影，用于注入两阶段路由后的 Skill 卡片。
     """
     hooks = hooks or TurnHooks()
     pipeline = context_pipeline or IdentityContextPipeline()
@@ -271,6 +279,10 @@ def run_agent_turn(
                 model_messages = plan_context(model_messages)
             if runtime_context is not None:
                 model_messages = runtime_context(model_messages)
+            if memory_context is not None:
+                model_messages = memory_context(model_messages)
+            if skill_context is not None:
+                model_messages = skill_context(model_messages)
 
             # --- 2. 请求模型 -------------------------------------------------
             #
