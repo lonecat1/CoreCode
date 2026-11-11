@@ -106,7 +106,7 @@ Claude Code 的默认界面本身就是**美化过的行模式 REPL**，不是�
 - 历史由终端的滚动缓冲负责，用户能用自己熟悉的滚轮/搜索
 - 可以被完整测试（纯字符串变换，不需要伪终端）
 
-**这个取舍的代价**：没有鼠标交互、没有固定底部的输入框、没有转圈动画。
+**这个取舍的代价**：没有鼠标交互、没有固定底部的输入框、没有状态指示。
 换来的是一句话——**它不会假装能用，然后什么都不响应。**
 
 ---
@@ -391,7 +391,7 @@ python tools/self_check.py       # 环境自检（依赖 + 导入 + 测试）
 ```
 
 **优先级：`settings.json` 的 `env` > 进程环境变量。** 配置文件优先是刻意的
-（见 [divergences.md](docs/divergences.md) D25）：机器上往往早已存在
+：机器上往往早已存在
 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`（为别的工具配的），若让它们压过
 本工具的配置文件，你写在这里的端点与密钥会被静默作废。凭据成对决策（D26）——
 文件提供了任一凭据时就不再从环境回退，避免「端点来自 A、密钥来自 B」。
@@ -435,7 +435,7 @@ corecode --tui
 ```
 
 外观仿 Claude Code：圆角输入框、`⏺` 起头的工具调用、`⎿` 承接结果、
-底部带转圈动画的状态行。
+底部带转圈指示的状态行。
 
 ```
 CoreCode  session abc123  tools 12
@@ -572,7 +572,7 @@ src/corecode/                     行数    职责
   stats.py                  150   回合统计（耗时、工具调用次数）
   background_tasks.py       199   后台 shell 任务注册表
   local_tool_shortcuts.py   193   /ls /grep /read /write /edit /patch /cmd
-  ui/                       内置行模式界面（渲染、动画、宽度、主题）
+  ui/                       内置行模式界面（渲染、启动画面、宽度、主题）
   adapters/                 模型后端（anthropic 736 行 / mock）
   tools/                    内置工具（13 个）
   agents/                   中心化多 Agent：Fork / Worktree / Team + 合并门禁

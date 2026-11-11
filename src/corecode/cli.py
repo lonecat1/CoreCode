@@ -324,7 +324,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-animation",
         action="store_true",
-        help="关闭启动动画与转圈（非终端环境下本就会自动关闭）",
+        help="关闭启动画面与转圈（非终端环境下本就会自动关闭）",
     )
     return parser
 
